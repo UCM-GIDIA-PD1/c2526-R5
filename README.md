@@ -12,10 +12,9 @@ Bucket utilizado: `pd1`
 Raíz del proyecto: `grupo5/`
 
 ## Estructura general
-
+```
 pd1/
 └── grupo5/
-
     ├── raw/
     │   ├── gtfs_static/    
     │   ├── gtfs_realtime/
@@ -36,7 +35,7 @@ pd1/
     └── marts/
         ├── features_master/
         └── snapshots_rt/
-
+```
 ## Descripción de cada capa
 
 ### raw/
