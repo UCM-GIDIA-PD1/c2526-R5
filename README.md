@@ -14,8 +14,8 @@ Raíz del proyecto: `grupo5/`
 ## Estructura general
 
 pd1/
-
 └── grupo5/
+
     ├── raw/
     │   ├── gtfs_static/    
     │   ├── gtfs_realtime/
