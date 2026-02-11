@@ -21,6 +21,7 @@ dependencies = [
   "pytz==2025.2",
   "tzdata==2025.3",
   "tqdm==4.67.1",
+  "minio>=7.2.20",
 ]
 
 [project.optional-dependencies]
