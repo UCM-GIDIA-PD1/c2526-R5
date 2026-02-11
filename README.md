@@ -19,22 +19,29 @@ pd1/
     │   ├── gtfs_static/    
     │   ├── gtfs_realtime/
     │   ├── weather/
+    │   ├── official_alerts/
     │   └── events/
     │
-    ├── staging/
+    ├── processed/
     │   ├── gtfs_static/
     │   ├── gtfs_realtime/
-    │   └── weather/
+    │   ├── weather/
+    │   ├── official_alerts/
+    │   └── events/
     │
-    ├── curated/
+    ├── cleaned/
     │   ├── gtfs_clean/
     │   ├── weather_clean/
-    │   ├── features/
-    │   └── quality_reports/
+    │   ├── events_clean/
+    │   ├── official_alerts_clean/
+    │   └── quality_reports/      → métricas de calidad de datos
     │
-    └── marts/
-        ├── features_master/
-        └── snapshots_rt/
+    └── analytics/
+        ├── features_dataset/     → dataset final
+        ├── headway_analysis/     → análisis de desviaciones
+        ├── delay_analysis/       → estadísticas de retraso
+        ├── anomaly_labels/       → etiquetas binarias para modelado
+        └── snapshots_realtime/   → agregaciones en tiempo real
 ```
 ## Descripción de cada capa
 
@@ -54,9 +61,9 @@ Datos limpios y validados. Incluye:
 - Control de outliers
 - Reportes de calidad
 
-También contiene las tablas de features generadas.
+También contiene features que no impliquen agregaciones temporales (p.ej. delay_sec, para agregar en el dataset final).
 
-### analysis/
+### analytics/
 Conjunto final de datos listos para análisis y modelado.
 Incluye el dataset con features agregados.
 
