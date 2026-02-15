@@ -5,6 +5,9 @@ __pycache__/
 venv/
 venv_proyecto/
 
+#Caché
+.cache
+.cache.sqlite
 # Env
 .env
 
