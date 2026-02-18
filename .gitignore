@@ -27,4 +27,4 @@ data/processed/*
 .json
 
 #csv
-.csv
+.src/eventos/.csv
