@@ -12,7 +12,7 @@ retry_session = retry(session, retries=5, backoff_factor=0.2)
 
 openmeteo = openmeteo_requests.Client(session=retry_session)
 
-url = "https://archive-api.open-meteo.com/v1/archive"
+url = "https://historical-forecast-api.open-meteo.com/v1/forecast"
 
 parametros = {
     "latitude": 40.47,
@@ -58,7 +58,7 @@ try:
         nulos = df[columna].isnull().sum()
         print(columna, " tiene ", nulos, "con porcentaje de nulos del ", nulos / df[columna].count())
 
-    df.to_parquet("clima_2024.parquet", index = False)
+    df.to_parquet("clima_2025_2_.parquet", index = False)
     print("Guardado")
 except Exception as e:
     print("Error", e)
