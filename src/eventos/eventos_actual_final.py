@@ -58,12 +58,12 @@ def conectar_mongo():
         print("Conectado a MongoDB, versión", s["version"])
         db = client["PD1"]
         return db
-    except:
-        print ("Error de conexión ¿está arrancado el servidor de Mongo?")
+    except Exception as e:
+        print(f"Error de conexión: {e}")
+        print("¿Está arrancado el servidor de Mongo?")
         return None
 
 def cursor_paradas_afectedas(coordinates, db): 
-    # coordinates de esta forma [longitud, latitud]
     cursor = db.subway.find(
        {
          "ubicacion":
@@ -113,8 +113,7 @@ def api_seatgeek(db):
     df = pd.DataFrame(eventos_limpios)
     df['capacidad'] = df['capacidad'].replace(0, np.nan)
     
-   
-    df['hora_inicio'] = pd.to_datetime((df['hora_inicio']))
+    df['hora_inicio'] = pd.to_datetime(df['hora_inicio'])
     df['hora_inicio_str'] = df['hora_inicio'].dt.strftime('%H:%M') 
     
     tiempos_salida = {
@@ -130,21 +129,27 @@ def api_seatgeek(db):
     df['hora_inicio'] = df['hora_inicio_str'] 
     df = df.drop(columns=['hora_inicio_str'])
     
-    
     df["coordinates"] = df.apply(lambda fila: [fila['longitud'], fila['latitud']], axis=1)
-    df = df.drop(['longitud', 'latitud', 'lugar', 'direccion', 'tipo'], axis = 1)
-    
-    df["paradas_afectadas"] = df["coordinates"].apply(lambda cor: extraccion_paradas(cursor_paradas_afectedas(cor,db)))
+    df = df.drop(['longitud', 'latitud', 'lugar', 'direccion'], axis=1)
+
+    coords_invalidas = df["coordinates"].apply(lambda c: c == [0, 0] or None in c)
+    n_invalidas = coords_invalidas.sum()
+    if n_invalidas > 0:
+        df = df[~coords_invalidas].copy()
+
+    df["paradas_afectadas"] = df["coordinates"].apply(
+        lambda cor: extraccion_paradas(cursor_paradas_afectedas(cor, db))
+    )
     df['paradas_afectadas'] = df['paradas_afectadas'].apply(fusionar_lista_estaciones)
-    df = df.drop(columns="coordinates", axis = 1)
+    df = df.drop(columns=["coordinates", "tipo"], axis=1)
     
     return df
 
 def desde_fecha(fecha_str):
-       return f'{fecha_str}T00:00:00.000'
+    return f'{fecha_str}T00:00:00.000'
 
 def hasta_fecha(fecha_str):
-   return f'{fecha_str}T23:59:59.000'
+    return f'{fecha_str}T23:59:59.000'
 
 def extraer_intersecciones(localizacion, barrio):
     """
@@ -170,17 +175,17 @@ def extraer_intersecciones(localizacion, barrio):
 
 def extraer_coord(localizacion, barrio, geocode):
     """
-    Devuelve las coordenadas del centro de las ubicaciones (calles que cruzan), o la coordenada del parque
-    Devuelve longitud-latitud
+    Devuelve las coordenadas del centro de las ubicaciones (calles que cruzan), o la coordenada del parque.
+    Devuelve longitud-latitud.
     """
     if pd.isna(localizacion):
-        return 0, 0
+        return None, None
     
     if ":" in localizacion:
         resultado = geocode(localizacion.split(":")[0].strip() + f", {barrio}, New York")
         if resultado:
             return resultado.longitude, resultado.latitude
-        return 0, 0
+        return None, None
 
     intersections = extraer_intersecciones(localizacion, barrio)
     
@@ -190,7 +195,7 @@ def extraer_coord(localizacion, barrio, geocode):
             resultado = geocode(intersection)
             if resultado:
                 coords.append((resultado.latitude, resultado.longitude))
-        except:
+        except Exception:
             continue
     
     if coords:
@@ -198,7 +203,7 @@ def extraer_coord(localizacion, barrio, geocode):
         lon = np.mean([c[1] for c in coords])
         return lon, lat
     
-    return 0, 0
+    return None, None
 
 def api_nycopendata(db):
     urlbase = "https://data.cityofnewyork.us/resource/"
@@ -221,18 +226,20 @@ def api_nycopendata(db):
     
     if eventos.status_code != 200:
         print(f"Error Parques: {eventos.text}")
- 
     assert eventos.status_code == 200, "Error en la extracción de eventos"
+
     df = pd.DataFrame(eventos.json())
     
     if df.empty:
         return df
-        
+
     df['start_date_time'] = pd.to_datetime(df['start_date_time'], format='%Y-%m-%dT%H:%M:%S.%f', errors='coerce')
-    df["start_date_time"] = df["start_date_time"].dt.strftime('%H:%M:%S')
-    df['end_date_time'] = pd.to_datetime(df['end_date_time'], errors='coerce',  format='%Y-%m-%dT%H:%M:%S.%f')
-    df["end_date_time"] = df["end_date_time"].dt.strftime('%H:%M:%S')
-    df = df.drop(["event_id", "event_agency", "street_closure_type", 'community_board','police_precinct', 'cemsid','event_street_side' ], axis = 1)
+    df["start_date_time"] = df["start_date_time"].dt.strftime('%H:%M')
+    df['end_date_time'] = pd.to_datetime(df['end_date_time'], errors='coerce', format='%Y-%m-%dT%H:%M:%S.%f')
+    df["end_date_time"] = df["end_date_time"].dt.strftime('%H:%M')
+
+    df = df.drop(["event_id", "event_agency", "street_closure_type", 'community_board',
+                  'police_precinct', 'cemsid', 'event_street_side'], axis=1)
     
     riesgo_map = {
         'Parade': 10,
@@ -240,7 +247,7 @@ def api_nycopendata(db):
         'Street Event': 8,
         'Stationary Demonstration': 7,
         'Street Festival': 7,
-        'Special Event': 7,
+        'Special Event': 6,
         'Single Block Festival': 6,
         'Bike the Block': 6,
         'BID Multi-Block': 6,
@@ -267,41 +274,80 @@ def api_nycopendata(db):
     }
 
     df['nivel_riesgo_tipo'] = df['event_type'].map(riesgo_map)
-    df = df.sort_values(by = "nivel_riesgo_tipo", ascending= False)
-    
-    
+    tipos_nuevos = df[df['nivel_riesgo_tipo'].isna()]['event_type'].unique()
+    if len(tipos_nuevos) > 0:
+        df['nivel_riesgo_tipo'] = df['nivel_riesgo_tipo'].fillna(1)
+
+    df = df.sort_values(by="nivel_riesgo_tipo", ascending=False)
     df = df[df.nivel_riesgo_tipo > 6]
-    
+
     geolocator = Nominatim(user_agent="nyc_events_geocoder")
     geocode = RateLimiter(geolocator.geocode, min_delay_seconds=1, max_retries=2)
     
-    
-    df["coordenadas"] = df.apply(lambda row: list(extraer_coord(row["event_location"], row["event_borough"], geocode)), axis=1)
-    
-    
-    df["paradas_afectadas"] = df["coordenadas"].apply(lambda cor: extraccion_paradas(cursor_paradas_afectedas(cor,db)))
-    
-   
+    df["coordenadas"] = df.apply(
+        lambda row: list(extraer_coord(row["event_location"], row["event_borough"], geocode)), axis=1
+    )
+
+    coords_invalidas = df["coordenadas"].apply(lambda c: None in c)
+    n_invalidas = coords_invalidas.sum()
+    if n_invalidas > 0:   
+        df = df[~coords_invalidas].copy()
+
+    df["paradas_afectadas"] = df["coordenadas"].apply(
+        lambda cor: extraccion_paradas(cursor_paradas_afectedas(cor, db))
+    )
     df['paradas_afectadas'] = df['paradas_afectadas'].apply(fusionar_lista_estaciones)
-    
-    df = df.drop(columns=["coordenadas"], axis = 1)
-    
+
+    df = df.drop(columns=["coordenadas", "event_location", "event_type","event_borough"], axis=1)
+
+    mapeo_columnas = {
+        'event_name': 'nombre_evento',
+        'start_date_time': 'hora_inicio',
+        'end_date_time': 'hora_salida_estimada',
+    }
+    df = df.rename(columns=mapeo_columnas)
+
     return df
 
-if __name__ == "__main__": 
+def fusionar_dataframes(df_seat_geek, df_nyc):
+        df_seat_geek['score'] = (df_seat_geek['popularidad_score'] + df_seat_geek['venue_score']) / 2
+        df_seat_geek = df_seat_geek.drop(columns=['popularidad_score', 'venue_score', 'capacidad'])
+
+        df_nyc['score'] = df_nyc['nivel_riesgo_tipo'] / 10
+        df_nyc = df_nyc.drop(columns=['nivel_riesgo_tipo'])
+
+    
+
+        cols_comunes = ['nombre_evento', 'hora_inicio', 'hora_salida_estimada', 'score', 'paradas_afectadas']
+        df_final = pd.concat([
+            df_seat_geek[cols_comunes],
+            df_nyc[cols_comunes]
+            ], ignore_index=True)
+
+        df_final = df_final.sort_values('score', ascending=False).reset_index(drop=True)
+
+        return df_final
+
+if __name__ == "__main__":
 
     db = conectar_mongo()
     if db is not None:
+        df_seat_geek = None
+        df_nyc = None
+
         try:
             print("\nExtrayendo eventos de SeatGeek...")
             df_seat_geek = api_seatgeek(db)
-            
-            
-            print("Extrayendo eventos de NYC Open Data...")
+            print(f"  {len(df_seat_geek)} eventos extraídos de SeatGeek")
+        except Exception as e:
+            print(f"  Error en SeatGeek: {e}")
+
+        try:
+            print("\nExtrayendo eventos de NYC Open Data...")
             df_nyc = api_nycopendata(db)
-            print(df_nyc)
-            
-            
-        except AssertionError as e:
-            print(f"\nError de validación: {e}")
-            print("¿Te has acordado de cargar las variables de entorno (CLIENT_ID_SEATGEEK y NYC_OPEN_DATA_TOKEN)?")
+            print(f"  {len(df_nyc)} eventos extraídos de NYC Open Data")
+        except Exception as e:
+            print(f"  Error en NYC Open Data: {e}")
+
+        df_final = fusionar_dataframes(df_seat_geek, df_nyc)
+        print(df_final)
