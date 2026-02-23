@@ -26,8 +26,8 @@ def daterange(start_date, end_date):
 
 if __name__ == "__main__":
     # Definir el rango de fechas a procesar
-    start = date(2025, 1, 3)
-    end = date(2025, 3, 31)
+    start = date(2025, 1, 1)
+    end = date(2025, 12, 31)
     
     print(f"Iniciando pipeline para fechas desde {start} hasta {end}")
     
