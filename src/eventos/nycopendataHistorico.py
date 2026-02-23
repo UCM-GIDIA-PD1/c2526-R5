@@ -82,28 +82,44 @@ df['duration_hours'] = (df['end_date_time'] - df['start_date_time']).dt.total_se
 df = df.dropna(subset=['event_type'])
 
 riesgo_map = {
-    'Parade': 10,
-    'Athletic Race / Tour': 10,
-    'Street Event': 8,
-    'Special Event': 7,
-    'Plaza Event': 6,
-    'Plaza Partner Event': 6,
-    'Theater Load in and Load Outs': 5,
-    'Religious Event': 3,
-    'Farmers Market': 2,
-    'Sidewalk Sale': 2,
-    'Production Event': 1,
-    'Sport - Adult': 1,
-    'Sport - Youth': 1,
-    'Miscellaneous': 1,
-    'Open Street Partner Event': 2
+    'Special Event': 6,
+    'Street Event': 3,
+    'Production Event': 2,
+    'Sport - Youth': 2,
+    'Plaza Partner Event': 4,
+    'Sport - Adult': 3,
+    'Religious Event': 5,
+    'Parade': 9,
+    'Theater Load in and Load Outs': 4,
+    'Farmers Market': 4,
+    'Plaza Event': 4,
+    'Sidewalk Sale': 5,
+    'Single Block Festival': 6,
+    'Miscellaneous': 3,
+    'Open Street Partner Event': 6,
+    'Press Conference': 3,
+    'Stationary Demonstration': 7,
+    'Athletic Race / Tour': 8,
+    'Shooting Permit': 2,
+    'Street Festival': 7,
+    'Stickball': 1,
+    'Health Fair': 3,
+    'Block Party': 5,
+    'Clean-Up': 1,
+    'Filming/Photography': 2,
+    'Open Culture': 4,
+    'Rigging Permit': 3,
+    'Bike the Block': 6,
+    'BID Multi-Block': 6
 }
 
 df['nivel_riesgo_tipo'] = df['event_type'].map(riesgo_map)
-
+df = df[df["nivel_riesgo_tipo"] >= 7]
 print(df)
 print("Proceso finalizado")
 print("Subiendo a MinIO")
+'''
+
 #parte de subir al minio pero falta comprobar si funciona
 from minio import Minio
 import tempfile
@@ -144,3 +160,4 @@ finally:
     if tmp_path and os.path.exists(tmp_path):
         os.remove(tmp_path)
         print("Archivo temporal parquet eliminado del disco")
+'''

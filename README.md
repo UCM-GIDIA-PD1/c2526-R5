@@ -1,6 +1,33 @@
-# Proyecto PD1 - Grupo 5.
+# Express-Bound
+Proyecto de Datos I – Grupo 5
 
-## Estructura de almacenamiento en MinIO
+Facultad de Informática – UCM
+
+## Descripción del proyecto
+
+Express-Bound integra datos operativos y contextuales del metro de Nueva York para detectar patrones anómalos y estimar retrasos a corto plazo.
+
+El proyecto se centra en tres líneas principales:
+
+1. Predicción del retraso en una parada concreta.
+2. Modelado de la propagación de retrasos a lo largo de una línea.
+3. Detección temprana de incidencias operativas mediante análisis estadístico en tiempo real.
+
+El enfoque es de predicción a corto horizonte (15–60 minutos), utilizando tanto el estado actual de la red como información contextual (clima, calendario, estructura de la red).
+
+El sistema está diseñado siguiendo una arquitectura tipo data lake (raw → processed → cleaned → analysis) sobre almacenamiento en MinIO, garantizando trazabilidad y reproducibilidad del pipeline.
+
+## Estructura del proyecto
+```
+├── src/ # Scripts de ingestión, limpieza y generación de features
+├── notebooks/ # Análisis exploratorio y visualizaciones
+├── docs/ # Documentación adicional (data dictionary, quality report, sources)
+├── pyproject.toml # Configuración del entorno
+├── .gitignore
+└── README.md
+```
+
+## Almacenamiento en MinIO
 
 Los datos del proyecto se almacenan en un bucket S3-compatible (MinIO),
 siguiendo una arquitectura tipo data lake organizada en distintas capas
@@ -11,7 +38,8 @@ No se almacenan datos en GitHub.
 Bucket utilizado: `pd1`
 Raíz del proyecto: `grupo5/`
 
-## Estructura general
+### Estructura 
+
 ```
 pd1/
 └── grupo5/
@@ -75,4 +103,40 @@ grupo5/raw/gtfs_static/date=YYYY-MM-DD/nombre_archivo.parquet
 Lo cual permite:
 - Filtrado eficiente por fecha
 - Procesamiento incremental
+- Re-ejecución parcial del pipeline en caso de fallo
 
+## Configuración del entorno de desarrollo
+
+El proyecto utiliza Python y el gestor de dependencias `uv`.
+
+### Requisitos previos
+
+- Python >= 3.13
+- uv instalado
+- Acceso a MinIO (credenciales proporcionadas al grupo)
+
+### Configuración de variables de entorno
+
+Se recomienda utilizar variables de entorno del sistema (se podría utilizar .env con python-dotenv)
+```
+export MINIO_ACCESS_KEY=...
+export MINIO_SECRET_KEY=...
+```
+
+### Crear entorno, instalar dependencias y ejecutar scripts
+
+uv sync
+
+uv run python src/...
+
+## Autores
+- Alex García
+- David Rodríguez
+- Iván García
+- Chiara Gómez
+- Julia Huergo
+- Mario González
+- Sergio Dueñas
+- Juan Jurado
+
+Curso 2025-2026
