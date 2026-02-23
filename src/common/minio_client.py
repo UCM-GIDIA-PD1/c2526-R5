@@ -1,6 +1,9 @@
 '''
 Script simplificado para subir y descargar datos desde MinIO.
 
+Ejecutar siempre usando -m (ejecuta archivo como módulo dentro del paquete)
+Ejemplo: uv run python -m src.nombre_archivo
+
 Permite trabajar con:
 - Archivos locales
 - DataFrames (se guardan como Parquet)
