@@ -248,11 +248,11 @@ def process_mta_date(target_date):
     print(f"Procesando cruce de datos para {target_date}...")
     df_final = build_delay_datalake(st_trips, st_stops, rt_trips, rt_stops)
     
-    # Guardar el CSV en una carpeta temporal
+    # Guardar el parquet en una carpeta temporal
     tmp_dir = "tmp"
     os.makedirs(tmp_dir, exist_ok=True)
-    output_file = f"{tmp_dir}/mta_delays_{target_date}.csv"
-    df_final.to_csv(output_file, index=False)
+    output_file = f"{tmp_dir}/mta_delays_{target_date}.parquet"
+    df_final.to_parquet(output_file, engine="pyarrow")
 
     # Borrar todos los archivos crudos del disco local
     for f in [rt_trips, rt_stops]:
@@ -264,5 +264,5 @@ def process_mta_date(target_date):
     if os.path.exists(static_dir): 
         shutil.rmtree(static_dir)
         
-    # Devolvemos la ruta del CSV temporal para que el orquestador lo suba
+    # Devolvemos la ruta del parquet temporal para que el orquestador lo suba
     return output_file
