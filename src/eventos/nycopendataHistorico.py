@@ -141,7 +141,7 @@ riesgo_map = {
         'Shooting Permit': 2,
         'Filming/Photography': 2,
         'Open Street Partner Event': 2,
-        'Production Event': 1,
+        'Production Event': 1,  
         'Sport - Adult': 1,
         'Sport - Youth': 1,
         'Miscellaneous': 1,
