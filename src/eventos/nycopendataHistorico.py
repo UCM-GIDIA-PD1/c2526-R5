@@ -5,12 +5,18 @@ import pandas as pd
 import json
 from pymongo import MongoClient
 import numpy as np
+import io
+from minio import Minio
+from typing import Any
 
 from geopy.geocoders import Nominatim
 from geopy.extra.rate_limiter import RateLimiter
 
 
 urlbase = "https://data.cityofnewyork.us/resource/"
+
+DEFAULT_ENDPOINT = "minio.fdi.ucm.es"
+DEFAULT_BUCKET = "pd1"
 
 def desde_fecha(fecha_str):
        return f'{fecha_str}T00:00:00.000'
@@ -62,13 +68,38 @@ def extraccion_actual(ini, fin, token):
 
 TOKEN = os.getenv("NYC_OPEN_DATA_TOKEN")
 assert TOKEN is not None, "Falta la variable de entorno NYCOPENDATA_TOKEN"
+MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY")
+MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY")
+assert MINIO_ACCESS_KEY is not None, "Falta MINIO_ACCESS_KEY"
+assert MINIO_SECRET_KEY is not None, "Falta MINIO_SECRET_KEY"
+
+def _client(access_key: str, secret_key: str, endpoint: str = DEFAULT_ENDPOINT) -> Minio:
+    """Crear un cliente de MinIO"""
+    return Minio(endpoint, access_key=access_key, secret_key=secret_key)
+
+def upload_df_parquet(
+    access_key: str,
+    secret_key: str,
+    object_name: str,
+    df: pd.DataFrame,
+    endpoint: str = DEFAULT_ENDPOINT,
+    bucket: str = DEFAULT_BUCKET
+) -> None:
+    """Subir un pandas Dataframe como objeto parquet"""
+    c = _client(access_key, secret_key, endpoint)
+    buf = io.BytesIO()
+    df.to_parquet(buf, index=False)
+    buf.seek(0)
+    c.put_object(bucket, object_name, buf, length=buf.getbuffer().nbytes)
+
+
 
 inicio_2025 = desde_fecha('2025-01-01')
 final_2025 = hasta_fecha('2025-12-31')
-print("Iniciando el proceso de extracción")
+#print("Iniciando el proceso de extracción")
 df = extraccion_actual(inicio_2025, final_2025, TOKEN)
-print(df.shape)
-print(df.columns)
+#print(df.shape)
+#print(df.columns)
 
 if df.empty:
     print("No hay eventos en ese rango de fechas")
@@ -122,9 +153,9 @@ df['nivel_riesgo_tipo'] = df['event_type'].map(riesgo_map)
 df = df[df["nivel_riesgo_tipo"] >= 8]
 df = df.drop_duplicates(subset=["event_name", "start_date_time", "borough", "event_location"])
 df["score"] = df["nivel_riesgo_tipo"].map({8: 0.8, 9: 0.9, 10: 1.0})
-print(df)
-print("Proceso finalizado")
-print("Calculando coordenadas")
+#print(df)
+#print("Proceso finalizado")
+#print("Calculando coordenadas")
 
 def extraer_intersecciones(localizacion, barrio):
     """
@@ -211,7 +242,7 @@ df["lat"] = pd.to_numeric(df["lat"], errors="coerce")
 df.loc[(df["lon"] == 0) & (df["lat"] == 0), ["lon", "lat"]] = np.nan
 
 
-print("Calculando paradas afectadas")
+#print("Calculando paradas afectadas")
 
 url_servidor = 'mongodb://127.0.0.1:27017/'
 client = MongoClient(url_servidor)
@@ -262,9 +293,17 @@ df["paradas_afectadas"] = df.apply(
 #print(df[["event_name", "event_location", "borough", "lon", "lat", "paradas_afectadas"]].head(10))
 df["hora_inicio"] = df["start_date_time"].dt.strftime("%H:%M")
 df["hora_salida_estimada"] = df["end_date_time"].dt.strftime("%H:%M")
+df["fecha_inicio"] = df["start_date_time"].dt.strftime("%Y-%m-%d")
+df["fecha_final"] = df["end_date_time"].dt.strftime("%Y-%m-%d")
 
 df = df.rename(columns={"event_name": "nombre_evento"})
-
-df = df[["nombre_evento", "hora_inicio", "hora_salida_estimada", "score", "paradas_afectadas"]]
+df = df.reset_index(drop=True)
+df = df[["nombre_evento", "fecha_inicio", "hora_inicio", "fecha_final", "hora_salida_estimada", "score", "paradas_afectadas"]]
 print(df.head(10))
 print(len(df))
+'''
+print("Iniciando subida a MinIO")
+object_name = f"eventos_nyc/eventos_{datetime.now().strftime('%Y%m%d_%H%M%S')}.parquet"
+upload_df_parquet(MINIO_ACCESS_KEY, MINIO_SECRET_KEY, object_name, df)
+print(f"Subido a MinIO: {DEFAULT_BUCKET}/{object_name}")
+'''
