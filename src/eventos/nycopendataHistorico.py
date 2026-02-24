@@ -301,9 +301,35 @@ df = df.reset_index(drop=True)
 df = df[["nombre_evento", "fecha_inicio", "hora_inicio", "fecha_final", "hora_salida_estimada", "score", "paradas_afectadas"]]
 print(df.head(10))
 print(len(df))
+
+output_dir = "eventos_por_dia"
+os.makedirs(output_dir, exist_ok=True)
+
+df["fecha_inicio"] = pd.to_datetime(df["fecha_inicio"]).dt.strftime("%Y-%m-%d")
+
+print("Guardando dataframes por día en local...")
+
+for fecha, df_dia in df.groupby("fecha_inicio", sort=True):
+    df_dia = df_dia.reset_index(drop=True)
+
+    filename = f"{output_dir}/eventos_{fecha}.parquet"
+
+    df_dia.to_parquet(filename, index=False)
+
+    print(f"Guardado: {filename} (filas: {len(df_dia)})")
+
+print("Terminado.")
+
 '''
-print("Iniciando subida a MinIO")
-object_name = f"eventos_nyc/eventos_{datetime.now().strftime('%Y%m%d_%H%M%S')}.parquet"
-upload_df_parquet(MINIO_ACCESS_KEY, MINIO_SECRET_KEY, object_name, df)
-print(f"Subido a MinIO: {DEFAULT_BUCKET}/{object_name}")
+df["fecha_inicio"] = pd.to_datetime(df["fecha_inicio"]).dt.strftime("%Y-%m-%d")
+
+for fecha, df_dia in df.groupby("fecha_inicio", sort=True):
+    df_dia = df_dia.reset_index(drop=True)
+
+    object_name = f"eventos_nyc/dia={fecha}/eventos_{fecha}.parquet"
+    upload_df_parquet(MINIO_ACCESS_KEY, MINIO_SECRET_KEY, object_name, df_dia)
+
+    print(f"Subido: {DEFAULT_BUCKET}/{object_name} (filas: {len(df_dia)})")
+
+print("Terminado.")
 '''
