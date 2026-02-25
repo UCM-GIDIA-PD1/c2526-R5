@@ -1,4 +1,5 @@
-<img width="1024" height="1024" alt="Logo1PD" src="https://github.com/user-attachments/assets/da56b7fd-ebb1-44d5-a73c-2e438ef53e17" />
+<img width="1024" height="1024" alt="Logo1PD" src="https://github.com/user-attachments/assets/44ea9a4a-ce36-4497-9ec0-779366090aa4" />
+
 # Express-Bound
 Proyecto de Datos I – Grupo 5
 
