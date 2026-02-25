@@ -4,7 +4,6 @@ import requests
 from datetime import datetime, timedelta, date
 import pandas as pd
 import numpy as np
-from pymongo import MongoClient
 from collections import defaultdict
 from dotenv import load_dotenv
 from geopy.geocoders import Nominatim
@@ -46,7 +45,7 @@ CIUDADES_NYC = {'New York', 'Elmont', 'Newark', 'East Rutherford', 'Harrison'}
 
 
 # ─────────────────────────────────────────────
-#  Helpers compartidos
+#  Helpers compartidos y Cálculo Espacial
 # ─────────────────────────────────────────────
 def fusionar_lista_estaciones(lista_tuplas):
     """Fusiona líneas con el mismo nombre de estación."""
@@ -55,41 +54,55 @@ def fusionar_lista_estaciones(lista_tuplas):
 
     estaciones_fusionadas = defaultdict(set)
     for nombre, lineas in lista_tuplas:
-        estaciones_fusionadas[nombre].update(lineas.split())
+        estaciones_fusionadas[nombre].update(str(lineas).split())
 
     return [
         (nombre, " ".join(sorted(lineas_set)))
         for nombre, lineas_set in estaciones_fusionadas.items()
     ]
 
-
-def conectar_mongo():
-    url_servidor = 'mongodb://127.0.0.1:27017/'
-    client = MongoClient(url_servidor)
+def cargar_paradas_df():
+    """Descarga el CSV del metro de NY y lo prepara como DataFrame."""
+    url = "https://data.ny.gov/api/views/39hk-dx4f/rows.csv?accessType=DOWNLOAD"
     try:
-        s = client.server_info()
-        print("Conectado a MongoDB, versión", s["version"])
-        db = client["PD1"]
-        return db
+        df = pd.read_csv(url)
+        columnas_utiles = ['Stop Name', 'Daytime Routes', 'GTFS Longitude', 'GTFS Latitude']
+        df_limpio = df[columnas_utiles].copy()
+        
+        df_limpio = df_limpio.rename(columns={
+            'Stop Name': 'nombre',
+            'Daytime Routes': 'lineas',
+            'GTFS Longitude': 'lon',
+            'GTFS Latitude': 'lat'
+        })
+        return df_limpio
     except Exception as e:
-        print(f"Error de conexión: {e}")
-        print("¿Está arrancado el servidor de Mongo?")
+        print(f"Error descargando paradas: {e}")
         return None
 
-
-def cursor_paradas_afectedas(coordinates, db):
-    return db.subway.find({
-        "ubicacion": {
-            "$near": {
-                "$geometry": {"type": "Point", "coordinates": coordinates},
-                "$maxDistance": 500
-            }
-        }
-    })
-
-
-def extraccion_paradas(cursor):
-    return [(doc["nombre"], doc["lineas"]) for doc in cursor]
+def obtener_paradas_afectadas(coords, df_paradas, max_metros=500):
+    """Calcula la distancia Haversine y devuelve paradas a menos de max_metros."""
+    if not coords or None in coords or df_paradas is None or df_paradas.empty:
+        return []
+    
+    lon_evento, lat_evento = coords
+    
+    # Haversine vectorizado con NumPy
+    lat1, lon1 = np.radians(lat_evento), np.radians(lon_evento)
+    lat2, lon2 = np.radians(df_paradas['lat']), np.radians(df_paradas['lon'])
+    
+    dlat = lat2 - lat1
+    dlon = lon2 - lon1
+    
+    a = np.sin(dlat/2.0)**2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon/2.0)**2
+    c = 2 * np.arcsin(np.sqrt(a))
+    r = 6371000 # Radio de la Tierra en metros
+    
+    distancias = c * r
+    
+    # Filtramos las que están dentro del radio (500 metros)
+    cercanas = df_paradas[distancias <= max_metros]
+    return [(row['nombre'], row['lineas']) for _, row in cercanas.iterrows()]
 
 
 # ─────────────────────────────────────────────
@@ -116,7 +129,7 @@ def calcular_salida(fila, tiempos_salida):
     return hora_fin.strftime('%H:%M')
 
 
-def api_seatgeek(db):
+def api_seatgeek(df_paradas):
     fecha_hoy_obj = datetime.now()
     manana_obj = fecha_hoy_obj + timedelta(days=1)
     fecha_hoy_str = fecha_hoy_obj.strftime('%Y-%m-%d')
@@ -147,6 +160,9 @@ def api_seatgeek(db):
         })
 
     df = pd.DataFrame(eventos_limpios)
+    if df.empty:
+        return df
+
     df['capacidad'] = df['capacidad'].replace(0, np.nan)
 
     df['hora_inicio'] = pd.to_datetime(df['hora_inicio'])
@@ -169,7 +185,7 @@ def api_seatgeek(db):
         df = df[~coords_invalidas].copy()
 
     df["paradas_afectadas"] = df["coordinates"].apply(
-        lambda cor: extraccion_paradas(cursor_paradas_afectedas(cor, db))
+        lambda cor: obtener_paradas_afectadas(cor, df_paradas)
     )
     df['paradas_afectadas'] = df['paradas_afectadas'].apply(fusionar_lista_estaciones)
     df = df.drop(columns=["coordinates", "tipo"])
@@ -226,7 +242,7 @@ def extraer_coord(localizacion, barrio, geocode):
     return None, None
 
 
-def api_nycopendata(db):
+def api_nycopendata(df_paradas):
     urlbase = "https://data.cityofnewyork.us/resource/"
     url_eventos = f"{urlbase}tvpp-9vvx.json"
 
@@ -284,7 +300,7 @@ def api_nycopendata(db):
         df = df[~coords_invalidas].copy()
 
     df["paradas_afectadas"] = df["coordenadas"].apply(
-        lambda cor: extraccion_paradas(cursor_paradas_afectedas(cor, db))
+        lambda cor: obtener_paradas_afectadas(cor, df_paradas)
     )
     df['paradas_afectadas'] = df['paradas_afectadas'].apply(fusionar_lista_estaciones)
     df = df.drop(columns=["coordenadas", "event_location", "event_type", "event_borough"])
@@ -340,7 +356,7 @@ def geocodificar_venue(nombre_venue, funcion_geocode):
     return None, None
 
 
-def api_espn(db):
+def api_espn(df_paradas):
     """Extrae partidos en casa de equipos NYC para el día de hoy desde ESPN."""
     hoy = date.today()
     fecha_gte = hoy.strftime("%Y%m%d")
@@ -369,9 +385,9 @@ def api_espn(db):
                     coordinates = [longitud, latitud] if (longitud and latitud) else []
 
                     paradas = []
-                    if coordinates and db is not None:
+                    if coordinates and df_paradas is not None:
                         paradas = fusionar_lista_estaciones(
-                            extraccion_paradas(cursor_paradas_afectedas(coordinates, db))
+                            obtener_paradas_afectadas(coordinates, df_paradas)
                         )
 
                     filas.append({
@@ -441,30 +457,32 @@ def fusionar_dataframes(df_seat_geek, df_nyc, df_espn):
 # ─────────────────────────────────────────────
 if __name__ == "__main__":
     load_dotenv()
-    db = conectar_mongo()
-
-    if db is not None:
+    
+    print("\nCargando paradas de metro desde el CSV...")
+    df_paradas = cargar_paradas_df()
+    
+    if df_paradas is not None:
         df_seat_geek = None
         df_nyc = None
         df_espn = None
 
         try:
             print("\nExtrayendo eventos de SeatGeek...")
-            df_seat_geek = api_seatgeek(db)
+            df_seat_geek = api_seatgeek(df_paradas)
             print(f"  {len(df_seat_geek)} eventos extraídos de SeatGeek")
         except Exception as e:
             print(f"  Error en SeatGeek: {e}")
 
         try:
             print("\nExtrayendo eventos de NYC Open Data...")
-            df_nyc = api_nycopendata(db)
+            df_nyc = api_nycopendata(df_paradas)
             print(f"  {len(df_nyc)} eventos extraídos de NYC Open Data")
         except Exception as e:
             print(f"  Error en NYC Open Data: {e}")
 
         try:
             print("\nExtrayendo partidos ESPN (equipos NYC en casa)...")
-            df_espn = api_espn(db)
+            df_espn = api_espn(df_paradas)
             print(f"  {len(df_espn)} partidos extraídos de ESPN")
         except Exception as e:
             print(f"  Error en ESPN: {e}")
