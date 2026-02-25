@@ -114,11 +114,8 @@ dependencies = [
     { name = "fastapi" },
     { name = "geopy" },
     { name = "gtfs-realtime-bindings" },
-<<<<<<< HEAD
-=======
     { name = "matplotlib" },
     { name = "meteostat" },
->>>>>>> 4dbacc9397144b7eb9e3c65dbc7c2586bf371575
     { name = "minio" },
     { name = "numpy" },
     { name = "openmeteo-requests" },
