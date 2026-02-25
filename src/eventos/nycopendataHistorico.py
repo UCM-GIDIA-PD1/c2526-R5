@@ -27,7 +27,7 @@ def hasta_fecha(fecha_str):
 def extraccion_actual(ini, fin, token):
     url_eventos = f"{urlbase}bkfu-528j.json"
 
-    limit = 10000
+    limit = 100000
 
     header = {
         "X-App-Token": token
@@ -61,7 +61,7 @@ def extraccion_actual(ini, fin, token):
         offset += limit
         print(f"Descargadas ~{offset} filas...")
 
-        break #para comprobar
+        #break #para comprobar
 
     df = pd.concat(chunks, ignore_index=True) if chunks else pd.DataFrame()
     return df
@@ -94,8 +94,8 @@ def upload_df_parquet(
 
 
 
-inicio_2025 = desde_fecha('2025-01-01')
-final_2025 = hasta_fecha('2025-12-31')
+inicio_2025 = desde_fecha('2025-08-01')
+final_2025 = hasta_fecha('2025-08-31')
 #print("Iniciando el proceso de extracción")
 df = extraccion_actual(inicio_2025, final_2025, TOKEN)
 #print(df.shape)
@@ -213,8 +213,8 @@ def extraer_coord(localizacion, barrio, geocode):
 
 
 
-geolocator = Nominatim(user_agent="pd1_eventos_nyc")
-geocode = RateLimiter(geolocator.geocode, min_delay_seconds=1)
+geolocator = Nominatim(user_agent="pd1_eventos_nyc", timeout=10)
+geocode = RateLimiter(geolocator.geocode, min_delay_seconds=1.2, max_retries=5, error_wait_seconds=2, swallow_exceptions=True, return_value_on_exception=None)
 
 
 
@@ -302,6 +302,9 @@ df = df[["nombre_evento", "fecha_inicio", "hora_inicio", "fecha_final", "hora_sa
 print(df.head(10))
 print(len(df))
 
+
+#para guardar en local por día
+'''
 output_dir = "eventos_por_dia"
 os.makedirs(output_dir, exist_ok=True)
 
@@ -319,17 +322,18 @@ for fecha, df_dia in df.groupby("fecha_inicio", sort=True):
     print(f"Guardado: {filename} (filas: {len(df_dia)})")
 
 print("Terminado.")
-
 '''
+
+#para subir a minIO por día
+
 df["fecha_inicio"] = pd.to_datetime(df["fecha_inicio"]).dt.strftime("%Y-%m-%d")
 
 for fecha, df_dia in df.groupby("fecha_inicio", sort=True):
     df_dia = df_dia.reset_index(drop=True)
 
-    object_name = f"eventos_nyc/dia={fecha}/eventos_{fecha}.parquet"
+    object_name = f"grupo5/raw/eventos_nyc/dia={fecha}/eventos_{fecha}.parquet"
     upload_df_parquet(MINIO_ACCESS_KEY, MINIO_SECRET_KEY, object_name, df_dia)
 
     print(f"Subido: {DEFAULT_BUCKET}/{object_name} (filas: {len(df_dia)})")
 
 print("Terminado.")
-'''
