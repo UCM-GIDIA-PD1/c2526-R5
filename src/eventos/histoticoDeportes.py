@@ -4,8 +4,8 @@ import time
 import calendar
 import requests
 import pandas as pd
+import numpy as np
 from collections import defaultdict
-from pymongo import MongoClient
 from minio import Minio
 from geopy.geocoders import Nominatim
 from geopy.extra.rate_limiter import RateLimiter
@@ -62,32 +62,50 @@ def upload_df_parquet(access_key, secret_key, object_name, df,
 
 
 # ─────────────────────────────────────────────
-#  MongoDB
+#  Cálculo Espacial y Helpers
 # ─────────────────────────────────────────────
-def conectar_mongo():
-    url_servidor = 'mongodb://127.0.0.1:27017/'
-    client = MongoClient(url_servidor)
+def cargar_paradas_df():
+    """Descarga el CSV del metro de NY y lo prepara como DataFrame."""
+    url = "https://data.ny.gov/api/views/39hk-dx4f/rows.csv?accessType=DOWNLOAD"
     try:
-        client.server_info()
-        db = client["PD1"]
-        return db
-    except Exception:
+        df = pd.read_csv(url)
+        columnas_utiles = ['Stop Name', 'Daytime Routes', 'GTFS Longitude', 'GTFS Latitude']
+        df_limpio = df[columnas_utiles].copy()
+        
+        df_limpio = df_limpio.rename(columns={
+            'Stop Name': 'nombre',
+            'Daytime Routes': 'lineas',
+            'GTFS Longitude': 'lon',
+            'GTFS Latitude': 'lat'
+        })
+        return df_limpio
+    except Exception as e:
+        print(f"Error descargando paradas: {e}")
         return None
 
 
-def cursor_paradas_afectadas(coordinates, db):
-    return db.subway.find({
-        "ubicacion": {
-            "$near": {
-                "$geometry": {"type": "Point", "coordinates": coordinates},
-                "$maxDistance": 700
-            }
-        }
-    })
-
-
-def extraccion_paradas(cursor):
-    return [(doc["nombre"], doc["lineas"]) for doc in cursor]
+def obtener_paradas_afectadas(coords, df_paradas, max_metros=700):
+    """Calcula la distancia Haversine y devuelve paradas a menos de max_metros."""
+    if not coords or None in coords or df_paradas is None or df_paradas.empty:
+        return []
+    
+    lon_evento, lat_evento = coords
+    
+    # Haversine vectorizado con NumPy
+    lat1, lon1 = np.radians(lat_evento), np.radians(lon_evento)
+    lat2, lon2 = np.radians(df_paradas['lat']), np.radians(df_paradas['lon'])
+    
+    dlat = lat2 - lat1
+    dlon = lon2 - lon1
+    
+    a = np.sin(dlat/2.0)**2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon/2.0)**2
+    c = 2 * np.arcsin(np.sqrt(a))
+    r = 6371000  # Radio de la Tierra en metros
+    
+    distancias = c * r
+    
+    cercanas = df_paradas[distancias <= max_metros]
+    return [(row['nombre'], row['lineas']) for _, row in cercanas.iterrows()]
 
 
 def fusionar_lista_estaciones(lista_tuplas):
@@ -96,7 +114,7 @@ def fusionar_lista_estaciones(lista_tuplas):
 
     estaciones_fusionadas = defaultdict(set)
     for nombre, lineas in lista_tuplas:
-        estaciones_fusionadas[nombre].update(lineas.split())
+        estaciones_fusionadas[nombre].update(str(lineas).split())
 
     return [(nombre, " ".join(sorted(lineas_set))) for nombre, lineas_set in estaciones_fusionadas.items()]
 
@@ -206,6 +224,7 @@ def extraccion_nyc_anual(year):
     dataframes_mensuales = []
 
     for month in range(1, 13):
+        print(f"Extrayendo datos de ESPN para {month:02d}/{year}...")
         df_mes = extraccion_nyc(year, month)
         if not df_mes.empty:
             dataframes_mensuales.append(df_mes)
@@ -228,22 +247,28 @@ if __name__ == "__main__":
     assert MINIO_ACCESS_KEY is not None, "Falta MINIO_ACCESS_KEY"
     assert MINIO_SECRET_KEY is not None, "Falta MINIO_SECRET_KEY"
 
-    db = conectar_mongo()
+    # Cargar paradas en lugar de conectar a Mongo
+    print("Cargando paradas de metro desde CSV...")
+    df_paradas = cargar_paradas_df()
+    
+    print(f"Extrayendo eventos deportivos para el año {ANIO_A_EXTRAER}...")
     df = extraccion_nyc_anual(ANIO_A_EXTRAER)
 
     if df.empty:
         print("No hay eventos para el año indicado.")
         exit()
 
-    if db is not None:
+    if df_paradas is not None:
+        print("Calculando paradas afectadas en radio de 700m...")
         df["paradas_afectadas"] = df["coordinates"].apply(
-            lambda cor: extraccion_paradas(cursor_paradas_afectadas(cor, db)) if cor else []
+            lambda cor: obtener_paradas_afectadas(cor, df_paradas, max_metros=700) if cor else []
         )
         df['paradas_afectadas'] = df['paradas_afectadas'].apply(fusionar_lista_estaciones)
 
     df = df.drop(columns=["coordinates"])
 
     # Subir a MinIO un parquet por día
+    print("Subiendo archivos a MinIO...")
     subidos = 0
     for fecha, df_dia in df.groupby("fecha_inicio", sort=True):
         if df_dia.empty:
