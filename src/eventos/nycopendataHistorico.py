@@ -8,6 +8,7 @@ import numpy as np
 import io
 from minio import Minio
 from typing import Any
+from collections import defaultdict
 
 from geopy.geocoders import Nominatim
 from geopy.extra.rate_limiter import RateLimiter
@@ -93,9 +94,65 @@ def upload_df_parquet(
     c.put_object(bucket, object_name, buf, length=buf.getbuffer().nbytes)
 
 
+def fusionar_lista_estaciones(lista_tuplas):
+    """Fusiona líneas con el mismo nombre de estación."""
+    if not isinstance(lista_tuplas, list):
+        return lista_tuplas
 
-inicio_2025 = desde_fecha('2025-08-01')
-final_2025 = hasta_fecha('2025-08-31')
+    estaciones_fusionadas = defaultdict(set)
+    for nombre, lineas in lista_tuplas:
+        estaciones_fusionadas[nombre].update(str(lineas).split())
+
+    return [
+        (nombre, " ".join(sorted(lineas_set)))
+        for nombre, lineas_set in estaciones_fusionadas.items()
+    ]
+
+def cargar_paradas_df():
+    """Descarga el CSV del metro de NY y lo prepara como DataFrame."""
+    url = "https://data.ny.gov/api/views/39hk-dx4f/rows.csv?accessType=DOWNLOAD"
+    try:
+        df = pd.read_csv(url)
+        columnas_utiles = ['Stop Name', 'Daytime Routes', 'GTFS Longitude', 'GTFS Latitude']
+        df_limpio = df[columnas_utiles].copy()
+
+        df_limpio = df_limpio.rename(columns={
+            'Stop Name': 'nombre',
+            'Daytime Routes': 'lineas',
+            'GTFS Longitude': 'lon',
+            'GTFS Latitude': 'lat'
+        })
+        return df_limpio
+    except Exception as e:
+        print(f"Error descargando paradas: {e}")
+        return None
+
+def obtener_paradas_afectadas(coords, df_paradas, max_metros=500):
+    """Calcula la distancia Haversine y devuelve paradas a menos de max_metros."""
+    if not coords or None in coords or df_paradas is None or df_paradas.empty:
+        return []
+
+    lon_evento, lat_evento = coords
+
+    # Haversine vectorizado con NumPy
+    lat1, lon1 = np.radians(lat_evento), np.radians(lon_evento)
+    lat2, lon2 = np.radians(df_paradas['lat']), np.radians(df_paradas['lon'])
+
+    dlat = lat2 - lat1
+    dlon = lon2 - lon1
+
+    a = np.sin(dlat/2.0)**2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon/2.0)**2
+    c = 2 * np.arcsin(np.sqrt(a))
+    r = 6371000  # Radio Tierra (m)
+
+    distancias = c * r
+
+    cercanas = df_paradas[distancias <= max_metros]
+    return [(row['nombre'], row['lineas']) for _, row in cercanas.iterrows()]
+
+
+inicio_2025 = desde_fecha('2025-01-01')
+final_2025 = hasta_fecha('2025-12-31')
 #print("Iniciando el proceso de extracción")
 df = extraccion_actual(inicio_2025, final_2025, TOKEN)
 #print(df.shape)
@@ -244,46 +301,13 @@ df.loc[(df["lon"] == 0) & (df["lat"] == 0), ["lon", "lat"]] = np.nan
 
 #print("Calculando paradas afectadas")
 
-url_servidor = 'mongodb://127.0.0.1:27017/'
-client = MongoClient(url_servidor)
-
-# código para ver si se ha conectado bien
-try:
-    s = client.server_info()  # si hay error tendremos una excepción
-    print("Conectado a MongoDB, versión", s["version"])
-    db = client["PD1"]
-except:
-    print("Error de conexión ¿está arrancado el servidor?")
-
-
-def cursor_paradas_afectedas(coordinates):  # coordinates de esta forma [longitud, latitud]
-    cursor = db.subway.find(
-        {
-            "ubicacion":
-                {"$near":
-                    {
-                        "$geometry": {"type": "Point", "coordinates": coordinates},
-                        "$maxDistance": 500
-                    }
-                }
-        }
-    )
-    return cursor
-
-
-def extraccion_paradas(cursor):
-    afectadas = []
-    for doc in cursor:
-        afectadas.append((doc["nombre"], doc["lineas"]))
-    return afectadas
-
-
+df_paradas = cargar_paradas_df()
 
 def paradas_afectadas_evento(lon, lat):
     if pd.isna(lon) or pd.isna(lat):
         return []
-    cursor = cursor_paradas_afectedas([float(lon), float(lat)])
-    return extraccion_paradas(cursor)
+    afectadas = obtener_paradas_afectadas((float(lon), float(lat)), df_paradas, max_metros=500)
+    return fusionar_lista_estaciones(afectadas)
 
 df["paradas_afectadas"] = df.apply(
     lambda r: paradas_afectadas_evento(r["lon"], r["lat"]),
