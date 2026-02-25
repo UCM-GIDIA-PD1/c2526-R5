@@ -96,11 +96,11 @@ def obtener_paradas_afectadas(coords, df_paradas, max_metros=500):
     
     a = np.sin(dlat/2.0)**2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon/2.0)**2
     c = 2 * np.arcsin(np.sqrt(a))
-    r = 6371000 # Radio de la Tierra en metros
+    r = 6371000
     
     distancias = c * r
     
-    # Filtramos las que están dentro del radio (500 metros)
+    
     cercanas = df_paradas[distancias <= max_metros]
     return [(row['nombre'], row['lineas']) for _, row in cercanas.iterrows()]
 
