@@ -269,8 +269,8 @@ def union_dataframes(df1, df2):
     df['delay'] = df['segundos_reales']-df['segundos_previstos']
 
     #Ajuste para viajes que deberían llegar al final del día (23:00) pero por retraso llega al día siguiente
-    df.loc[df['delay'] > 43200, 'delay'] += 86400
-    df.loc[df['delay'] < -43200, 'delay'] -= 86400
+    df.loc[df['delay'] > 43200, 'delay'] -= 86400
+    df.loc[df['delay'] < -43200, 'delay'] += 86400
 
     #Comprueba que los datos dados son de trenes que ya han realizado sus paradas y no son predicciones que realiza la
     # api para el futuro de los trayectos. Los que son predicciones marcamos el delay a None
