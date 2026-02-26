@@ -12,7 +12,7 @@ from collections import defaultdict
 from geopy.geocoders import Nominatim
 from geopy.extra.rate_limiter import RateLimiter
 
-#Primera parte: Extracción
+# --- 1) Extracción de eventos (NYC Open Data) ---
 
 urlbase = "https://data.cityofnewyork.us/resource/"
 TOKEN = os.getenv("NYC_OPEN_DATA_TOKEN")
@@ -29,6 +29,9 @@ def hasta_fecha(fecha_str):
    return f'{fecha_str}T23:59:59.000'
 
 def extraccion_actual(ini, fin, token):
+    '''
+    Descarga del json todas las filas que cumplan con el rango de fechas indicado y crea un dataframe con esos datos
+    '''
     url_eventos = f"{urlbase}bkfu-528j.json"
 
     limit = 100000
@@ -70,7 +73,7 @@ def extraccion_actual(ini, fin, token):
     df = pd.concat(chunks, ignore_index=True) if chunks else pd.DataFrame()
     return df
 
-#Segunda Parte: Cálculo de Coordenadas
+# --- 2) Geocodificación: cálculo de (lon, lat) a partir de la ubicación ---
 
 def extraer_intersecciones(localizacion, barrio):
     """
@@ -127,7 +130,7 @@ def extraer_coord(localizacion, barrio, geocode):
     return 0, 0
 
 
-#Tercera Parte: Paradas Afectadas por Coordenadas
+# --- 3) Cálculo de paradas de metro afectadas (radio 500 m) ---
 
 def fusionar_lista_estaciones(lista_tuplas):
     """Fusiona líneas con el mismo nombre de estación."""
@@ -192,7 +195,7 @@ def paradas_afectadas_evento(lon, lat):
     return fusionar_lista_estaciones(afectadas)
 
 
-#Cuarta Parte: Subida a Minio
+# --- 4) Configuración y funciones de almacenamiento en MinIO ---
 
 MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY")
 MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY")
@@ -272,14 +275,14 @@ riesgo_map = {
         'Clean-Up': 1
 }
 
-#Filtro del mapa aplicado al df
+#Filtro del mapa aplicado al df y eliminación de duplicados
 df['nivel_riesgo_tipo'] = df['event_type'].map(riesgo_map)
 df = df[df["nivel_riesgo_tipo"] >= 8]
 df = df.drop_duplicates(subset=["event_name", "start_date_time", "borough", "event_location"])
 df["score"] = df["nivel_riesgo_tipo"].map({8: 0.8, 9: 0.9, 10: 1.0})
 
 
-
+#Empieza la extracción de coordenadas
 geolocator = Nominatim(user_agent="pd1_eventos_nyc", timeout=10)
 geocode = RateLimiter(geolocator.geocode, min_delay_seconds=1.2, max_retries=5, error_wait_seconds=2, swallow_exceptions=True, return_value_on_exception=None)
 
@@ -306,7 +309,7 @@ df["lat"] = pd.to_numeric(df["lat"], errors="coerce")
 df.loc[(df["lon"] == 0) & (df["lat"] == 0), ["lon", "lat"]] = np.nan
 
 
-#print("Calculando paradas afectadas")
+#Empieza el cálculo de las paradas afectadas por evento
 
 df_paradas = cargar_paradas_df()
 
@@ -315,18 +318,19 @@ df["paradas_afectadas"] = df.apply(
     axis=1
 )
 
-#print(df[["event_name", "event_location", "borough", "lon", "lat", "paradas_afectadas"]].head(10))
+#Preparación para dejar el df final con lo necesario.
 df["hora_inicio"] = df["start_date_time"].dt.strftime("%H:%M")
 df["hora_salida_estimada"] = df["end_date_time"].dt.strftime("%H:%M")
 df["fecha_inicio"] = df["start_date_time"].dt.strftime("%Y-%m-%d")
 df["fecha_final"] = df["end_date_time"].dt.strftime("%Y-%m-%d")
-
 df = df.rename(columns={"event_name": "nombre_evento"})
 df = df.reset_index(drop=True)
 df = df[["nombre_evento", "fecha_inicio", "hora_inicio", "fecha_final", "hora_salida_estimada", "score", "paradas_afectadas"]]
 print(df.head(10))
 print(len(df))
 
+
+#Este bloque se encarga de la subida a MinIO
 df["fecha_inicio"] = pd.to_datetime(df["fecha_inicio"]).dt.strftime("%Y-%m-%d")
 
 for fecha, df_dia in df.groupby("fecha_inicio", sort=True):
