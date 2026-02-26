@@ -21,26 +21,34 @@ def daterange(start_date, end_date):
     for n in range(int((end_date - start_date).days) + 1):
         yield start_date + timedelta(n)
 
-if __name__ == "__main__":
-    # Definir el rango de fechas a procesar
-    start = date(2025, 1, 1)
-    end = date(2025, 12, 31)
-    
-    print(f"Iniciando pipeline para fechas desde {start} hasta {end}")
-    
-    for single_date in daterange(start, end):
+
+def process_and_store_gtfs_range(start: str, end: str) -> None:
+    """Procesa y sube GTFS para un rango de fechas.
+
+    Args:
+        start: fecha inicio 'YYYY-MM-DD'
+        end: fecha fin 'YYYY-MM-DD'
+    """
+    from datetime import datetime
+
+    start_date = datetime.strptime(start, "%Y-%m-%d").date()
+    end_date = datetime.strptime(end, "%Y-%m-%d").date()
+
+    print(f"Iniciando pipeline para fechas desde {start_date} hasta {end_date}")
+
+    for single_date in daterange(start_date, end_date):
         target_date_str = single_date.strftime("%Y-%m-%d")
-        print(f"Procesando días: {target_date_str}")
-        
+        print(f"Procesando día: {target_date_str}")
+
         try:
             # Procesa los datos static y realtime del día y devuelve ruta del Parquet final
             local_parquet_path = process_mta_date(target_date_str)
-            
+
             # Subir el parquet a MinIO
             minio_destination_path = f"grupo5/processed/gtfs_with_delays/date={target_date_str}/mta_delays_{target_date_str}.parquet"
-            
+
             print(f"Subiendo archivo a MinIO: {minio_destination_path} en el bucket {BUCKET_NAME}...")
-            
+
             # Subida usando helper
             upload_file(
                 access_key=ACCESS_KEY,
@@ -49,9 +57,9 @@ if __name__ == "__main__":
                 file_path=local_parquet_path,
                 bucket=BUCKET_NAME,
             )
-            
+
             print(f" Archivo subido correctamente a MinIO.")
-                
+
         except Exception as e:
             import traceback
             print(f"Error procesando la fecha {target_date_str}: {e}")
@@ -60,5 +68,15 @@ if __name__ == "__main__":
         finally:
             # Limpiar el parquet temporal del disco local (para no saturar disco)
             if local_parquet_path and os.path.exists(local_parquet_path):
-                os.remove(local_parquet_path)
-                print(f"Archivo temporal local '{local_parquet_path}' eliminado.")
+                try:
+                    os.remove(local_parquet_path)
+                    print(f"Archivo temporal local '{local_parquet_path}' eliminado.")
+                except Exception:
+                    pass
+
+if __name__ == "__main__":
+    # Definir el rango de fechas a procesar
+    start = date(2025, 12, 1)
+    end = date(2025, 12, 31)
+    
+    process_and_store_gtfs_range(start, end)
