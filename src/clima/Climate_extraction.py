@@ -69,7 +69,7 @@ try:
     buffer.seek(0)  # Volver al inicio del buffer para que se lea correctamente
     client.put_object(bucket_name='pd1', object_name='grupo5/processed/Clima/ClimaHistorico2025.parquet',
     data=buffer, length=buffer.getbuffer().nbytes, content_type='application/octet-stream')
-    print(f'DataFrame guardado como parquet y subido a MinIO como comun/df1.parquet en el bucket pd1.')
+    print(f'DataFrame guardado como parquet y subido a MinIO como grupo5/processed/Clima/ClimaHistorico2025.parquet en el bucket pd1.')
     
 
 
