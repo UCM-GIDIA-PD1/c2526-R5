@@ -85,7 +85,8 @@ def subir_a_MinIO(dia, df_dia, client):
 
 def extraccion_historico(fechaini = "2024-12-31", fechafin = "2026-01-01"):
     return extraccion(fechaini, fechafin)
-def ingest_climas_historicos(fechaini, fechafin):
+
+def ingest_clima_historico(fechaini, fechafin):
     df_historico = extraccion_historico(fechaini, fechafin)
     separar_dias(df_historico)
     
