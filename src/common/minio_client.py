@@ -55,7 +55,7 @@ DEFAULT_BUCKET = "pd1"
 
 def _client(access_key: str, secret_key: str, endpoint: str = DEFAULT_ENDPOINT) -> Minio:
     """Crear un cliente de MinIO"""
-    return Minio(endpoint, access_key=access_key, secret_key=secret_key)
+    return Minio(endpoint, access_key=access_key, secret_key=secret_key, secure=True)
 
 
 # Archivos (upload/download)
