@@ -11,16 +11,17 @@ import sys
 from typing import Callable, Dict, List
 
 #from src.clima.ingest import ingest_clima
-#from src.eventos.ingest import ingest_eventos
+from src.eventos.ingest import ingest_eventos
 from src.gtfs_historico.ingest import process_and_store_gtfs_range as ingest_gtfs_historico
 #from src.alertas_oficiales_tiempo_real.ingest import ingest_alertas
+
 
 
 IngestFn = Callable[[str, str], None]
 
 REGISTRY: Dict[str, IngestFn] = {
     #"clima": ingest_clima,
-    #"eventos": ingest_eventos,
+    "eventos": ingest_eventos,
     "gtfs_historico": ingest_gtfs_historico,
     #"tiempo_real_metro": ingest_tiempo_real,
     #"alertas_oficiales_tiempo_real": ingest_alertas,
