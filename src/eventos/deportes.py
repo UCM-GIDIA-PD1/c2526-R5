@@ -15,9 +15,9 @@ from .utils_eventos import (
     cargar_paradas_df,
     fusionar_lista_estaciones,
     obtener_paradas_afectadas,
-    upload_df_parquet,
     DEFAULT_BUCKET,
 )
+from src.common.minio_client import upload_df_parquet
 
 import pandas as pd
 

@@ -21,7 +21,7 @@ IngestFn = Callable[[str, str], None]
 
 REGISTRY: Dict[str, IngestFn] = {
     "eventos": ingest_eventos,
-    "clima_ historico": ingest_clima_historico,
+    "clima": ingest_clima_historico,
     "gtfs_historico": ingest_gtfs_historico,
     #"tiempo_real_metro": ingest_tiempo_real,
     #"alertas_oficiales_tiempo_real": ingest_alertas,
