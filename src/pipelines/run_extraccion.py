@@ -11,11 +11,7 @@ import sys
 from typing import Callable, Dict, List
 
 from src.clima.ingest_clima_historico import ingest_clima_historico
-<<<<<<< HEAD
-#from src.eventos.ingest import ingest_eventos
-=======
 from src.eventos.ingest import ingest_eventos
->>>>>>> e05bf1a50e2c5249bcc07a0b91f7a77023cd1955
 from src.gtfs_historico.ingest import process_and_store_gtfs_range as ingest_gtfs_historico
 #from src.alertas_oficiales_tiempo_real.ingest import ingest_alertas
 
