@@ -72,6 +72,7 @@ def separar_dias(df):
     client = Minio(endpoint='minio.fdi.ucm.es', access_key=ACCESS_KEY, secret_key=SECRET_KEY)
     for dia, df_dia in df.groupby(df['Date'].dt.date):
         subir_a_MinIO(dia, df_dia, client)
+    print("Todo subido con exito")
         
 def subir_a_MinIO(dia, df_dia, client):
     buffer = io.BytesIO()
@@ -80,13 +81,12 @@ def subir_a_MinIO(dia, df_dia, client):
     buffer.seek(0)  # Volver al inicio del buffer para que se lea correctamente
     client.put_object(bucket_name='pd1', object_name=name,
     data=buffer, length=buffer.getbuffer().nbytes, content_type='application/octet-stream')
-    print(f'DataFrame guardado como parquet y subido a MinIO como grupo5/processed/Clima/DataFrame_Clima_TiempoReal.parquet en el bucket pd1.')
-
+    print("Archivo subido con exito a" + name)
 
 def extraccion_historico(fechaini = "2024-12-31", fechafin = "2026-01-01"):
     return extraccion(fechaini, fechafin)
-if __name__ == "__main__":
-    df_historico = extraccion_historico()
+def ingest_climas_historicos(fechaini, fechafin):
+    df_historico = extraccion_historico(fechaini, fechafin)
     separar_dias(df_historico)
     
     
