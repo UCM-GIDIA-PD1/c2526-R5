@@ -82,6 +82,7 @@ def add_derivated_features(df: pd.DataFrame, service_date: str) -> pd.DataFrame:
     - hour (aprox desde scheduled_seconds si existe; si no desde actual_seconds)
     - dow, is_weekend
     - hour_sin/cos
+    - scheduled_time y actual_time en formato HH:MM:SS (para cruzar con clima/eventos)
     """
     out = df.copy()
     out["service_date"] = service_date
@@ -96,6 +97,29 @@ def add_derivated_features(df: pd.DataFrame, service_date: str) -> pd.DataFrame:
     dt = pd.to_datetime(out["service_date"], format="%Y-%m-%d", errors="coerce")
     out["dow"] = dt.dt.dayofweek.astype("Int64")
     out["is_weekend"] = out["dow"].isin([5, 6]).astype("Int64")
+
+    # Añadir columnas de tiempo formateado (HH:MM:SS) para scheduled y actual, si existen
+
+    if "scheduled_seconds" in out.columns:
+        # Añadimos fillna(0) para que Numpy no lanze error al convertir NaNs a timedelta, luego corregimos a None
+        td_sched = pd.to_timedelta(out["scheduled_seconds"].fillna(0), unit='s')
+        # Formatear rellenando con ceros a la izquierda (ej. 08:05:09)
+        out["scheduled_time"] = (
+            td_sched.dt.components.hours.astype(str).str.zfill(2) + ":" +
+            td_sched.dt.components.minutes.astype(str).str.zfill(2) + ":" +
+            td_sched.dt.components.seconds.astype(str).str.zfill(2)
+        )
+        # Los NaNs se convertirán en "nan:nan:nan", los limpiamos:
+        out.loc[out["scheduled_seconds"].isna(), "scheduled_time"] = None
+
+    if "actual_seconds" in out.columns:
+        td_act = pd.to_timedelta(out["actual_seconds"].fillna(0), unit='s')
+        out["actual_time"] = (
+            td_act.dt.components.hours.astype(str).str.zfill(2) + ":" +
+            td_act.dt.components.minutes.astype(str).str.zfill(2) + ":" +
+            td_act.dt.components.seconds.astype(str).str.zfill(2)
+        )
+        out.loc[out["actual_seconds"].isna(), "actual_time"] = None
 
     return out
 
