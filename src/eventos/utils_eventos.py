@@ -2,7 +2,6 @@
 utils.py — Funciones compartidas para todos los scripts de ingesta de eventos.
 
 Incluye:
-  - Re-exportación de funciones MinIO desde src.common.minio_client
   - Descarga y cálculo de paradas de metro afectadas (Haversine)
   - Fusión de estaciones duplicadas
 """
@@ -11,16 +10,6 @@ from collections import defaultdict
 
 import numpy as np
 import pandas as pd
-
-from src.common.minio_client import (         
-    download_df_parquet,
-    upload_file,
-    download_file,
-    upload_json,
-    download_json,
-    DEFAULT_ENDPOINT,
-    DEFAULT_BUCKET,
-)
 
 #  Constantes propias
 

@@ -22,7 +22,7 @@ BUCKET_NAME = "pd1"  # Cambia por tu bucket real si es otro
 
 # Define aquí la ruta exacta de la "carpeta" que quieres vaciar.
 # IMPORTANTE: Asegúrate de que termina en "/" para no borrar archivos que empiecen igual por accidente.
-CARPETA_A_BORRAR = "grupo5/processed/gtfs_with_delays/" 
+CARPETA_A_BORRAR = "grupo5/cleaned/eventos_nyc/dia="
 
 if __name__ == "__main__":
     print(f"Buscando archivos en '{CARPETA_A_BORRAR}' dentro del bucket '{BUCKET_NAME}'...")

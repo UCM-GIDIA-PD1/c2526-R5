@@ -2,7 +2,7 @@
 conciertos.py — Ingesta de conciertos en NYC desde Setlist.fm.
 
 Fuente  : api.setlist.fm
-Destino : MinIO  grupo5/raw/eventos_nyc/dia=YYYY-MM-DD/eventos_concierto_YYYY-MM-DD.parquet
+Destino : MinIO  grupo5/raw/eventos_nyc/date=YYYY-MM-DD/eventos_concierto_YYYY-MM-DD.parquet
 """
 
 import os
@@ -16,10 +16,8 @@ from .utils_eventos import (
     cargar_paradas_df,
     fusionar_lista_estaciones,
     obtener_paradas_afectadas,
-    DEFAULT_BUCKET,
 )
-
-from src.common.minio_client import upload_df_parquet
+from src.common.minio_client import upload_df_parquet, DEFAULT_BUCKET
 
 # ─────────────────────────────────────────────────────────────────
 #  Constantes
@@ -232,7 +230,7 @@ def ingest_conciertos(start_date, end_date):
     subidos = 0
     for fecha, df_dia in df.groupby("fecha_inicio", sort=True):
         df_dia = df_dia.reset_index(drop=True)
-        obj = f"grupo5/raw/eventos_nyc/dia={fecha}/eventos_concierto_{fecha}.parquet"
+        obj = f"grupo5/raw/eventos_nyc/date={fecha}/eventos_concierto_{fecha}.parquet"
         try:
             upload_df_parquet(access_key, secret_key, obj, df_dia)
             print(f"  Subido: {DEFAULT_BUCKET}/{obj} ({len(df_dia)} filas)")

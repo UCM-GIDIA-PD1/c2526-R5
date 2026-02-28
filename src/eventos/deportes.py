@@ -2,10 +2,13 @@
 deportes.py — Ingesta de eventos deportivos de equipos NYC desde ESPN.
 
 Fuente  : site.api.espn.com
-Destino : MinIO  grupo5/raw/eventos_nyc/dia=YYYY-MM-DD/eventos_deporte_YYYY-MM-DD.parquet
+Destino : MinIO  grupo5/raw/eventos_nyc/date=YYYY-MM-DD/eventos_deporte_YYYY-MM-DD.parquet
 """
 
+
+
 import os
+import sys
 
 import requests
 from geopy.extra.rate_limiter import RateLimiter
@@ -15,9 +18,8 @@ from .utils_eventos import (
     cargar_paradas_df,
     fusionar_lista_estaciones,
     obtener_paradas_afectadas,
-    DEFAULT_BUCKET,
 )
-from src.common.minio_client import upload_df_parquet
+from src.common.minio_client import upload_df_parquet, DEFAULT_BUCKET
 
 import pandas as pd
 
@@ -55,7 +57,7 @@ VENUES_NYC = {
 
 CIUDADES_NYC = {"New York", "Elmont", "Newark", "East Rutherford", "Harrison"}
 
-RADIO_METRO_M = 700
+RADIO_METRO_M = 500
 
 
 
@@ -147,7 +149,7 @@ def extraer_deportes(start_date, end_date):
     dt_ny = pd.to_datetime(df["fecha_cruda"]).dt.tz_convert("America/New_York")
     df["fecha_inicio"]         = dt_ny.dt.strftime("%Y-%m-%d")
     df["hora_inicio"]          = dt_ny.dt.strftime("%H:%M")
-    df["hora_salida_estimada"] = (dt_ny + pd.to_timedelta(df["duracion"], unit="h")).dt.strftime("%H:%M")
+    df["hora_salida_estimada"] = (dt_ny + pd.to_timedelta(df["duracion"] + 0.75, unit="h")).dt.strftime("%H:%M")
     df = df.drop(columns=["fecha_cruda", "duracion"])
     return df.sort_values(["fecha_inicio", "hora_inicio"]).reset_index(drop=True)
 
@@ -195,3 +197,4 @@ def ingest_deportes(start_date, end_date):
             print(f"  Error subiendo {obj}: {exc}")
 
     print(f"[deportes] Terminado. {subidos} archivos subidos.")
+

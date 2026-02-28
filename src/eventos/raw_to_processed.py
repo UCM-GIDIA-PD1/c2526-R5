@@ -32,7 +32,7 @@ def build_raw_object(day, id):
 
 
 def build_processed_object(day):
-    return f"grupo5/processed/eventos_nyc/dia={day}/eventos_{day}.parquet"
+    return f"grupo5/processed/eventos_nyc/date={day}/eventos_{day}.parquet"
 
 
 def transform_events_raw_range_to_proccesed(start, end, access_key, secret_key):
@@ -63,8 +63,6 @@ def run_transform(start, end):
     Convierte string dates a objetos date, obtiene credenciales de MinIO
     de las variables de entorno y delega a transform_events_raw_range_to_proccesed
     """
-    start_date = "2025-01-01"
-    end_date = "2025-12-01"
 
     from datetime import datetime
 
@@ -81,15 +79,11 @@ def run_transform(start, end):
 
     transform_events_raw_range_to_proccesed(start_date, end_date, access_key, secret_key)
 
-if __name__ == "__main__":
-    
-    FECHA_INICIO = "2025-01-01"
-    FECHA_FIN = "2025-12-31"
 
-try:
-    run_transform(FECHA_INICIO, FECHA_FIN)
-    print("\n¡Transformación finalizada correctamente!")
-except AssertionError as ae:
-    print(f"\nError de configuración: {ae}")
-except Exception as e:
-        print(f"\nError inesperado: {e}")
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--start", required=True)
+    parser.add_argument("--end", required=True)
+    args = parser.parse_args()
+    run_transform(args.start, args.end)
