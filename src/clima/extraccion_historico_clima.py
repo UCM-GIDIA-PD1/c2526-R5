@@ -84,9 +84,16 @@ def subir_a_MinIO(dia, df_dia, client):
     data=buffer, length=buffer.getbuffer().nbytes, content_type='application/octet-stream')
     print("Archivo subido con exito a" + name)
 
+<<<<<<< HEAD:src/clima/Extraccion_clima_historico.py
 def extraccion_historico(fechaini , fechafin):
     return extraccion(fechaini , fechafin)
 def ingest_climas_historicos(fechaini = "2024-12-31", fechafin = "2026-01-01"):
+=======
+def extraccion_historico(fechaini = "2024-12-31", fechafin = "2026-01-01"):
+    return extraccion(fechaini, fechafin)
+
+def ingest_clima_historico(fechaini, fechafin):
+>>>>>>> 02751b9869a40ad701848de6bdb8ae8291c4280e:src/clima/extraccion_historico_clima.py
     df_historico = extraccion_historico(fechaini, fechafin)
     separar_dias(df_historico)
     

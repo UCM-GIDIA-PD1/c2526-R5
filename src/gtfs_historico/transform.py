@@ -124,6 +124,81 @@ def add_derivated_features(df: pd.DataFrame, service_date: str) -> pd.DataFrame:
     return out
 
 
+def add_time_series_features(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Añade características temporales y de viaje al DataFrame:
+    - **lagged_delay_1 / lagged_delay_2**: retraso del stop anterior y del antepenúltimo dentro del mismo viaje
+    - **actual_headway_seconds**: tiempo transcurrido desde el tren previo en la misma parada
+    - **route_rolling_delay**: promedio móvil a corto plazo de los retrasos en la misma ruta (no incluye el tren actual)
+    - **period_of_day**: franja horaria categórica (morning_peak, midday, evening_peak, off_peak)
+    - **is_peak**: indicador booleano de si la observación cae en hora punta
+    - **trip_progress**: proporción de la duración planificada del viaje que ya ha transcurrido
+    - **rolling_mean_delay_trip**: promedio móvil de retrasos a lo largo de un mismo viaje
+    - **headway_ratio**: ratio entre el headway actual y el anterior en la misma parada
+
+    Devuelve el DataFrame ordenado por su índice original.
+    """
+    out = df.copy()
+    original_index = out.index.copy()
+
+    # lagged delays: retrasos previos del mismo viaje
+    if "delay_seconds" in out.columns and "match_key" in out.columns:
+        out = out.sort_values(by=["match_key", "actual_seconds"], na_position="last")
+        out["lagged_delay_1"] = out.groupby("match_key", group_keys=False)["delay_seconds"].shift(1)
+        out["lagged_delay_2"] = out.groupby("match_key", group_keys=False)["delay_seconds"].shift(2)
+
+    # actual headway: tiempo desde el tren anterior en la misma parada
+    if "actual_seconds" in out.columns and "stop_id" in out.columns:
+        out = out.sort_values(by=["stop_id", "actual_seconds"], na_position="last")
+        out["actual_headway_seconds"] = out.groupby("stop_id", group_keys=False)["actual_seconds"].diff()
+        # headway ratio respecto al headway previo
+        out["headway_ratio"] = out.groupby("stop_id", group_keys=False)["actual_headway_seconds"].apply(lambda x: x / x.shift(1))
+
+    # rolling delay por ruta
+    if "delay_seconds" in out.columns and "route_id" in out.columns:
+        out = out.sort_values(by=["route_id", "actual_seconds"], na_position="last")
+        out["route_rolling_delay"] = (
+            out.groupby("route_id", group_keys=False)["delay_seconds"]
+            .rolling(window=5, min_periods=1)
+            .mean()
+            .reset_index(drop=True)
+        )
+        out["route_rolling_delay"] = out.groupby("route_id", group_keys=False)["route_rolling_delay"].shift(1)
+
+    # franja horaria / hora punta
+    if "hour" in out.columns:
+        def period_of_day(hour):
+            if 6 <= hour < 10:
+                return "morning_peak"
+            elif 10 <= hour < 16:
+                return "midday"
+            elif 16 <= hour < 20:
+                return "evening_peak"
+            else:
+                return "off_peak"
+        out["period_of_day"] = out["hour"].apply(lambda h: period_of_day(h) if pd.notna(h) else None)
+        out["is_peak"] = out["period_of_day"].isin(["morning_peak", "evening_peak"]).astype("Int64")
+
+    # progreso del viaje y rolling interno
+    if "trip_uid" in out.columns and "scheduled_seconds" in out.columns:
+        min_sched = out.groupby("trip_uid")["scheduled_seconds"].transform("min")
+        max_sched = out.groupby("trip_uid")["scheduled_seconds"].transform("max")
+        out["trip_progress"] = (out["scheduled_seconds"] - min_sched) / (max_sched - min_sched)
+        # rolling mean delay dentro del mismo viaje (ventana 3 + shift)
+        out = out.sort_values(by=["trip_uid", "scheduled_seconds"], na_position="last")
+        out["rolling_mean_delay_trip"] = (
+            out.groupby("trip_uid", group_keys=False)["delay_seconds"]
+            .rolling(window=3, min_periods=1)
+            .mean()
+            .reset_index(drop=True)
+        )
+        out["rolling_mean_delay_trip"] = out.groupby("trip_uid", group_keys=False)["rolling_mean_delay_trip"].shift(1)
+
+    # restaurar índice original
+    out = out.sort_index()
+    return out
+
+
 def coerce_types(df: pd.DataFrame) -> pd.DataFrame:
     """
     Forzar datatypes
@@ -203,6 +278,7 @@ def transform_processed_day_to_cleaned(
     df = deduplicate(df)
     df = filter_delay_outliers(df)
     df = add_derivated_features(df, service_date)
+    df = add_time_series_features(df)
 
     # Split
     scheduled = df[df["is_unscheduled"] == False].copy()
@@ -276,8 +352,25 @@ def run_transform(start: str, end: str) -> None:
 
 
 if __name__ == "__main__":
-    start = date(2025, 12, 1)
-    end = date(2025, 12, 31)
+    start = date(2025, 1, 1)
+    end = date(2025, 1, 1)
 
     # delegar a función principal de transformación
     run_transform(start, end)
+    
+    '''
+    # Para pruebas, descomentar esto para guardar resultados en CSV:
+    from datetime import datetime
+    access_key = os.getenv("MINIO_ACCESS_KEY")
+    secret_key = os.getenv("MINIO_SECRET_KEY")
+    for d in iterate_dates(start, end):
+        day = d.strftime("%Y-%m-%d")
+        in_obj = build_processed_object(day)
+        df_processed = download_df_parquet(access_key, secret_key, in_obj)
+        output = transform_processed_day_to_cleaned(df_processed, service_date=day)
+        df_sched = output["scheduled"]
+        df_uns = output["unscheduled"]
+        df_sched.to_csv(f"tmp/gtfs_scheduled_{day}.csv", index=False)
+        df_uns.to_csv(f"tmp/gtfs_unscheduled_{day}.csv", index=False)
+        print(f"Saved test csvs for {day}")
+    '''

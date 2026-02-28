@@ -1,3 +1,31 @@
+"""
+Script para la extracción y procesamiento de datos en tiempo real del metro
+de Nueva York (MTA) con el objetivo de calcular el retraso de los trenes
+respecto a sus horarios previstos.
+
+FUENTES DE DATOS:
+    - API GTFS-Realtime MTA: tiempos de llegada/salida actuales de los trenes
+      para todas las líneas del metro de Nueva York (A/C/E, B/D/F/M, G, J/Z,
+      N/Q/R/W, L, 1-7/S y SIR).
+    - GTFS Supplemented (S3 MTA): horarios previstos oficiales de cada tren
+      en cada parada, descargado automáticamente desde un ZIP en la nube.
+
+PROCESO:
+    1. Se extraen los datos en tiempo real de la API para cada línea y se
+       construye un DataFrame con el viaje, parada, hora de llegada/salida
+       real y timestamp de la extracción.
+    2. Se descargan los horarios previstos y se adaptan para que sean
+       compatibles con los datos en tiempo real.
+    3. Se cruzan ambos DataFrames y se calcula el retraso en segundos,
+       filtrando predicciones futuras y ajustando viajes que cruzan la
+       medianoche.
+
+OUTPUT:
+    DataFrame con el retraso real (en segundos) de cada tren en cada parada,
+    junto con información del viaje, línea, dirección y tipo de día.
+"""
+
+
 import requests
 from datetime import datetime
 import pandas as pd
@@ -7,13 +35,7 @@ from google.transit import gtfs_realtime_pb2
 import urllib.request
 import zipfile
 import io
-
-
-"""
-Para poder crear el segundo dataframe es necesario tener descargado un archivo de las
-paradas previstas de los trenes. Este se puede encontrar con este link: https://www.mta.info/developers
-Habría que descargar el Supplemented GTFS y se nos descargará un zip. El que nos interesa se llama: stop_times.txt
-"""
+import math
 
 
 # ─────────────────────────────────────────────
@@ -201,6 +223,26 @@ def hora_posterior(hora1, hora2):
         ((int(partes1[0]) == int(partes2[0])) & (int(partes1[1]) == int(partes2[1])) & ((int(partes1[2]) > int(partes2[2]))))
     )
 
+def filter_delay_outliers(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Filtro suave de outliers: delays fuera de +/- 2.5h suelen ser ruido (pero ajustable)
+    """
+    return df[df["delay"].between(-9000, 9000)]
+
+def dia_a_numerico(df):
+
+    df['timestamp'] = pd.to_datetime(df['timestamp'])
+    df['dow'] = df['timestamp'].dt.dayofweek
+    df['is_weekend'] = df['dow'].isin([5, 6]).astype(int)
+    return df
+
+def hora_ciclica(df):
+    hour_float = df["hora_llegada"].str.split(':').str[0].astype("float")
+    df["hour_sin"] = hour_float.apply(lambda h: math.sin(2 * math.pi * h / 24) if pd.notna(h) else None)
+    df["hour_cos"] = hour_float.apply(lambda h: math.cos(2 * math.pi * h / 24) if pd.notna(h) else None)
+
+    return df
+
 
 # ─────────────────────────────────────────────
 #  DataFrame tiempo real
@@ -287,7 +329,12 @@ def union_dataframes(df1, df2):
     None    # valor si False
     )
 
-    df = df.drop(['timestamp', 'segundos_reales', 'trip_id', 'stop_id', 'arrival_time', 'departure_time', 'day', 'segundos_previstos'], axis=1)
+    #Filtro para delays con valores masivos y transformacion del día de la semana a valor numérico
+    df = filter_delay_outliers(df)
+    df = dia_a_numerico(df)
+    df = hora_ciclica(df)
+
+    df = df.drop(['dia', 'hora_partida','timestamp', 'segundos_reales', 'trip_id', 'stop_id', 'arrival_time', 'departure_time', 'day', 'segundos_previstos'], axis=1)
     df = df.dropna()
 
     return df
