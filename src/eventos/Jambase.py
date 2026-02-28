@@ -2,7 +2,7 @@ import requests
 import pandas as pd
 import time # Importante para pausar entre peticiones y no saturar el servidor
 
-API_KEY = "382a48b6-7477-429f-b0b4-d2e6ca45b84e"
+API_KEY = ""
 url = "https://www.jambase.com/jb-api/v1/events"
 
 cabeceras = {
