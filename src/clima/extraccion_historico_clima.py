@@ -71,6 +71,7 @@ def separar_dias(df):
     from minio import Minio
     client = Minio(endpoint='minio.fdi.ucm.es', access_key=ACCESS_KEY, secret_key=SECRET_KEY)
     for dia, df_dia in df.groupby(df['Date'].dt.date):
+        print(df_dia)
         subir_a_MinIO(dia, df_dia, client)
     print("Todo subido con exito")
         
@@ -83,6 +84,7 @@ def subir_a_MinIO(dia, df_dia, client):
     data=buffer, length=buffer.getbuffer().nbytes, content_type='application/octet-stream')
     print("Archivo subido con exito a" + name)
 
+
 def extraccion_historico(fechaini = "2024-12-31", fechafin = "2026-01-01"):
     return extraccion(fechaini, fechafin)
 
@@ -90,4 +92,6 @@ def ingest_clima_historico(fechaini, fechafin):
     df_historico = extraccion_historico(fechaini, fechafin)
     separar_dias(df_historico)
     
+if __name__ == "__main__":
+    ingest_clima_historico()
     
