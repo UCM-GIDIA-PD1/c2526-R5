@@ -149,7 +149,7 @@ def extraer_deportes(start_date, end_date):
     dt_ny = pd.to_datetime(df["fecha_cruda"]).dt.tz_convert("America/New_York")
     df["fecha_inicio"]         = dt_ny.dt.strftime("%Y-%m-%d")
     df["hora_inicio"]          = dt_ny.dt.strftime("%H:%M")
-    df["hora_salida_estimada"] = (dt_ny + pd.to_timedelta(df["duracion"] + 0.75, unit="h")).dt.strftime("%H:%M")
+    df["hora_salida_estimada"] = (dt_ny + pd.to_timedelta(df["duracion"] + 0.2, unit="h")).dt.strftime("%H:%M")
     df = df.drop(columns=["fecha_cruda", "duracion"])
     return df.sort_values(["fecha_inicio", "hora_inicio"]).reset_index(drop=True)
 
