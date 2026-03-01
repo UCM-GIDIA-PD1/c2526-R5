@@ -21,8 +21,8 @@ from .eventos_nyc import ingest_eventos_nyc
 #  Registro de subscripts
 
 SUBSCRIPTS = {
-    "deportes":    ingest_deportes,
-    "conciertos":  ingest_conciertos,
+    #"deportes":    ingest_deportes,
+    #"conciertos":  ingest_conciertos,
     "eventos_nyc": ingest_eventos_nyc,
 }
 
