@@ -1,3 +1,13 @@
+'''
+clima_realtime.py - Extracción de datos del clima actual
+Fuente: https://api.open-meteo.com/v1/forecast
+Destino: grupo5/processed/Clima/DataFrame_Clima_TiempoReal.parquet
+
+'''
+
+
+
+
 import openmeteo_requests
 
 import pandas as pd
@@ -6,6 +16,8 @@ import requests
 from retry_requests import retry
 import datetime
 import io
+
+
 def extraer_clima_actual():
 	# Setup the Open-Meteo API client with cache and retry on error
 	#cache_session = requests_cache.CachedSession('.cache', expire_after = 3600) #Crea un .cache para no tener que solicitar varias veces lo mismo
