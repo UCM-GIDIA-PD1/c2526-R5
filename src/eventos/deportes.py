@@ -140,6 +140,7 @@ def extraer_deportes(start_date, end_date):
                     "fecha_cruda":   ev.get("date"),
                     "duracion":      DURACIONES_HORAS.get(liga, 2.5),
                     "coordinates":   [lon, lat] if lon and lat else [],
+                    "tipo": sport
                 })
 
     df = pd.DataFrame(filas)
@@ -188,7 +189,7 @@ def ingest_deportes(start_date, end_date):
     subidos = 0
     for fecha, df_dia in df.groupby("fecha_inicio", sort=True):
         df_dia = df_dia.reset_index(drop=True)
-        obj = f"grupo5/raw/eventos_nyc/dia={fecha}/eventos_deporte_{fecha}.parquet"
+        obj = f"grupo5/raw/eventos_nyc/date={fecha}/eventos_deporte_{fecha}.parquet"
         try:
             upload_df_parquet(access_key, secret_key, obj, df_dia)
             print(f"  Subido: {DEFAULT_BUCKET}/{obj} ({len(df_dia)} filas)")

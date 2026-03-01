@@ -214,9 +214,9 @@ def extraer_eventos_nyc(start_date, end_date, df_paradas=None):
     df["hora_salida_estimada"] = df["end_date_time"].dt.strftime("%H:%M")
     df["fecha_inicio"]         = df["start_date_time"].dt.strftime("%Y-%m-%d")
     df["fecha_final"]          = df["end_date_time"].dt.strftime("%Y-%m-%d")
-    df = df.rename(columns={"event_name": "nombre_evento"})
+    df = df.rename(columns={"event_name": "nombre_evento", "event_type": "tipo"})
 
-    return df[["nombre_evento", "fecha_inicio", "hora_inicio", "fecha_final",
+    return df[["nombre_evento", "tipo", "fecha_inicio", "hora_inicio", "fecha_final",
                "hora_salida_estimada", "score", "paradas_afectadas"]].reset_index(drop=True)
 
 

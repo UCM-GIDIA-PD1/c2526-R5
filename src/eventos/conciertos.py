@@ -203,6 +203,7 @@ def extraer_conciertos(start_date, end_date, df_paradas=None):
     )
     df["score"] = 1.0 #alta influencia
     df["nombre_evento"] = "Concierto: " + df["nombre_evento"]
+    df["tipo"] = "Concierto"
 
     df = df[(df["fecha_inicio"] >= start_date) & (df["fecha_inicio"] <= end_date)]
     df = df.drop(columns=["lat", "lng", "venue_name"]).reset_index(drop=True)
