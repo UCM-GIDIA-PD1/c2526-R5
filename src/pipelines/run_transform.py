@@ -12,12 +12,15 @@ from typing import Callable, Dict, List
 # importar funciones de transformación de cada fuente
 from src.gtfs_historico.transform import run_transform as transform_gtfs_historico
 from src.eventos.transform import run_transform as transform_eventos
+from src.alertas_oficiales_tiempo_real.transform import run_transform as transform_alertas
+
 
 TransformFn = Callable[[str, str], None]
 
 REGISTRY: Dict[str, TransformFn] = {
     "gtfs_historico": transform_gtfs_historico,
-    "eventos":  transform_eventos
+    "eventos":  transform_eventos,
+    "alertas": transform_alertas
 }
 
 
