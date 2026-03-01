@@ -193,6 +193,49 @@ def add_time_series_features(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def add_future_targets(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Genera las variables objetivo (targets) para modelos predictivos a largo plazo.
+    
+    Columnas generadas:
+    - target_delay_10m: retraso en +5 paradas (aprox 10 minutos)
+    - target_delay_20m: retraso en +10 paradas (aprox 20 minutos)
+    - target_delay_30m: retraso en +15 paradas (aprox 30 minutos)
+    - target_delay_end: retraso en la última parada del viaje
+    - scheduled_time_to_end: tiempo programado restante hasta el final del viaje
+    - stops_to_end: número de paradas restantes hasta el final del viaje
+    
+    Todos los cálculos se realizan agrupando por match_key (viaje).
+    Devuelve el DataFrame ordenado por su índice original.
+    """
+    out = df.copy()
+    
+    # Ordenar por match_key y actual_seconds para definir la secuencia de paradas
+    if "match_key" in out.columns and "actual_seconds" in out.columns:
+        out = out.sort_values(by=["match_key", "actual_seconds"], na_position="last")
+        
+        # Horizontes fijos por paradas
+        if "delay_seconds" in out.columns:
+            out["target_delay_10m"] = out.groupby("match_key", group_keys=False)["delay_seconds"].shift(-5)
+            out["target_delay_20m"] = out.groupby("match_key", group_keys=False)["delay_seconds"].shift(-10)
+            out["target_delay_30m"] = out.groupby("match_key", group_keys=False)["delay_seconds"].shift(-15)
+            
+            # Horizonte variable hasta final de trayecto
+            out["target_delay_end"] = out.groupby("match_key")["delay_seconds"].transform("last")
+        
+        # Tiempo programado hasta el final
+        if "scheduled_seconds" in out.columns:
+            last_scheduled = out.groupby("match_key")["scheduled_seconds"].transform("last")
+            out["scheduled_time_to_end"] = last_scheduled - out["scheduled_seconds"]
+        
+        # Contar paradas restantes hasta el final del viaje (incluyendo la actual)
+        out["stops_to_end"] = out.groupby("match_key", group_keys=False).cumcount(ascending=False)
+    
+    # Restaurar el orden original del índice
+    out = out.sort_index()
+    return out
+
+
 def coerce_types(df: pd.DataFrame) -> pd.DataFrame:
     """
     Forzar datatypes
@@ -273,6 +316,7 @@ def transform_processed_day_to_cleaned(
     df = filter_delay_outliers(df)
     df = add_derivated_features(df, service_date)
     df = add_time_series_features(df)
+    df = add_future_targets(df)
 
     # Split
     scheduled = df[df["is_unscheduled"] == False].copy()
