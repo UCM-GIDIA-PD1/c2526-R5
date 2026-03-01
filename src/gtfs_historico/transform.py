@@ -231,6 +231,15 @@ def add_future_targets(df: pd.DataFrame) -> pd.DataFrame:
         # Contar paradas restantes hasta el final del viaje (incluyendo la actual)
         out["stops_to_end"] = out.groupby("match_key", group_keys=False).cumcount(ascending=False)
     
+    # Deltas: diferencia esperada en el retraso respecto al retraso actual
+    if "delay_seconds" in out.columns:
+        if "target_delay_10m" in out.columns:
+            out["delta_delay_10m"] = out["target_delay_10m"] - out["delay_seconds"]
+        if "target_delay_20m" in out.columns:
+            out["delta_delay_20m"] = out["target_delay_20m"] - out["delay_seconds"]
+        if "target_delay_30m" in out.columns:
+            out["delta_delay_30m"] = out["target_delay_30m"] - out["delay_seconds"]
+    
     # Restaurar el orden original del índice
     out = out.sort_index()
     return out
