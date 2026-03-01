@@ -136,11 +136,8 @@ dependencies = [
     { name = "requests-cache" },
     { name = "retry-requests" },
     { name = "rich" },
-<<<<<<< HEAD
-=======
     { name = "scikit-learn" },
     { name = "scipy" },
->>>>>>> d8c3adc (Dependencias añadidas y notebook de análisis para trenes)
     { name = "seaborn" },
     { name = "tqdm" },
     { name = "tzdata" },
@@ -1843,8 +1840,6 @@ wheels = [
 ]
 
 [[package]]
-<<<<<<< HEAD
-=======
 name = "scikit-learn"
 version = "1.8.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1934,7 +1929,6 @@ wheels = [
 ]
 
 [[package]]
->>>>>>> d8c3adc (Dependencias añadidas y notebook de análisis para trenes)
 name = "seaborn"
 version = "0.13.2"
 source = { registry = "https://pypi.org/simple" }
