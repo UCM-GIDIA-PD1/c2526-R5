@@ -139,7 +139,7 @@ def add_time_series_features(df: pd.DataFrame) -> pd.DataFrame:
     Devuelve el DataFrame ordenado por su índice original.
     """
     out = df.copy()
-    original_index = out.index.copy()
+    out["direction"] = out["stop_id"].str[-1]
 
     # lagged delays: retrasos previos del mismo viaje
     if "delay_seconds" in out.columns and "match_key" in out.columns:
@@ -152,30 +152,24 @@ def add_time_series_features(df: pd.DataFrame) -> pd.DataFrame:
         out = out.sort_values(by=["stop_id", "actual_seconds"], na_position="last")
         out["actual_headway_seconds"] = out.groupby("stop_id", group_keys=False)["actual_seconds"].diff()
         # headway ratio respecto al headway previo
-        out["headway_ratio"] = out.groupby("stop_id", group_keys=False)["actual_headway_seconds"].apply(lambda x: x / x.shift(1))
+        prev_headway = out.groupby("stop_id")["actual_headway_seconds"].shift(1).replace(0, pd.NA)
+        out["headway_ratio"] = out["actual_headway_seconds"] / prev_headway
 
     # rolling delay por ruta
     if "delay_seconds" in out.columns and "route_id" in out.columns:
-        out = out.sort_values(by=["route_id", "actual_seconds"], na_position="last")
-        out["route_rolling_delay"] = (
-            out.groupby("route_id", group_keys=False)["delay_seconds"]
-            .rolling(window=5, min_periods=1)
-            .mean()
-            .reset_index(drop=True)
+        out = out.sort_values(by=["route_id", "direction", "actual_seconds"], na_position="last")
+        out["route_rolling_delay"] = out.groupby(["route_id", "direction"])["delay_seconds"].transform(
+            lambda x: x.rolling(window=5, min_periods=1).mean().shift(1)
         )
-        out["route_rolling_delay"] = out.groupby("route_id", group_keys=False)["route_rolling_delay"].shift(1)
 
     # franja horaria / hora punta
     if "hour" in out.columns:
         def period_of_day(hour):
-            if 6 <= hour < 10:
-                return "morning_peak"
-            elif 10 <= hour < 16:
-                return "midday"
-            elif 16 <= hour < 20:
-                return "evening_peak"
-            else:
-                return "off_peak"
+            if pd.isna(hour): return None
+            if 6 <= hour < 10: return "morning_peak"
+            if 10 <= hour < 16: return "midday"
+            if 16 <= hour < 20: return "evening_peak"
+            return "off_peak"
         out["period_of_day"] = out["hour"].apply(lambda h: period_of_day(h) if pd.notna(h) else None)
         out["is_peak"] = out["period_of_day"].isin(["morning_peak", "evening_peak"]).astype("Int64")
 
@@ -183,18 +177,18 @@ def add_time_series_features(df: pd.DataFrame) -> pd.DataFrame:
     if "trip_uid" in out.columns and "scheduled_seconds" in out.columns:
         min_sched = out.groupby("trip_uid")["scheduled_seconds"].transform("min")
         max_sched = out.groupby("trip_uid")["scheduled_seconds"].transform("max")
-        out["trip_progress"] = (out["scheduled_seconds"] - min_sched) / (max_sched - min_sched)
-        # rolling mean delay dentro del mismo viaje (ventana 3 + shift)
+        # Evitar división por cero si el viaje solo tiene 1 parada programada o duracion 0
+        trip_duration = (max_sched - min_sched).replace(0, pd.NA)
+        out["trip_progress"] = (out["scheduled_seconds"] - min_sched) / trip_duration
+        
+        # Rolling mean delay del viaje intacto usando transform()
         out = out.sort_values(by=["trip_uid", "scheduled_seconds"], na_position="last")
-        out["rolling_mean_delay_trip"] = (
-            out.groupby("trip_uid", group_keys=False)["delay_seconds"]
-            .rolling(window=3, min_periods=1)
-            .mean()
-            .reset_index(drop=True)
+        out["rolling_mean_delay_trip"] = out.groupby("trip_uid")["delay_seconds"].transform(
+            lambda x: x.rolling(window=3, min_periods=1).mean().shift(1)
         )
-        out["rolling_mean_delay_trip"] = out.groupby("trip_uid", group_keys=False)["rolling_mean_delay_trip"].shift(1)
-
-    # restaurar índice original
+    # Borrar la columna temporal direction y restaurar el orden original
+    if "direction" in out.columns:
+        out = out.drop(columns=["direction"])
     out = out.sort_index()
     return out
 
@@ -356,9 +350,9 @@ if __name__ == "__main__":
     end = date(2025, 1, 1)
 
     # delegar a función principal de transformación
-    run_transform(start, end)
+    #run_transform(start, end)
     
-    '''
+    
     # Para pruebas, descomentar esto para guardar resultados en CSV:
     from datetime import datetime
     access_key = os.getenv("MINIO_ACCESS_KEY")
@@ -373,4 +367,4 @@ if __name__ == "__main__":
         df_sched.to_csv(f"tmp/gtfs_scheduled_{day}.csv", index=False)
         df_uns.to_csv(f"tmp/gtfs_unscheduled_{day}.csv", index=False)
         print(f"Saved test csvs for {day}")
-    '''
+    

@@ -1,41 +1,48 @@
-import argparse
+"""
+Módulo de ingesta histórica de alertas oficiales MTA.
+Se integra con el orquestador 'run_extraccion' y permite:
+- Descargar alertas históricas desde data.ny.gov
+- Extraer los datos en un rango de fechas indicadas
+- Subir los datos a la carpeta raw de MINIO en forma JSON
+
+La función principal 'ingest_alertas' es el punto de entrada
+llamado por el orquestador del pipeline.
+"""
+
 import requests
 import os
-from datetime import datetime
-import sys
 import json
-
-
-# ==============================
-# CONFIGURACIÓN DATASET
-# ==============================
+from datetime import datetime
+from typing import List, Dict
+from src.common.minio_client import upload_json
 BASE_URL = "https://data.ny.gov/resource/7kct-peq7.json"
-#fuente : DATA.NY.GOV
-# ejecutable por consola con la siguiente instruccion: cd hasta donde está el .py y 
-# python src/alertas_oficiales_tiempo_real/extraccion_historico_2025.py --start 2025-01-01 --end 2025-01-07 --output ./temp(temp es opcional es donde te saca los json)
+MINIO_BASE_PATH = "grupo5/raw/official_alerts"
 
-def fetch_data(start_date, end_date, limit=50000):
-    """
-    Extrae datos históricos usando paginación.
+
+def fetch_data(start_date: str, end_date: str, limit: int = 50000):
+    """ 
+    Descarga datos históricos del dataset de alertas oficiales
+    utilizando paginación.
+    limit : Número máximo de registros por petición
+    where: devuelve los registos cuya columna date esté entre esas fechas
+    offset : es lo que permite la paginación. 
+    En cada iteración descarga un bloque de 50.000, los añade a all_results, incremneta
+    el offset y repite hasta que no queden datos
     """
     all_results = []
     offset = 0
 
     while True:
         params = {
-            # IMPORTANTE: cambiar nombre de columna si fuera necesario
             "$where": f"date between '{start_date}' and '{end_date}'",
             "$limit": limit,
             "$offset": offset
         }
 
-        print(f"Descargando registros con offset {offset}...")
+        print(f"[alertas] Descargando offset={offset}")
 
         response = requests.get(BASE_URL, params=params)
-
-        if response.status_code != 200:
-            print(f"Error en la petición: {response.status_code}")
-            sys.exit(1)
+        response.raise_for_status()
 
         data = response.json()
 
@@ -48,59 +55,36 @@ def fetch_data(start_date, end_date, limit=50000):
     return all_results
 
 
-def save_raw(data, output_base, start_date, end_date):
+
+
+def ingest_alertas(start: str, end: str) -> None:
     """
-    Guarda los datos sin modificar en formato JSON.
+    Función principal de ingesta llamada por el orquestador.
+    Realiza lo siguiente:
+    -Valida las credenciales de minio.
+    - Descarga los datos históricos en el rango indicado.
+    - Construye la ruta de almacenamiento
+    - Sube el JSON directamente a MINIO
     """
-    now = datetime.utcnow().strftime("%Y-%m-%d_%H-%M-%S")
-
-    path = os.path.join(
-        output_base,
-        "source=historical",
-        f"range={start_date}_to_{end_date}"
+    print(f"[alertas] START start={start} end={end}")
+    access_key = os.getenv("MINIO_ACCESS_KEY")
+    secret_key = os.getenv("MINIO_SECRET_KEY")
+    if not access_key or not secret_key:
+        raise ValueError(
+            "Las variables de entorno MINIO_ACCESS_KEY y MINIO_SECRET_KEY deben estar definidas."
+        )
+    data = fetch_data(start, end)
+    object_name = (
+        f"{MINIO_BASE_PATH}/"
+        f"range={start}_to_{end}/"
+        f"alertas_oficiales_2025.json"
     )
-
-    os.makedirs(path, exist_ok=True)
-
-    file_path = os.path.join(path, f"extracted_at={now}.json")
-
-    with open(file_path, "w", encoding="utf-8") as f:
-        json.dump(data, f)
-
-    print(f"Datos guardados en: {file_path}")
-
-
-def validate_date(date_str):
-    try:
-        datetime.strptime(date_str, "%Y-%m-%d")
-    except ValueError:
-        raise argparse.ArgumentTypeError("Formato de fecha inválido. Use YYYY-MM-DD.")
-    return date_str
-
-
-def main():
-    parser = argparse.ArgumentParser(
-        description="Extracción histórica de avisos oficiales MTA"
+    upload_json(
+        access_key=access_key,
+        secret_key=secret_key,
+        object_name=object_name,
+        data=data
     )
+    print(f"[alertas] Subido a Minio://pd1/{object_name}")
 
-    parser.add_argument("--start", required=True, type=validate_date,
-                        help="Fecha inicio (YYYY-MM-DD)")
-
-    parser.add_argument("--end", required=True, type=validate_date,
-                        help="Fecha fin (YYYY-MM-DD)")
-
-    parser.add_argument("--output", required=True,
-                        help="Ruta base donde guardar los datos RAW")
-
-    args = parser.parse_args()
-
-    print("Iniciando extracción histórica...")
-    data = fetch_data(args.start, args.end)
-
-    print(f"Total registros descargados: {len(data)}")
-
-    save_raw(data, args.output, args.start, args.end)
-
-
-if __name__ == "__main__":
-    main()
+    print("[alertas] DONE")
