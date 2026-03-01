@@ -15,9 +15,9 @@ El proyecto se centra en tres líneas principales:
 2. Modelado de la propagación de retrasos a lo largo de una línea.
 3. Detección temprana de incidencias operativas mediante análisis estadístico en tiempo real.
 
-El enfoque es de predicción a corto horizonte (15–60 minutos), utilizando tanto el estado actual de la red como información contextual (clima, calendario, estructura de la red).
+El enfoque es de predicción a corto horizonte (15–30 minutos), utilizando tanto el estado actual de la red como información contextual (clima, calendario, estructura de la red).
 
-El sistema está diseñado siguiendo una arquitectura tipo data lake (raw → processed → cleaned → analysis) sobre almacenamiento en MinIO, garantizando trazabilidad y reproducibilidad del pipeline.
+El sistema está diseñado siguiendo una arquitectura tipo data lake (raw → processed → cleaned) sobre almacenamiento en MinIO, garantizando trazabilidad y reproducibilidad del pipeline.
 
 ## Estructura del proyecto
 ```
@@ -46,43 +46,32 @@ Raíz del proyecto: `grupo5/`
 pd1/
 └── grupo5/
     ├── raw/
-    │   ├── gtfs_static/    
-    │   ├── gtfs_realtime/
-    │   ├── weather/
-    │   ├── official_alerts/
-    │   └── events/
+    │   ├── avisos_oficiales_historico_2025/
+    │   └── eventos_nyc/
     │
     ├── processed/
-    │   ├── gtfs_static/
+    │   ├── eventos_nyc/
     │   ├── gtfs_realtime/
-    │   ├── weather/
-    │   ├── official_alerts/
-    │   └── events/
+    │   ├── gtfs_with_delays/
+    │   ├── clima/
+    │   └── official_alerts/
     │
-    ├── cleaned/
-    │   ├── gtfs_clean/
-    │   ├── weather_clean/
-    │   ├── events_clean/
-    │   ├── official_alerts_clean/
-    │   └── quality_reports/      → métricas de calidad de datos
-    │
-    └── analytics/
-        ├── features_dataset/     → dataset final
-        ├── headway_analysis/     → análisis de desviaciones
-        ├── delay_analysis/       → estadísticas de retraso
-        ├── anomaly_labels/       → etiquetas binarias para modelado
-        └── snapshots_realtime/   → agregaciones en tiempo real
+    └── cleaned/
+        ├── clima_clean/
+        ├── eventos_nyc/
+        ├── gtfs_clean_scheduled/
+        ├── gtfs_clean_unscheduled/
+        └── official_alerts/
 ```
 ## Descripción de cada capa
 
 ### raw/
-Contiene los datos originales descargados de las fuentes externas
-(GTFS histórico, GTFS-Realtime, datos meteorológicos, eventos, avisos).
+Contiene los datos originales descargados de las fuentes externas y sin tratar.
 No se modifican una vez almacenados.
 
 ### processed/
 Datos transformados a un formato estructurado (principalmente Parquet),
-pero todavía sin limpieza exhaustiva.
+unidos de distints fuentes pero todavía sin limpieza exhaustiva.
 
 ### cleaned/
 Datos limpios y validados. Incluye:
@@ -91,16 +80,12 @@ Datos limpios y validados. Incluye:
 - Control de outliers
 - Reportes de calidad
 
-También contiene features que no impliquen agregaciones temporales (p.ej. delay_sec, para agregar en el dataset final).
-
-### analytics/
-Conjunto final de datos listos para análisis y modelado.
-Incluye el dataset con features agregados.
+También contiene features derivados y agregaciones temporales (p.ej. lagged_delay_1).
 
 ## Convención de nombres
 Los objetos se almacenan siguiendo la convención:
 
-grupo5/raw/gtfs_static/date=YYYY-MM-DD/nombre_archivo.parquet
+grupo5/processed/gtfs_with_delays/date=YYYY-MM-DD/nombre_archivo.parquet
 
 Lo cual permite:
 - Filtrado eficiente por fecha
