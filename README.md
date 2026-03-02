@@ -121,6 +121,95 @@ uv sync
 
 uv run python src/...
 
+
+---
+
+---
+
+## 🚀 Ejecución de los pipelines
+
+El proyecto está automatizado mediante dos orquestadores principales ubicados en:
+
+```
+src/pipelines/
+```
+
+Estos permiten ejecutar la ingesta y transformación de datos de forma parametrizable y reproducible.
+
+---
+
+### 1️⃣ Extracción de datos
+
+Script principal:
+
+```
+src/pipelines/run_extraccion.py
+```
+
+Este orquestador ejecuta la descarga de datos desde las distintas fuentes externas (GTFS, clima, eventos, alertas oficiales, etc.) y los almacena en la capa `raw/` de MinIO.
+
+#### Parámetros disponibles
+
+- `--source`: nombre de la fuente específica o `all`
+- `--start`: fecha de inicio (formato YYYY-MM-DD)
+- `--end`: fecha de fin (formato YYYY-MM-DD)
+
+#### Ejemplo de ejecución
+
+```bash
+uv run python src/pipelines/run_extraccion.py --source all --start 2025-01-01 --end 2025-01-03
+```
+
+Este comando descargará los datos del rango indicado y los almacenará en:
+
+```
+raw/
+```
+
+---
+
+### 2️⃣ Transformación de datos
+
+Script principal:
+
+```
+src/pipelines/run_transform.py
+```
+
+Este orquestador procesa los datos almacenados en `raw/`, realiza limpieza, integración y generación de variables, y los mueve a capas superiores del data lake.
+
+#### Parámetros disponibles
+
+- `--source`
+- `--start`
+- `--end`
+- `--continue_on_error`
+
+#### Ejemplo de ejecución
+
+```bash
+uv run python src/pipelines/run_transform.py --source all --start 2025-01-01 --end 2025-01-03
+```
+
+Tras su ejecución, los datos seguirán el flujo:
+
+```
+raw/ → processed/ → cleaned/
+```
+
+---
+
+### Flujo recomendado de trabajo
+
+1. Ejecutar extracción de datos  
+2. Ejecutar transformación  
+3. Validar resultados en la capa `cleaned/`  
+4. Continuar análisis en notebooks  
+
+Este enfoque garantiza trazabilidad, reproducibilidad y separación clara entre etapas del pipeline.
+
+
+
 ## Autores
 - Alex García
 - David Rodríguez
