@@ -126,7 +126,7 @@ uv run python src/...
 
 ---
 
-## 🚀 Ejecución de los pipelines
+## Ejecución de los pipelines
 
 El proyecto está automatizado mediante dos orquestadores principales ubicados en:
 
@@ -138,7 +138,7 @@ Estos permiten ejecutar la ingesta y transformación de datos de forma parametri
 
 ---
 
-### 1️⃣ Extracción de datos
+### Extracción de datos
 
 Script principal:
 
@@ -168,7 +168,7 @@ raw/
 
 ---
 
-### 2️⃣ Transformación de datos
+### Transformación de datos
 
 Script principal:
 
@@ -207,6 +207,54 @@ raw/ → processed/ → cleaned/
 4. Continuar análisis en notebooks  
 
 Este enfoque garantiza trazabilidad, reproducibilidad y separación clara entre etapas del pipeline.
+
+---
+
+## Uso de notebooks
+
+Los notebooks del proyecto están ubicados en:
+
+```
+notebooks/
+```
+
+Se utilizan para:
+
+- Análisis exploratorio de datos (EDA)
+- Validación de variables derivadas
+- Evaluación de modelos
+- Visualización de resultados
+- Análisis de métricas (MAE, RMSE, F1-score, etc.)
+
+---
+
+### Cómo ejecutarlos en VS Code
+
+1. Abrir la carpeta raíz del proyecto en VS Code.
+2. Navegar hasta la carpeta `notebooks/`.
+3. Abrir el notebook deseado.
+4. Seleccionar el kernel correspondiente al entorno creado con `uv`.
+5. Ejecutar las celdas en orden.
+
+Es importante ejecutar primero las celdas de:
+
+- Carga de variables de entorno
+- Configuración de credenciales
+- Conexión a MinIO
+- Importación de librerías comunes
+
+---
+
+### Flujo típico de trabajo
+
+1. Ejecutar pipelines (extracción + transformación).
+2. Abrir notebook de análisis o modelado.
+3. Cargar datos desde `cleaned/` o `analytics/`.
+4. Validar features generadas.
+5. Evaluar métricas del modelo.
+6. Iterar mejoras si es necesario.
+
+Este flujo permite separar claramente la ingeniería de datos del análisis y modelado.
 
 
 
