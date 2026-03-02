@@ -28,7 +28,7 @@ def iterate_dates(start, end):
 
 
 def build_raw_object(day, id):
-    return f"grupo5/raw/eventos_nyc/dia={day}/{id}_{day}.parquet"
+    return f"grupo5/raw/eventos_nyc/date={day}/{id}_{day}.parquet"
 
 
 def build_processed_object(day):

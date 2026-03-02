@@ -163,7 +163,7 @@ def extraer_eventos_nyc(start_date, end_date, df_paradas=None):
 
     df["borough"] = df["event_borough"]
     df = df[["event_name", "event_type", "start_date_time", "end_date_time",
-             "event_location", "borough", "community_board"]].copy()
+            "event_location", "borough", "community_board"]].copy()
     df["start_date_time"] = pd.to_datetime(df["start_date_time"])
     df["end_date_time"]   = pd.to_datetime(df["end_date_time"])
     df = df.dropna(subset=["event_type"])
@@ -217,7 +217,7 @@ def extraer_eventos_nyc(start_date, end_date, df_paradas=None):
     df = df.rename(columns={"event_name": "nombre_evento", "event_type": "tipo"})
 
     return df[["nombre_evento", "tipo", "fecha_inicio", "hora_inicio", "fecha_final",
-               "hora_salida_estimada", "score", "paradas_afectadas"]].reset_index(drop=True)
+            "hora_salida_estimada", "score", "paradas_afectadas"]].reset_index(drop=True)
 
 
 
