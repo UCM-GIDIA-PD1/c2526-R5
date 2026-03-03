@@ -36,6 +36,9 @@ def build_processed_object(day):
 
 
 def transform_events_raw_range_to_proccesed(start, end, access_key, secret_key):
+    total_eventos = 0
+    total_dias = 0
+
     for d in iterate_dates(start, end):
         day = d.strftime("%Y-%m-%d")
         dfs = []
@@ -55,6 +58,11 @@ def transform_events_raw_range_to_proccesed(start, end, access_key, secret_key):
         out_obj = build_processed_object(day)
         upload_df_parquet(access_key, secret_key, out_obj, df_processed)
         print(f"Subido: {out_obj} ({len(df_processed)} filas)")
+
+        total_eventos += len(df_processed)
+        total_dias += 1
+
+    print(f"\nResumen: {total_eventos} eventos subidos en {total_dias} dias con datos.")
 
 
 def run_transform(start, end):
