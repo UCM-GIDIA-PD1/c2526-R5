@@ -60,6 +60,7 @@ def transformar_a_df(respuestas):
             freq=pd.Timedelta(seconds=hourly.Interval()),
             inclusive="left"
     )
+    print(dates)
     datos = {
         "Date" : dates,
         "Temperature" : temp_array,
