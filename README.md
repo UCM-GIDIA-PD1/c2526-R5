@@ -115,6 +115,12 @@ export CLIENT_ID_SEATGEEK=...
 export SETLIST_API_KEY=...
 ```
 
+Credenciales y tokens
+```
+Gmail credentials
+Gmail token
+```
+
 ### Crear entorno e instalar dependencias
 
 uv sync
