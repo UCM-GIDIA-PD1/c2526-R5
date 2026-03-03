@@ -115,16 +115,12 @@ export CLIENT_ID_SEATGEEK=...
 export SETLIST_API_KEY=...
 ```
 
-### Crear entorno, instalar dependencias y ejecutar scripts
+### Crear entorno e instalar dependencias
 
 uv sync
 
-uv run python src/...
-
-
 ---
 
----
 
 ## Ejecución de los pipelines
 
@@ -196,7 +192,14 @@ Tras su ejecución, los datos seguirán el flujo:
 ```
 raw/ → processed/ → cleaned/
 ```
+---
 
+### Flujo típico de trabajo
+
+1. Ejecutar pipelines (extracción + transformación).
+2. Abrir notebook de análisis o modelado.
+3. Cargar datos desde `cleaned/`.
+4. Validar features generadas.
 
 ---
 
@@ -231,14 +234,6 @@ Es importante ejecutar primero las celdas de:
 - Conexión a MinIO
 - Importación de librerías comunes
 
----
-
-### Flujo típico de trabajo
-
-1. Ejecutar pipelines (extracción + transformación).
-2. Abrir notebook de análisis o modelado.
-3. Cargar datos desde `cleaned/`.
-4. Validar features generadas.
 
 ---
 
