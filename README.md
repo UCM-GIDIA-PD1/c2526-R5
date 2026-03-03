@@ -23,7 +23,7 @@ El sistema está diseñado siguiendo una arquitectura tipo data lake (raw → pr
 ```
 ├── src/ # Scripts de ingestión, limpieza y generación de features
 ├── notebooks/ # Análisis exploratorio y visualizaciones
-├── docs/ # Documentación adicional (data dictionary, quality report, sources)
+├── docs/ # Documentación adicional
 ├── pyproject.toml # Configuración del entorno
 ├── .gitignore
 └── README.md
@@ -157,7 +157,7 @@ Este orquestador ejecuta la descarga de datos desde las distintas fuentes extern
 #### Ejemplo de ejecución
 
 ```bash
-uv run python src/pipelines/run_extraccion.py --source all --start 2025-01-01 --end 2025-01-03
+uv run python -m src.pipelines.run_extraccion --source all --start 2025-01-01 --end 2025-01-03
 ```
 
 Este comando descargará los datos del rango indicado y los almacenará en:
@@ -176,7 +176,7 @@ Script principal:
 src/pipelines/run_transform.py
 ```
 
-Este orquestador procesa los datos almacenados en `raw/`, realiza limpieza, integración y generación de variables, y los mueve a capas superiores del data lake.
+Este orquestador procesa los datos almacenados en `raw/ y/o processed`, realiza limpieza, integración y generación de variables, y los mueve a capas superiores del data lake.
 
 #### Parámetros disponibles
 
@@ -188,7 +188,7 @@ Este orquestador procesa los datos almacenados en `raw/`, realiza limpieza, inte
 #### Ejemplo de ejecución
 
 ```bash
-uv run python src/pipelines/run_transform.py --source all --start 2025-01-01 --end 2025-01-03
+uv run python -m src.pipelines.run_transform --source all --start 2025-01-01 --end 2025-01-03
 ```
 
 Tras su ejecución, los datos seguirán el flujo:
@@ -197,16 +197,6 @@ Tras su ejecución, los datos seguirán el flujo:
 raw/ → processed/ → cleaned/
 ```
 
----
-
-### Flujo recomendado de trabajo
-
-1. Ejecutar extracción de datos  
-2. Ejecutar transformación  
-3. Validar resultados en la capa `cleaned/`  
-4. Continuar análisis en notebooks  
-
-Este enfoque garantiza trazabilidad, reproducibilidad y separación clara entre etapas del pipeline.
 
 ---
 
@@ -222,9 +212,7 @@ Se utilizan para:
 
 - Análisis exploratorio de datos (EDA)
 - Validación de variables derivadas
-- Evaluación de modelos
 - Visualización de resultados
-- Análisis de métricas (MAE, RMSE, F1-score, etc.)
 
 ---
 
@@ -249,14 +237,10 @@ Es importante ejecutar primero las celdas de:
 
 1. Ejecutar pipelines (extracción + transformación).
 2. Abrir notebook de análisis o modelado.
-3. Cargar datos desde `cleaned/` o `analytics/`.
+3. Cargar datos desde `cleaned/`.
 4. Validar features generadas.
-5. Evaluar métricas del modelo.
-6. Iterar mejoras si es necesario.
 
-Este flujo permite separar claramente la ingeniería de datos del análisis y modelado.
-
-
+---
 
 ## Autores
 - Alex García
