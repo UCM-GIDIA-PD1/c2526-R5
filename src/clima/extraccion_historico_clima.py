@@ -1,3 +1,10 @@
+'''
+clima_realtime.py - Extracción de datos del clima histórico
+Fuente: https://archive-api.open-meteo.com/v1/archive
+Destino: 'grupo5/processed/Clima/Clima_Historico/' + dia + '/Clima_Historico_' + dia +'.parquet'
+
+'''
+
 from datetime import datetime, timedelta
 import openmeteo_requests
 import requests_cache
@@ -6,6 +13,9 @@ import pandas as pd
 from retry_requests import retry
 import os
 import io
+
+import sys
+from src.common.minio_client import upload_df_parquet
 
 def extraccion(fechaini,fechafin):
     url = "https://archive-api.open-meteo.com/v1/archive"
@@ -64,25 +74,17 @@ def transformar_a_df(respuestas):
     return df
 
 def separar_dias(df):
-    ACCESS_KEY = os.getenv('MINIO_ACCESS_KEY')
-    assert ACCESS_KEY is not None, 'La variable de entorno MINIO_ACCESS_KEY no está definida.'
-    SECRET_KEY = os.getenv('MINIO_SECRET_KEY')
-    assert SECRET_KEY is not None, 'La variable de entorno MINIO_SECRET_KEY no está definida.'
-    from minio import Minio
-    client = Minio(endpoint='minio.fdi.ucm.es', access_key=ACCESS_KEY, secret_key=SECRET_KEY)
+    
+
     for dia, df_dia in df.groupby(df['Date'].dt.date):
-        print(df_dia)
-        subir_a_MinIO(dia, df_dia, client)
+        subir_a_MinIO(dia, df_dia)
     print("Todo subido con exito")
         
-def subir_a_MinIO(dia, df_dia, client):
-    buffer = io.BytesIO()
-    df_dia.to_parquet(buffer)
+def subir_a_MinIO(dia, df_dia):
+    ACCESS_KEY = os.getenv('MINIO_ACCESS_KEY')
+    SECRET_KEY = os.getenv('MINIO_SECRET_KEY')
     name = 'grupo5/processed/Clima/Clima_Historico/' + str(dia) + '/Clima_Historico_' + str(dia) +'.parquet'
-    buffer.seek(0)  # Volver al inicio del buffer para que se lea correctamente
-    client.put_object(bucket_name='pd1', object_name=name,
-    data=buffer, length=buffer.getbuffer().nbytes, content_type='application/octet-stream')
-    print("Archivo subido con exito a" + name)
+    upload_df_parquet(ACCESS_KEY, SECRET_KEY, name, df_dia)
 
 
 def extraccion_historico(fechaini = "2024-12-31", fechafin = "2026-01-01"):
