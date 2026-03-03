@@ -1,3 +1,13 @@
+"""
+Extraccion de alertas oficiales de la MTA en tiempo real via Gmail API.
+
+Lee los correos con etiqueta 'mta_alerts' recibidos en los ultimos 30 minutos,
+parsea el HTML del cuerpo y extrae: categoria, lineas afectadas, motivo,
+ubicacion y un fragmento de texto.
+
+Resultado: mta_dataset.csv con las alertas procesadas.
+"""
+
 import os
 import base64
 import re
@@ -9,10 +19,14 @@ from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from bs4 import BeautifulSoup
 
-# If modifying these scopes, delete the file token.json.
+# Permisos necesarios: solo lectura de Gmail.
+# Si se modifican, hay que borrar token.json para regenerarlo.
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 
+
 def get_gmail_service():
+    """Autenticacion con Gmail API. Usa token.json si existe;
+    si no, lanza el flujo OAuth interactivo y lo guarda."""
     creds = None
     if os.path.exists('token.json'):
         creds = Credentials.from_authorized_user_file('token.json', SCOPES)
@@ -26,8 +40,18 @@ def get_gmail_service():
             token.write(creds.to_json())
     return build('gmail', 'v1', credentials=creds)
 
+
 def parse_mta_body(html_content):
+    """Parsea el cuerpo HTML de un correo de la MTA y extrae:
+    - lineas afectadas (ej: 'A, C, E')
+    - motivo del aviso (puertas, senales, clima, etc.)
+    - categoria (retraso, cambio de servicio, etc.)
+    - ubicacion aproximada
+    - fragmento de texto limpio (max 500 chars)
+    """
     soup = BeautifulSoup(html_content, 'html.parser')
+
+    # Eliminar scripts y estilos del HTML
     for script_or_style in soup(["script", "style"]):
         script_or_style.decompose()
 
@@ -35,7 +59,7 @@ def parse_mta_body(html_content):
     clean_text = re.sub(r'\s+', ' ', text).strip()
     text_lower = clean_text.lower()
 
-    # 1) Summary Category Column
+    # 1) Categoria del aviso
     if any(word in text_lower for word in ["resumed", "regular service", "resolved"]):
         category = "Service Resumed"
     elif "preparing for" in text_lower and "storm" in text_lower:
@@ -49,11 +73,11 @@ def parse_mta_body(html_content):
     else:
         category = "Info/Other"
 
-    # 2) Subway Lines
+    # 2) Lineas de metro afectadas
     line_pattern = r'\b([1-7]|A|B|C|D|E|F|G|J|L|M|N|Q|R|S|W|Z)\b'
     lines = sorted(list(set(re.findall(line_pattern, clean_text))))
 
-    # 3) Specific Reason
+    # 3) Motivo especifico
     reason = "Unknown"
     if "door" in text_lower:
         reason = "Mechanical (Doors)"
@@ -66,7 +90,7 @@ def parse_mta_body(html_content):
     elif "winter storm" in text_lower:
         reason = "Weather"
 
-    # 4) Location
+    # 4) Ubicacion (busca patrones tipo "at/from/to/near + nombre")
     location = "Multiple/System-wide"
     loc_match = re.search(r'(?:at|from|to|near)\s+([A-Z][a-z0-9]+(?:\s[A-Z][a-z0-9]+)*)', clean_text)
     if loc_match:
@@ -74,18 +98,19 @@ def parse_mta_body(html_content):
 
     return ", ".join(lines), reason, category, location, clean_text[:500]
 
+
 def main():
     service = get_gmail_service()
     data_log = []
     page_token = None
 
-    # We’ll also do a hard cutoff check in case the query returns something unexpected.
+    # Punto de corte: solo correos de los ultimos 30 minutos
     cutoff_utc = datetime.now(timezone.utc) - timedelta(minutes=30)
 
-    print("Starting extraction of MTA emails from the last 30 minutes...")
+    print("Extrayendo correos de alertas MTA de los ultimos 30 minutos...")
 
     while True:
-        # Only fetch messages from the last 30 minutes with the mta_alerts label
+        # Buscar correos con etiqueta mta_alerts de los ultimos 30 min
         results = service.users().messages().list(
             userId='me',
             q='label:mta_alerts newer_than:30m',
@@ -96,7 +121,7 @@ def main():
         if not messages:
             break
 
-        print(f"Processing batch of {len(messages)}...")
+        print(f"  Procesando lote de {len(messages)} correos...")
 
         for msg in messages:
             try:
@@ -104,13 +129,14 @@ def main():
                     userId='me', id=msg['id'], format='full'
                 ).execute()
 
-                # internalDate is epoch ms (UTC)
+                # internalDate viene en milisegundos epoch (UTC)
                 timestamp_utc = pd.to_datetime(int(m['internalDate']), unit='ms', utc=True)
 
-                # Hard cutoff (keep only last 30 minutes)
+                # Descartamos si esta fuera de la ventana de 30 min
                 if timestamp_utc.to_pydatetime() < cutoff_utc:
                     continue
 
+                # Extraer la parte HTML del correo (recursivo por si es multipart)
                 def get_html_part(payload):
                     if payload.get('mimeType') == 'text/html':
                         data = payload.get('body', {}).get('data')
@@ -128,16 +154,17 @@ def main():
                 if not html_body:
                     continue
 
+                # Parsear el HTML y extraer campos
                 lines, reason, category, location, clean_text = parse_mta_body(html_body)
 
                 data_log.append({
-                    'timestamp': timestamp_utc,   # stored as UTC
+                    'timestamp': timestamp_utc,   # TODO: convertir a America/New_York
                     'category': category,
                     'lines': lines,
                     'reason': reason,
                     'location': location,
                     'text_snippet': clean_text,
-                    'gmail_id': msg['id'],        # helpful for deduping
+                    'gmail_id': msg['id'],
                 })
 
             except Exception:
@@ -147,17 +174,18 @@ def main():
         if not page_token:
             break
 
+    # Construir DataFrame y exportar
     if data_log:
         df = pd.DataFrame(data_log).sort_values(by='timestamp', ascending=False)
 
-        # Deduplicate by message id (optional but usually a good idea)
+        # Eliminar duplicados por ID de correo
         df = df.drop_duplicates(subset=['gmail_id'])
 
         df.to_csv('mta_dataset.csv', index=False)
-        print(f"Dataset created with {len(df)} rows (last 30 minutes).")
+        print(f"Dataset creado con {len(df)} filas (ultimos 30 minutos).")
     else:
-        # Still write an empty file with headers if you want, or just print.
-        print("No matching emails found in the last 30 minutes.")
+        print("No se encontraron correos de alertas en los ultimos 30 minutos.")
+
 
 if __name__ == '__main__':
     main()
