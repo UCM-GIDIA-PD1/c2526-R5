@@ -92,7 +92,6 @@ def transform_weather_data(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     # 2. Limpieza básica
     # Eliminamos duplicados y filas donde la temperatura o fecha sean nulas
     df = df.dropna(subset=['Date', 'Temperature']).drop_duplicates()
-
     # 3. Filtrado de Outliers (Z-Score)
     # Si hay suficientes datos, eliminamos errores de sensor (>3 desviaciones estándar)
     if len(df) > 5:

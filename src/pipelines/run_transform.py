@@ -3,6 +3,7 @@ Orquestador de la etapa de transformación para una o varias fuentes.
 
 Uso:
   [uv run] python -m src.pipelines.run_transform --source gtfs_historico --start 2025-12-01 --end 2025-12-31
+  [uv run] python -m src.pipelines.run_transform --source clima --start 2025-01-01 --end 2025-12-31
 """
 
 import argparse
@@ -13,6 +14,7 @@ from typing import Callable, Dict, List
 from src.gtfs_historico.transform import run_transform as transform_gtfs_historico
 from src.eventos.transform import run_transform as transform_eventos
 from src.alertas_oficiales_tiempo_real.transform import run_transform as transform_alertas
+from src.clima.transform import run_pipeline as transform_clima
 
 
 TransformFn = Callable[[str, str], None]
@@ -20,7 +22,8 @@ TransformFn = Callable[[str, str], None]
 REGISTRY: Dict[str, TransformFn] = {
     "gtfs_historico": transform_gtfs_historico,
     "eventos":  transform_eventos,
-    "alertas": transform_alertas
+    "alertas": transform_alertas,
+    "clima": transform_clima
 }
 
 

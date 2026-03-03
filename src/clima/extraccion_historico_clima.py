@@ -32,7 +32,7 @@ def extraccion(fechaini,fechafin):
         "start_date" : fechaini,
         "end_date" : fechafin,
         "hourly" : ["temperature_2m", "rain", "precipitation", "wind_speed_10m", "snowfall", "cloud_cover"],
-        "timezone" : "auto"
+        "timezone" : "America/New_York"
     }
     try:
         respuestas = openmeteo.weather_api(url, params = parametros)
@@ -55,12 +55,11 @@ def transformar_a_df(respuestas):
 
 
     dates = pd.date_range(
-            start=pd.to_datetime(hourly.Time(), unit="s", utc=True),
-            end=pd.to_datetime(hourly.TimeEnd(), unit="s", utc=True),
+            start=pd.to_datetime(hourly.Time(), unit="s"),
+            end=pd.to_datetime(hourly.TimeEnd(), unit="s"),
             freq=pd.Timedelta(seconds=hourly.Interval()),
             inclusive="left"
     )
-    
     datos = {
         "Date" : dates,
         "Temperature" : temp_array,
