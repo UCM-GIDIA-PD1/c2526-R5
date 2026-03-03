@@ -16,6 +16,11 @@ import requests
 from retry_requests import retry
 import datetime
 import io
+import os
+
+import sys
+from src.common.minio_client import upload_df_parquet
+
 
 
 def extraer_clima_actual():
@@ -83,22 +88,10 @@ def extraer_clima_actual():
 
 	hourly_dataframe.loc[len(hourly_dataframe)] = [fecha_utc, current_temperature_2m, current_rain, current_precipitation, current_wind_speed_10m, current_snowfall, current_cloud_cover]
 	#La última fila del df es el current
-	import os
 	ACCESS_KEY = os.getenv('MINIO_ACCESS_KEY')
-	assert ACCESS_KEY is not None, 'La variable de entorno MINIO_ACCESS_KEY no está definida.'
 	SECRET_KEY = os.getenv('MINIO_SECRET_KEY')
-	assert SECRET_KEY is not None, 'La variable de entorno MINIO_SECRET_KEY no está definida.'
-	from minio import Minio
-	client = Minio(endpoint='minio.fdi.ucm.es', access_key=ACCESS_KEY, secret_key=SECRET_KEY)
-
-
-	buffer = io.BytesIO()
-	hourly_dataframe.to_parquet(buffer)
-	buffer.seek(0)  # Volver al inicio del buffer para que se lea correctamente
-	client.put_object(bucket_name='pd1', object_name='grupo5/processed/Clima/DataFrame_Clima_TiempoReal.parquet',
-	data=buffer, length=buffer.getbuffer().nbytes, content_type='application/octet-stream')
-	print(f'DataFrame guardado como parquet y subido a MinIO como grupo5/processed/Clima/DataFrame_Clima_TiempoReal.parquet en el bucket pd1.')
-
+	upload_df_parquet(ACCESS_KEY, SECRET_KEY, 'grupo5/processed/Clima/DataFrame_Clima_TiempoReal.parquet', hourly_dataframe)
+	
 
 if __name__ == "__main__":
 	df = extraer_clima_actual()

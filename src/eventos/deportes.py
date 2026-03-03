@@ -140,7 +140,7 @@ def extraer_deportes(start_date, end_date):
                     "fecha_cruda":   ev.get("date"),
                     "duracion":      DURACIONES_HORAS.get(liga, 2.5),
                     "coordinates":   [lon, lat] if lon and lat else [],
-                    "tipo": sport
+                    "tipo": liga
                 })
 
     df = pd.DataFrame(filas)
