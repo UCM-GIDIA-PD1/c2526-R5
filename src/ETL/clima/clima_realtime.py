@@ -40,6 +40,7 @@ def extraer_clima_actual():
 		"longitude": -73.58,
 		"hourly": ["temperature_2m", "rain", "precipitation", "wind_speed_10m", "snowfall", "cloud_cover"],
 		"current": ["wind_speed_10m", "temperature_2m", "precipitation", "rain", "snowfall", "cloud_cover"],
+		"timezone" : "America/New_York"
 	}
 	responses = openmeteo.weather_api(url, params=params)
 
