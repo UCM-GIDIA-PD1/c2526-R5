@@ -18,6 +18,7 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from bs4 import BeautifulSoup
+from pathlib import Path
 
 from src.common.minio_client import upload_df_parquet
 
@@ -25,21 +26,39 @@ from src.common.minio_client import upload_df_parquet
 # Si se modifican, hay que borrar token.json para regenerarlo.
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 
+BASE_DIR = Path(__file__).resolve().parent
+CREDENTIALS_PATH = BASE_DIR / "credentials.json"
+TOKEN_PATH = BASE_DIR / "token.json"
 
 def get_gmail_service():
     """Autenticacion con Gmail API. Usa token.json si existe;
     si no, lanza el flujo OAuth interactivo y lo guarda."""
     creds = None
+
+    if TOKEN_PATH.exists():
+        creds = Credentials.from_authorized_user_file(TOKEN_PATH, SCOPES)
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            flow = InstalledAppFlow.from_client_secrets_file(str(CREDENTIALS_PATH), SCOPES)
+            creds = flow.run_local_server(port=0)
+        with open(TOKEN_PATH, 'w') as token:
+            token.write(creds.to_json())
+    '''
     if os.path.exists('token.json'):
         creds = Credentials.from_authorized_user_file('token.json', SCOPES)
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
+            BASE_DIR = Path(__file__).resolve().parent
+            flow = InstalledAppFlow.from_client_secrets_file(str(BASE_DIR / "credentials.json"), SCOPES)
+            #flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
             creds = flow.run_local_server(port=0)
         with open('token.json', 'w') as token:
             token.write(creds.to_json())
+    '''
     return build('gmail', 'v1', credentials=creds)
 
 
@@ -182,6 +201,7 @@ def main():
 
         # Eliminar duplicados por ID de correo
         df = df.drop_duplicates(subset=['gmail_id'])
+        
         ACCESS_KEY = os.getenv('MINIO_ACCESS_KEY')
         SECRET_KEY = os.getenv('MINIO_SECRET_KEY')
         upload_df_parquet(ACCESS_KEY, SECRET_KEY, 'grupo5/raw/official_alerts/DataFrame_Alertas_TiempoReal.parquet', df)
