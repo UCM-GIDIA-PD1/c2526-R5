@@ -131,7 +131,7 @@ def main():
 
                 # internalDate viene en milisegundos epoch (UTC)
                 timestamp_utc = pd.to_datetime(int(m['internalDate']), unit='ms', utc=True)
-
+                timestamp_ny = timestamp_utc.tz_convert('America/New_York')
                 # Descartamos si esta fuera de la ventana de 30 min
                 if timestamp_utc.to_pydatetime() < cutoff_utc:
                     continue
@@ -158,7 +158,7 @@ def main():
                 lines, reason, category, location, clean_text = parse_mta_body(html_body)
 
                 data_log.append({
-                    'timestamp': timestamp_utc,   # TODO: convertir a America/New_York
+                    'timestamp': timestamp_ny,   
                     'category': category,
                     'lines': lines,
                     'reason': reason,

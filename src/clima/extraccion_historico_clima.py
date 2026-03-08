@@ -53,7 +53,6 @@ def transformar_a_df(respuestas):
 
 
 
-
     dates = pd.date_range(
             start=pd.to_datetime(hourly.Time(), unit="s"),
             end=pd.to_datetime(hourly.TimeEnd(), unit="s"),
@@ -90,7 +89,7 @@ def subir_a_MinIO(dia, df_dia):
 def extraccion_historico(fechaini = "2024-12-31", fechafin = "2026-01-01"):
     return extraccion(fechaini, fechafin)
 
-def ingest_clima_historico(fechaini, fechafin):
+def ingest_clima_historico(fechaini = "2024-12-31", fechafin = "2026-01-01"):
     df_historico = extraccion_historico(fechaini, fechafin)
     separar_dias(df_historico)
     
