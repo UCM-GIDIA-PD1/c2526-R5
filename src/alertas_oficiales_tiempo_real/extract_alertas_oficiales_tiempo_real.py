@@ -19,6 +19,8 @@ from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from bs4 import BeautifulSoup
 
+from src.common.minio_client import upload_df_parquet
+
 # Permisos necesarios: solo lectura de Gmail.
 # Si se modifican, hay que borrar token.json para regenerarlo.
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
@@ -180,8 +182,9 @@ def main():
 
         # Eliminar duplicados por ID de correo
         df = df.drop_duplicates(subset=['gmail_id'])
-
-        df.to_csv('mta_dataset.csv', index=False)
+        ACCESS_KEY = os.getenv('MINIO_ACCESS_KEY')
+        SECRET_KEY = os.getenv('MINIO_SECRET_KEY')
+        upload_df_parquet(ACCESS_KEY, SECRET_KEY, 'grupo5/raw/official_alerts/DataFrame_Alertas_TiempoReal.parquet', df)
         print(f"Dataset creado con {len(df)} filas (ultimos 30 minutos).")
     else:
         print("No se encontraron correos de alertas en los ultimos 30 minutos.")
