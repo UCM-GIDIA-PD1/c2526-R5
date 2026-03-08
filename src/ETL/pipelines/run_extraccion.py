@@ -10,10 +10,10 @@ import argparse
 import sys
 from typing import Callable, Dict, List
 
-from src.clima.extraccion_historico_clima import ingest_clima_historico
-from src.eventos.ingest import ingest_eventos
-from src.gtfs_historico.ingest import process_and_store_gtfs_range as ingest_gtfs_historico
-from src.alertas_oficiales_tiempo_real.extraccion_historico_2025 import ingest_alertas
+from src.ETL.clima.extraccion_historico_clima import ingest_clima_historico
+from src.ETL.eventos.ingest import ingest_eventos
+from src.ETL.gtfs_historico.ingest import process_and_store_gtfs_range as ingest_gtfs_historico
+from src.ETL.alertas_oficiales_tiempo_real.extraccion_historico_2025 import ingest_alertas
 
 
 

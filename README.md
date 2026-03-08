@@ -21,10 +21,18 @@ El sistema está diseñado siguiendo una arquitectura tipo data lake (raw → pr
 
 ## Estructura del proyecto
 ```
-├── src/ # Scripts de ingestión, limpieza y generación de features
-├── notebooks/ # Análisis exploratorio y visualizaciones
-├── docs/ # Documentación adicional
-├── pyproject.toml # Configuración del entorno
+├── src/
+│   └── ETL/                          # Scripts de ingestión, limpieza y generación de features
+│       ├── alertas_oficiales_tiempo_real/   # Alertas MTA (histórico y tiempo real)
+│       ├── clima/                    # Datos meteorológicos (Open-Meteo)
+│       ├── common/                   # Utilidades compartidas (MinIO client, etc.)
+│       ├── eventos/                  # Eventos NYC (deportes, conciertos, oficiales)
+│       ├── gtfs_historico/           # GTFS histórico (Mobility Database)
+│       ├── pipelines/                # Orquestadores run_extraccion y run_transform
+│       └── tiempo_real_metro/        # GTFS en tiempo real (MTA feeds)
+├── notebooks/                        # Análisis exploratorio y visualizaciones
+├── docs/                             # Documentación adicional
+├── pyproject.toml                    # Configuración del entorno
 ├── .gitignore
 └── README.md
 ```
@@ -133,7 +141,7 @@ uv sync
 El proyecto está automatizado mediante dos orquestadores principales ubicados en:
 
 ```
-src/pipelines/
+src/ETL/pipelines/
 ```
 
 Estos permiten ejecutar la ingesta y transformación de datos de forma parametrizable y reproducible.
@@ -145,7 +153,7 @@ Estos permiten ejecutar la ingesta y transformación de datos de forma parametri
 Script principal:
 
 ```
-src/pipelines/run_extraccion.py
+src/ETL/pipelines/run_extraccion.py
 ```
 
 Este orquestador ejecuta la descarga de datos desde las distintas fuentes externas (GTFS, clima, eventos, alertas oficiales, etc.) y los almacena en la capa `raw/` de MinIO.
@@ -159,7 +167,7 @@ Este orquestador ejecuta la descarga de datos desde las distintas fuentes extern
 #### Ejemplo de ejecución
 
 ```bash
-uv run python -m src.pipelines.run_extraccion --source all --start 2025-01-01 --end 2025-01-03
+uv run python -m src.ETL.pipelines.run_extraccion --source all --start 2025-01-01 --end 2025-01-03
 ```
 
 Este comando descargará los datos del rango indicado y los almacenará en:
@@ -175,7 +183,7 @@ raw/
 Script principal:
 
 ```
-src/pipelines/run_transform.py
+src/ETL/pipelines/run_transform.py
 ```
 
 Este orquestador procesa los datos almacenados en `raw/ y/o processed`, realiza limpieza, integración y generación de variables, y los mueve a capas superiores del data lake.
@@ -190,7 +198,7 @@ Este orquestador procesa los datos almacenados en `raw/ y/o processed`, realiza 
 #### Ejemplo de ejecución
 
 ```bash
-uv run python -m src.pipelines.run_transform --source all --start 2025-01-01 --end 2025-01-03
+uv run python -m src.ETL.pipelines.run_transform --source all --start 2025-01-01 --end 2025-01-03
 ```
 
 Tras su ejecución, los datos seguirán el flujo:

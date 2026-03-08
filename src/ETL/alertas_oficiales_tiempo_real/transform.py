@@ -10,7 +10,7 @@ Transformación de alertas oficiales MTA. Coordinado con el orquestador
 
 import os
 import pandas as pd
-from src.common.minio_client import download_json, upload_df_parquet
+from src.ETL.common.minio_client import download_json, upload_df_parquet
 
 BUCKET = "pd1"
 

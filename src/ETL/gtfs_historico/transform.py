@@ -24,7 +24,7 @@ from datetime import date, timedelta
 from typing import Dict, Any, List
 import pandas as pd
 
-from src.common.minio_client import download_df_parquet, upload_df_parquet, upload_json
+from src.ETL.common.minio_client import download_df_parquet, upload_df_parquet, upload_json
 
 
 REQUIRED_COLS = [

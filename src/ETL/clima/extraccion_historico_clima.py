@@ -15,7 +15,7 @@ import os
 import io
 
 import sys
-from src.common.minio_client import upload_df_parquet
+from src.ETL.common.minio_client import upload_df_parquet
 
 def extraccion(fechaini,fechafin):
     url = "https://archive-api.open-meteo.com/v1/archive"

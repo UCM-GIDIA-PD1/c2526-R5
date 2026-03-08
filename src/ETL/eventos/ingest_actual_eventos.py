@@ -76,7 +76,7 @@ CIUDADES_NYC = {'New York', 'Elmont', 'Newark', 'East Rutherford', 'Harrison'}
 
 
 # Funciones compartidas con los scripts históricos, definidas en utils_eventos.py
-from src.eventos.utils_eventos import (
+from src.ETL.eventos.utils_eventos import (
     fusionar_lista_estaciones,
     cargar_paradas_df,
     obtener_paradas_afectadas,

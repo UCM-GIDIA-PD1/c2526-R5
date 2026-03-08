@@ -19,7 +19,7 @@ from .utils_eventos import (
     fusionar_lista_estaciones,
     obtener_paradas_afectadas,
 )
-from src.common.minio_client import upload_df_parquet, DEFAULT_BUCKET
+from src.ETL.common.minio_client import upload_df_parquet, DEFAULT_BUCKET
 
 import pandas as pd
 
