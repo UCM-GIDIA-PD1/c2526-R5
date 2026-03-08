@@ -201,6 +201,8 @@ def add_future_targets(df: pd.DataFrame) -> pd.DataFrame:
     - target_delay_10m: retraso en +5 paradas (aprox 10 minutos)
     - target_delay_20m: retraso en +10 paradas (aprox 20 minutos)
     - target_delay_30m: retraso en +15 paradas (aprox 30 minutos)
+    - target_delay_45m: retraso en +23 paradas (aprox 45 minutos)
+    - target_delay_60m: retraso en +30 paradas (aprox 60 minutos)
     - target_delay_end: retraso en la última parada del viaje
     - scheduled_time_to_end: tiempo programado restante hasta el final del viaje
     - stops_to_end: número de paradas restantes hasta el final del viaje
@@ -219,9 +221,12 @@ def add_future_targets(df: pd.DataFrame) -> pd.DataFrame:
             out["target_delay_10m"] = out.groupby("match_key", group_keys=False)["delay_seconds"].shift(-5)
             out["target_delay_20m"] = out.groupby("match_key", group_keys=False)["delay_seconds"].shift(-10)
             out["target_delay_30m"] = out.groupby("match_key", group_keys=False)["delay_seconds"].shift(-15)
+            out["target_delay_45m"] = out.groupby("match_key", group_keys=False)["delay_seconds"].shift(-23)
+            out["target_delay_60m"] = out.groupby("match_key", group_keys=False)["delay_seconds"].shift(-30)
             
             # Horizonte variable hasta final de trayecto
             out["target_delay_end"] = out.groupby("match_key")["delay_seconds"].transform("last")
+            
         
         # Tiempo programado hasta el final
         if "scheduled_seconds" in out.columns:
@@ -239,7 +244,10 @@ def add_future_targets(df: pd.DataFrame) -> pd.DataFrame:
             out["delta_delay_20m"] = out["target_delay_20m"] - out["delay_seconds"]
         if "target_delay_30m" in out.columns:
             out["delta_delay_30m"] = out["target_delay_30m"] - out["delay_seconds"]
-    
+        if "target_delay_45m" in out.columns:
+            out["delta_delay_45m"] = out["target_delay_45m"] - out["delay_seconds"]
+        if "target_delay_60m" in out.columns:
+            out["delta_delay_60m"] = out["target_delay_60m"] - out["delay_seconds"]
     # Restaurar el orden original del índice
     out = out.sort_index()
     return out
