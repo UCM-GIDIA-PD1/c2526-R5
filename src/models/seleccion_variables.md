@@ -27,6 +27,8 @@ Se mantienen todos los horizontes de predicción para permitir diferentes enfoqu
 * **`scheduled_seconds` / `actual_seconds`**: Descartadas por redundancia.
 * **`delay_minutes`**: Eliminada por redundancia con la variable en segundos.
 
+---
+
 ## Variables climáticas (OpenMeteo)
 
 ### Variables que se incorporan:
