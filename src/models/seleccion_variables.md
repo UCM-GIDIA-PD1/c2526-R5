@@ -52,3 +52,22 @@ Tras el analisis de como afectan los eventos a la red de transporte, hemos sacad
 Descartamos: las paradas afectadas y sus lineas, que van a ser usadas para el cruce de datasets, el score que nos va a servir para elegir el evento prioritario, pero después no aporta nada. El resto de columnas son compartidas con el dataset principal, como por ejemplo el dia, hora.
 
 ---
+## Variables de alertas
+
+- Categoría de la alerta (category)
+- Número de actualizaciones que ha tenido la alerta (num_updates)
+- Líneas afectadas (lines)
+- Fecha y hora exacta de la publicación de la alerta (timestamp_start)
+- Minutos / segundos desde la última publicación de alerta (seconds_since_last_alert)
+
+Tras el análisis exploratorio , consideramos suficientes estas variables para las alertas. Hay que hacer un explode de la columna 'lines' en el dataframe de alertas antes del join, para tener una fila por línea afectada, y entonces poder cruzarlo correctamente con GTFS. La variable 'seconds_since_last_alert' muestra para cada observación , el tiempo en segundos que ha transcurrido desde la última publicación de una alerta. Nos hemos desprendido de la variable 'event_id' ya que es un identificador que no nos aporta información útil para modelar. Descartamos 'timestamp_end', ya que puede ser malinterpretada, porque no determina el fin de una alerta sino el momento de publicación de la última actualización (si tiene) de una alerta, por lo que si una alerta no tiene actualizaciones el timestamp_start y el end es el mismo, lo que puede llevar a confusión.'Text_snippet' y 'description' también se van porque son texto libre y no hemos hallado nada suficientemente útil procesándolas.
+
+
+
+
+
+
+
+
+
+
