@@ -20,7 +20,7 @@ from googleapiclient.discovery import build
 from bs4 import BeautifulSoup
 from pathlib import Path
 
-from src.ETL.common.minio_client import upload_df_parquet
+from src.common.minio_client import upload_df_parquet
 
 # Permisos necesarios: solo lectura de Gmail.
 # Si se modifican, hay que borrar token.json para regenerarlo.

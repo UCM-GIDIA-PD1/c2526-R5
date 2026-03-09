@@ -7,7 +7,7 @@ import os
 import sys
 import requests
 
-from src.ETL.common.minio_client import (
+from src.common.minio_client import (
     download_df_parquet,
     upload_df_parquet,
 )

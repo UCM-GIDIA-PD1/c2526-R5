@@ -22,10 +22,10 @@ El sistema está diseñado siguiendo una arquitectura tipo data lake (raw → pr
 ## Estructura del proyecto
 ```
 ├── src/
+│   ├── common/                       # Utilidades compartidas (MinIO client, etc.)
 │   └── ETL/                          # Scripts de ingestión, limpieza y generación de features
 │       ├── alertas_oficiales_tiempo_real/   # Alertas MTA (histórico y tiempo real)
 │       ├── clima/                    # Datos meteorológicos (Open-Meteo)
-│       ├── common/                   # Utilidades compartidas (MinIO client, etc.)
 │       ├── eventos/                  # Eventos NYC (deportes, conciertos, oficiales)
 │       ├── gtfs_historico/           # GTFS histórico (Mobility Database)
 │       ├── pipelines/                # Orquestadores run_extraccion y run_transform

@@ -19,7 +19,7 @@ import io
 import os
 
 import sys
-from src.ETL.common.minio_client import upload_df_parquet
+from src.common.minio_client import upload_df_parquet
 
 
 

@@ -5,7 +5,7 @@ import os
 from datetime import date, timedelta
 from minio import Minio
 from src.ETL.gtfs_historico.historical_gtfs_builder import process_mta_date
-from src.ETL.common.minio_client import upload_file, DEFAULT_BUCKET 
+from src.common.minio_client import upload_file, DEFAULT_BUCKET 
 
 # Configuracion MinIO
 ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY")

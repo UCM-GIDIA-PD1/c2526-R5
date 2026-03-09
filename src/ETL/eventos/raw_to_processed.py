@@ -8,7 +8,7 @@ if ruta_raiz not in sys.path:
     sys.path.insert(0, ruta_raiz)
 
 
-from src.ETL.common.minio_client import (
+from src.common.minio_client import (
     download_df_parquet,
     upload_df_parquet,
 )

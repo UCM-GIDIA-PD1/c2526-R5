@@ -14,7 +14,7 @@ import os
 import json
 from datetime import datetime
 from typing import List, Dict
-from src.ETL.common.minio_client import upload_json
+from src.common.minio_client import upload_json
 BASE_URL = "https://data.ny.gov/resource/7kct-peq7.json"
 MINIO_BASE_PATH = "grupo5/raw/official_alerts"
 

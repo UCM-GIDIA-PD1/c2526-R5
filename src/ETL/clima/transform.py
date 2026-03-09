@@ -33,7 +33,7 @@ import numpy as np
 from datetime import date, timedelta, datetime
 from scipy import stats 
 
-from src.ETL.common.minio_client import download_df_parquet, upload_df_parquet, upload_json
+from src.common.minio_client import download_df_parquet, upload_df_parquet, upload_json
 
 
 REQUIRED_COLS = [
