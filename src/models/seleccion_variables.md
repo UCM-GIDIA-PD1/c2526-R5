@@ -14,6 +14,7 @@ Las observaciones para este tipo de datos se definen como la llegada de un tren 
 - **`is_unscheduled`**: Señal de refuerzos operativos de la MTA.
 - **`hour_sin` / `hour_cos`**: Codificación cíclica que sustituye a las horas absolutas para el aprendizaje del modelo.
 - **`dow` / `is_weekend`**: Capturan la diferencia de comportamiento en fines de semana.
+-  **`scheduled_time_to_end`**: Tiempo hasta la llegada teórica a la última parada.
 
 ### Variables objetivo (Targets):
 Se mantienen todos los horizontes de predicción para permitir diferentes enfoques de modelo:
