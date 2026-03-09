@@ -1,6 +1,7 @@
-#Explicación de las variables escogidas para el DataSet conjunto
+# Explicación de las variables escogidas para el DataSet conjunto
 
 Este documento detalla la selección de variables (feature selection) para la fase de modelado del proyecto. Tras realizar el Análisis Exploratorio de Datos (EDA) en la Fase 2, hemos filtrado las variables originales para mantener aquellas con mayor capacidad predictiva y eliminar el ruido, asegurando así modelos más eficientes y ligeros para la Fase 3.
+
 ---
 ## Variables de trenes (GTFS)
 Las observaciones para este tipo de datos se definen como la llegada de un tren a una parada específica (match_key + stop_id).
