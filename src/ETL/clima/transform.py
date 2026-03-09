@@ -110,6 +110,15 @@ def transform_weather_data(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     # Flags de riesgo para el Metro NYC
     df['is_freezing'] = (df['Temperature'] <= 0).astype(int)  # Hielo en tercer raíl
     df['is_high_wind'] = (df['Wind Speed'] > 50).astype(int)  # Peligro en puentes (N, Q, B, D)
+
+    # Bandera robusta de temperatura extrema para consumo downstream.
+    # Con suficientes filas, usamos percentiles diarios; si no, umbrales fijos.
+    if len(df) >= 10:
+        low = df['Temperature'].quantile(0.10)
+        high = df['Temperature'].quantile(0.90)
+    else:
+        low, high = -5.0, 35.0
+    df['temp_extreme'] = ((df['Temperature'] < low) | (df['Temperature'] > high)).astype(int)
     
     # Variables de tiempo para facilitar JOINS con el dataset de la API de metro
     df['hour'] = df['Date'].dt.hour

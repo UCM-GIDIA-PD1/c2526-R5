@@ -2,8 +2,8 @@
 Orquestador de la etapa de extracción (raw) para todas las fuentes.
 
 Uso:
-  uv run python -m src.pipelines.run_extraccion --source all --start 2025-02-01 --end 2025-02-07
-  uv run python -m src.pipelines.run_extraccion --source clima --start 2025-02-01 --end 2025-02-07
+  uv run python -m src.ETL.pipelines.run_extraccion --source all --start 2025-02-01 --end 2025-02-07
+  uv run python -m src.ETL.pipelines.run_extraccion --source clima --start 2025-02-01 --end 2025-02-07
 """
 
 import argparse
