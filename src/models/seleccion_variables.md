@@ -28,15 +28,25 @@ Se mantienen todos los horizontes de predicción para permitir diferentes enfoqu
 * **`delay_minutes`**: Eliminada por redundancia con la variable en segundos.
 
 ## Variables climáticas
-- Sensación térmica
-- Velocidad del viento
-- Temperatura
+
+### Variables que se incorporan:
+- **`apparent_temp`** 
+- **`Wind Speed`** 
+- **`Temperature`**
+
+### Variables que se quitan:
+- **`Cloud Cover`**
+- **`Precipitation`**
+- **`precip_3h_accum`**
+- **`Snow`**
+- **`is_high_wind`**
+- **`is_freezing`**
 
 Tras el análisis, se ve claramente que estas tres variables son las que realmente tienen un efecto sobre el comportamiento de los trenes. En orden de importancia, la sensación térmica aporta un 37% aproximado del peso relativo sobre la variable objetivo principal (el retraso del metro); la velocidad del viento, un 24%; y la temperatura un 22%.
 Con esto, podemos hacer una conclusión adicional. Parece que afecta más el comportamiento de los usuarios a los trenes que el clima directamente, reflejado en la importancia de la sensación térmica frente a la temperatura real. 
 
 
-Descartamos: la visibilidad (cloud cover), lluvia, precipitación, precipitaciones acumuladas, y las booleanas de is_freezing e is_high_wind por lo poco que afectan a los trenes (visto en todas las gráficas del análisis). Entre todas apenas suman un 17% del peso relativo sobre la variable objetivo.
+Descartamos la visibilidad (cloud cover), lluvia, precipitación, precipitaciones acumuladas, y las booleanas de is_freezing e is_high_wind por lo poco que afectan a los trenes (visto en todas las gráficas del análisis). Entre todas apenas suman un 17% del peso relativo sobre la variable objetivo.
 
 ---
 ## Variables de eventos
