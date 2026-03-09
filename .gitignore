@@ -5,7 +5,7 @@ __pycache__/
 venv/
 venv_proyecto/
 
-#Caché
+# Caché
 .cache
 .cache.sqlite
 # Env
@@ -20,23 +20,14 @@ data/processed/*
 *.csv
 *.parquet
 *.pb
+*.json
 
 # OS
 .DS_Store
 
-#json
-.json
-
-#csv
-.csv
-
-.src/eventos/.csv
-
 # Google OAuth secrets
-src/alertas_oficiales_tiempo_real/token.json
-src/alertas_oficiales_tiempo_real/credentials.json
+src/ETL/alertas_oficiales_tiempo_real/token.json
+src/ETL/alertas_oficiales_tiempo_real/credentials.json
 
 # Dataset local
-src/alertas_oficiales_tiempo_real/mta_dataset.csv
-
-src/eventos/__pycache__
+src/ETL/alertas_oficiales_tiempo_real/mta_dataset.csv
