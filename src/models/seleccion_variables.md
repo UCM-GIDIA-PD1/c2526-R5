@@ -32,9 +32,7 @@ Se mantienen todos los horizontes de predicción para permitir diferentes enfoqu
 ## Variables climáticas (OpenMeteo)
 
 ### Variables que se incorporan:
-- **`apparent_temp`** 
-- **`Wind Speed`** 
-- **`Temperature`**
+- **`temp_extreme`**
 
 ### Variables que se quitan:
 - **`Cloud Cover`**
@@ -43,6 +41,9 @@ Se mantienen todos los horizontes de predicción para permitir diferentes enfoqu
 - **`Snow`**
 - **`is_high_wind`**
 - **`is_freezing`**
+- **`apparent_temp`** 
+- **`Wind Speed`** 
+- **`Temperature`**
 
 Tras el análisis, se ve claramente que estas tres variables son las que realmente tienen un efecto sobre el comportamiento de los trenes. En orden de importancia, la sensación térmica aporta un 37% aproximado del peso relativo sobre la variable objetivo principal (el retraso del metro); la velocidad del viento, un 24%; y la temperatura un 22%.
 Con esto, podemos hacer una conclusión adicional. Parece que afecta más el comportamiento de los usuarios a los trenes que el clima directamente, reflejado en la importancia de la sensación térmica frente a la temperatura real. 
