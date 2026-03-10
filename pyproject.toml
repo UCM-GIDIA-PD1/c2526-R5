@@ -19,8 +19,6 @@ dependencies = [
   "protobuf",
   "minio",
   "geopy>=2.4.1",
-  "matplotlib>=3.10.8",
-  "seaborn>=0.13.2",
   "scipy>=1.17.1",
   "scikit-learn>=1.8.0",
   "bs4>=0.0.2",
@@ -31,6 +29,8 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+  "matplotlib>=3.10.8",
+  "seaborn>=0.13.2",
   "pytest",
   "ruff",
   "mypy",
