@@ -54,6 +54,17 @@ class MinIODataClient:
 			bucket=self.bucket,
 		)
 
+	def upload_json(self, object_name: str, data: object) -> None:
+		"""Sube un objeto JSON serializable a MinIO."""
+		minio_client.upload_json(
+			access_key=self.access_key,
+			secret_key=self.secret_key,
+			object_name=object_name,
+			data=data,
+			endpoint=self.endpoint,
+			bucket=self.bucket,
+		)
+
 
 OUTPUT_OBJECT = "grupo5/final/dataset_final_entrenamiento.parquet"
 
@@ -171,7 +182,7 @@ def reduce_mem_usage(df: pd.DataFrame) -> pd.DataFrame:
 		if (
 			pd.api.types.is_datetime64_any_dtype(dtype)
 			or pd.api.types.is_bool_dtype(dtype)
-			or pd.api.types.is_categorical_dtype(dtype)
+			or isinstance(dtype, pd.CategoricalDtype)
 		):
 			continue
 
@@ -226,6 +237,7 @@ def prepare_gtfs(df_gtfs: pd.DataFrame) -> pd.DataFrame:
 		df["date"].astype("string") + " " + base_time.astype("string"),
 		errors="coerce",
 	)
+
 	# Mantener compatibilidad con posibles usos históricos de train_timestamp.
 	df["train_timestamp"] = df["merge_time"]
 	df["hour"] = df["merge_time"].dt.hour
@@ -495,7 +507,7 @@ def merge_gtfs_events(df_base: pd.DataFrame, df_events: pd.DataFrame) -> pd.Data
 	)
 	df_temp["event_count"] = df_temp.groupby(["match_key", "stop_id"])["nombre_evento"].transform("nunique")
 	df_temp = df_temp.sort_values(by=["score"], ascending=False)
-	df_temp = df_temp.drop_duplicates(subset=["match_key", "stop_id"], keep="first")
+	df_temp = df_temp.drop_duplicates(subset=["date","match_key", "stop_id"], keep="first")
 
 	ventana_entrada_inicio = df_temp["inicio_dt"] - pd.Timedelta(hours=1.5)
 	ventana_salida_fin = df_temp["fin_dt"] + pd.Timedelta(hours=1.5)
@@ -553,16 +565,24 @@ def merge_gtfs_alerts(df_base: pd.DataFrame, df_alerts: pd.DataFrame) -> pd.Data
 	left["merge_time"] = pd.to_datetime(left["merge_time"], errors="coerce")
 	right["timestamp_start"] = pd.to_datetime(right["timestamp_start"], errors="coerce")
 
-	left = left.dropna(subset=["route_id", "merge_time"])
+	# Preservar todas las filas de la tabla izquierda; solo separamos válidas/inválidas.
+	mask_valid = left["route_id"].notna() & left["merge_time"].notna()
+	left_valid = left[mask_valid].copy()
+	left_invalid = left[~mask_valid].copy()
+	left_invalid["category"] = pd.NA
+	left_invalid["num_updates"] = 0
+	left_invalid["timestamp_start"] = pd.NaT
+	left_invalid["seconds_since_last_alert"] = 2592000
+
 	right = right.dropna(subset=["route_id", "timestamp_start"])
 
 	# Reducir RAM en claves de join.
-	left["route_id"] = left["route_id"].astype("category")
+	left_valid["route_id"] = left_valid["route_id"].astype("category")
 	right["route_id"] = right["route_id"].astype("category")
 
 	chunks: list[pd.DataFrame] = []
-	for route in left["route_id"].dropna().unique():
-		left_chunk = left[left["route_id"] == route].sort_values("merge_time").copy()
+	for route in left_valid["route_id"].unique():
+		left_chunk = left_valid[left_valid["route_id"] == route].sort_values("merge_time").copy()
 		right_chunk = right[right["route_id"] == route].sort_values("timestamp_start").copy()
 
 		if right_chunk.empty:
@@ -591,14 +611,9 @@ def merge_gtfs_alerts(df_base: pd.DataFrame, df_alerts: pd.DataFrame) -> pd.Data
 		chunks.append(merged_chunk)
 
 	if not chunks:
-		out = df_base.copy()
-		out["category"] = pd.NA
-		out["num_updates"] = 0
-		out["timestamp_start"] = pd.NaT
-		out["seconds_since_last_alert"] = 2592000
-		return out
+		return left_invalid.sort_values("merge_time").reset_index(drop=True)
 
-	merged = pd.concat(chunks, ignore_index=True)
+	merged = pd.concat(chunks + [left_invalid], ignore_index=True)
 	merged = merged.sort_values("merge_time").reset_index(drop=True)
 	return merged
 
@@ -720,7 +735,12 @@ def build_final_dataset(start: str, end: str, output_base: str = "grupo5/final/d
 		)
 
 		# Carga/preparación por bloque mensual con continuidad temporal.
-		gtfs = prepare_gtfs(load_gtfs(client, days_gtfs))
+		gtfs_raw = load_gtfs(client, days_gtfs)
+
+		gtfs = prepare_gtfs(gtfs_raw)
+		del gtfs_raw
+		gc.collect()
+
 		gtfs = reduce_mem_usage(gtfs)
 		weather = prepare_weather(load_weather(client, days_gtfs))
 
@@ -745,6 +765,7 @@ def build_final_dataset(start: str, end: str, output_base: str = "grupo5/final/d
 		gc.collect()
 
 		client.upload_df_parquet(output_object, final_df)
+
 		print(
 			"[generate_final_dataset] OK "
 			f"month={year}-{month:02d} rows={len(final_df)} cols={len(final_df.columns)} "
