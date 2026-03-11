@@ -54,11 +54,11 @@ def transformar_a_df(respuestas):
 
 
     dates = pd.date_range(
-            start=pd.to_datetime(hourly.Time(), unit="s"),
-            end=pd.to_datetime(hourly.TimeEnd(), unit="s"),
+            start=pd.to_datetime(hourly.Time(), unit="s", utc = True),
+            end=pd.to_datetime(hourly.TimeEnd(), unit="s", utc = True),
             freq=pd.Timedelta(seconds=hourly.Interval()),
             inclusive="left"
-    )
+    ).tz_convert("America/New_York").tz_localize(None)
     print(dates)
     datos = {
         "Date" : dates,
