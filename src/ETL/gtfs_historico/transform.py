@@ -139,7 +139,8 @@ def add_time_series_features(df: pd.DataFrame) -> pd.DataFrame:
     Devuelve el DataFrame ordenado por su índice original.
     """
     out = df.copy()
-    out["direction"] = out["stop_id"].str[-1]
+    if "direction" not in out.columns:
+        out["direction"] = out["stop_id"].str[-1]
 
     # lagged delays: retrasos previos del mismo viaje
     if "delay_seconds" in out.columns and "match_key" in out.columns:
@@ -186,70 +187,114 @@ def add_time_series_features(df: pd.DataFrame) -> pd.DataFrame:
         out["rolling_mean_delay_trip"] = out.groupby("trip_uid")["delay_seconds"].transform(
             lambda x: x.rolling(window=3, min_periods=1).mean().shift(1)
         )
-    # Borrar la columna temporal direction y restaurar el orden original
-    if "direction" in out.columns:
-        out = out.drop(columns=["direction"])
+    # Restaurar el orden original
     out = out.sort_index()
     return out
 
 
 def add_future_targets(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Genera las variables objetivo (targets) para modelos predictivos a largo plazo.
-    
-    Columnas generadas:
-    - target_delay_10m: retraso en +5 paradas (aprox 10 minutos)
-    - target_delay_20m: retraso en +10 paradas (aprox 20 minutos)
-    - target_delay_30m: retraso en +15 paradas (aprox 30 minutos)
-    - target_delay_45m: retraso en +23 paradas (aprox 45 minutos)
-    - target_delay_60m: retraso en +30 paradas (aprox 60 minutos)
-    - target_delay_end: retraso en la última parada del viaje
-    - scheduled_time_to_end: tiempo programado restante hasta el final del viaje
-    - stops_to_end: número de paradas restantes hasta el final del viaje
-    
-    Todos los cálculos se realizan agrupando por match_key (viaje).
-    Devuelve el DataFrame ordenado por su índice original.
+    Genera las variables objetivo para entrenar nuestros modelos predictivos,
+    evitando NaNs.
     """
     out = df.copy()
+
+    # Verificamos que tenemos todo lo necesario antes de empezar
+    columnas_requeridas = {"match_key", "actual_seconds", "stop_id", "delay_seconds"}
+    if not columnas_requeridas.issubset(out.columns):
+        return out
+
+    # Funcion auxiliar para encontrar el retraso futuro 
+    def buscar_retraso_futuro(columna_grupo: str, segundos_futuro: int, tolerancia_segundos: int) -> pd.Series:
+        """
+        Busca el retraso que habrá en el futuro (ya sea para el mismo tren o la misma estación)
+        usando merge_asof para evitar bucles lentos que saturen la memoria.
+        """
+
+        # Filtramos los NaNs
+        datos_validos = out.dropna(subset=["actual_seconds", columna_grupo])
+
+        # Preparamos las respuestas posibles (el futuro real)
+        futuro_real = (
+            datos_validos[[columna_grupo, "actual_seconds", "delay_seconds"]]
+            .rename(columns={"delay_seconds": "retraso_objetivo"})
+            .sort_values("actual_seconds")
+        )
+        
+        # Preparamos los valores presentes
+        presente = futuro_real[[columna_grupo, "actual_seconds"]].copy()
+        
+        # Guardamos el índice original para no desordenar el DataFrame
+        presente["_indice_original"] = presente.index 
+        
+        # Calculamos la hora que buscamos como la hora actual + el horizonte futuro
+        presente["hora_buscada"] = (presente["actual_seconds"] + segundos_futuro).astype("float64")
+        presente_ordenado = presente.sort_values("hora_buscada")
+
+        # Emparejamos la hora que buscamos con la realidad más cercana
+        cruce_temporal = pd.merge_asof(
+            presente_ordenado,
+            futuro_real,
+            left_on="hora_buscada",
+            right_on="actual_seconds",
+            by=columna_grupo,
+            direction="nearest",
+            tolerance=float(tolerancia_segundos),
+        )
+        
+        # Devolvemos la columna de retrasos, conectándola de nuevo con su índice original
+        return cruce_temporal.set_index("_indice_original")["retraso_objetivo"].reindex(out.index)
+
+
+    # Propagación Espacial (Centrado en la Estación)
+    # Estando en la estación X, ¿qué retraso tendrá el tren que pase por aquí dentro de y min?
+    HORIZONTES_ESTACION = [
+        ("station_delay_10m", 600,  360), # +10 min, permitimos un margen de ±6 min para encontrar un tren
+        ("station_delay_20m", 1200, 360),
+        ("station_delay_30m", 1800, 360),
+    ]
     
-    # Ordenar por match_key y actual_seconds para definir la secuencia de paradas
-    if "match_key" in out.columns and "actual_seconds" in out.columns:
-        out = out.sort_values(by=["match_key", "actual_seconds"], na_position="last")
-        
-        # Horizontes fijos por paradas
-        if "delay_seconds" in out.columns:
-            out["target_delay_10m"] = out.groupby("match_key", group_keys=False)["delay_seconds"].shift(-5)
-            out["target_delay_20m"] = out.groupby("match_key", group_keys=False)["delay_seconds"].shift(-10)
-            out["target_delay_30m"] = out.groupby("match_key", group_keys=False)["delay_seconds"].shift(-15)
-            out["target_delay_45m"] = out.groupby("match_key", group_keys=False)["delay_seconds"].shift(-23)
-            out["target_delay_60m"] = out.groupby("match_key", group_keys=False)["delay_seconds"].shift(-30)
-            
-            # Horizonte variable hasta final de trayecto
-            out["target_delay_end"] = out.groupby("match_key")["delay_seconds"].transform("last")
-            
-        
-        # Tiempo programado hasta el final
-        if "scheduled_seconds" in out.columns:
-            last_scheduled = out.groupby("match_key")["scheduled_seconds"].transform("last")
-            out["scheduled_time_to_end"] = last_scheduled - out["scheduled_seconds"]
-        
-        # Contar paradas restantes hasta el final del viaje (incluyendo la actual)
-        out["stops_to_end"] = out.groupby("match_key", group_keys=False).cumcount(ascending=False)
+    for nombre_columna, segundos, tolerancia in HORIZONTES_ESTACION:
+        out[nombre_columna] = buscar_retraso_futuro("stop_id", segundos, tolerancia)
+
+
+    # Evolución del Tren (Centrado en el Viaje)
+    # Ordenamos lógicamente para ver la historia de cada viaje
+    out = out.sort_values(by=["match_key", "actual_seconds"], na_position="last")
     
-    # Deltas: diferencia esperada en el retraso respecto al retraso actual
-    if "delay_seconds" in out.columns:
-        if "target_delay_10m" in out.columns:
-            out["delta_delay_10m"] = out["target_delay_10m"] - out["delay_seconds"]
-        if "target_delay_20m" in out.columns:
-            out["delta_delay_20m"] = out["target_delay_20m"] - out["delay_seconds"]
-        if "target_delay_30m" in out.columns:
-            out["delta_delay_30m"] = out["target_delay_30m"] - out["delay_seconds"]
-        if "target_delay_45m" in out.columns:
-            out["delta_delay_45m"] = out["target_delay_45m"] - out["delay_seconds"]
-        if "target_delay_60m" in out.columns:
-            out["delta_delay_60m"] = out["target_delay_60m"] - out["delay_seconds"]
-    # Restaurar el orden original del índice
+    # Calculamos cómo acabó la historia para este tren (su último retraso registrado)
+    out["target_delay_end"] = out.groupby("match_key")["delay_seconds"].transform("last")
+
+    # Qué retraso tendrá este mismo tren dentro de y min?"
+    HORIZONTES_TREN = [
+        ("target_delay_10m", 600,  360),
+        ("target_delay_20m", 1200, 360),
+        ("target_delay_30m", 1800, 360),
+        ("target_delay_45m", 2700, 360),
+        ("target_delay_60m", 3600, 360),
+    ]
+    
+    for nombre_columna, segundos, tolerancia in HORIZONTES_TREN:
+        retraso_futuro_bruto = buscar_retraso_futuro("match_key", segundos, tolerancia)
+        # Si el tren ya ha terminado su ruta antes de ese tiempo (NaN), 
+        # asumimos que se quedó con el retraso que tuvo al llegar a su destino final
+        out[nombre_columna] = retraso_futuro_bruto.fillna(out["target_delay_end"])
+
+
+    # Cuánto tiempo (teórico) le queda de viaje a este tren
+    if "scheduled_seconds" in out.columns:
+        ultimo_horario = out.groupby("match_key")["scheduled_seconds"].transform("last")
+        out["scheduled_time_to_end"] = ultimo_horario - out["scheduled_seconds"]
+
+    # Cuántas paradas le quedan
+    out["stops_to_end"] = out.groupby("match_key", group_keys=False).cumcount(ascending=False)
+
+    # Diferencia del retraso futuro respecto al actual, para modelar la evolución del retraso en el tiempo
+    out["delta_delay_end"] = out["target_delay_end"] - out["delay_seconds"]
+
+    # Restauramos los índices originales
     out = out.sort_index()
+    
     return out
 
 
@@ -261,6 +306,10 @@ def coerce_types(df: pd.DataFrame) -> pd.DataFrame:
     # strings
     for c in ["match_key", "route_id", "stop_id"]:
         out[c] = out[c].astype("string")
+
+    # direction (opcional, pero válida para el pipeline)
+    if "direction" in out.columns:
+        out["direction"] = out["direction"].astype("string")
 
     # trip_uid (opcional)
     if "trip_uid" in out.columns:
