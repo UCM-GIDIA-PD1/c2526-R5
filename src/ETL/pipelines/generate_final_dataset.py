@@ -330,7 +330,7 @@ def prepare_alerts(df_alerts: pd.DataFrame) -> pd.DataFrame:
 	Preprocesa alertas oficiales:
 	- Estandariza timestamp y claves temporales.
 	- Hace explode de líneas afectadas.
-	- Calcula `seconds_since_last_alert` por `route_id`.
+	- Normaliza columnas para el merge posterior con GTFS.
 	"""
 	df = df_alerts.copy()
 	if df.empty:
@@ -365,11 +365,8 @@ def prepare_alerts(df_alerts: pd.DataFrame) -> pd.DataFrame:
 			df["num_updates"] = 0
 	df["num_updates"] = pd.to_numeric(df["num_updates"], errors="coerce").fillna(0)
 
-	# Segundos transcurridos desde la alerta anterior de la misma línea.
-	df = df.sort_values(["timestamp_start", "route_id"]) 
-	df["seconds_since_last_alert"] = (
-		df.groupby("route_id")["timestamp_start"].diff().dt.total_seconds()
-	)
+	# Orden estable para merge temporal posterior.
+	df = df.sort_values(["route_id", "timestamp_start"])
 
 	return df
 
@@ -543,7 +540,8 @@ def merge_gtfs_events(df_base: pd.DataFrame, df_events: pd.DataFrame) -> pd.Data
 def merge_gtfs_alerts(df_base: pd.DataFrame, df_alerts: pd.DataFrame) -> pd.DataFrame:
 	"""
 	LEFT JOIN temporal GTFS + Alertas por `route_id` usando `merge_asof` hacia atrás.
-	Asocia a cada tren la alerta más reciente activa en su línea.
+	Asocia a cada tren la alerta más reciente activa en su línea y calcula
+	`seconds_since_last_alert` en el instante del evento GTFS.
 	"""
 	if df_alerts.empty:
 		out = df_base.copy()
@@ -556,7 +554,7 @@ def merge_gtfs_alerts(df_base: pd.DataFrame, df_alerts: pd.DataFrame) -> pd.Data
 	left = df_base.copy()
 	# Reducir alertas al mínimo imprescindible antes del cruce.
 	right = df_alerts[
-		["route_id", "timestamp_start", "category", "num_updates", "seconds_since_last_alert"]
+		["route_id", "timestamp_start", "category", "num_updates"]
 	].copy()
 
 	left["route_id"] = normalize_route_id(left["route_id"])
@@ -604,9 +602,11 @@ def merge_gtfs_alerts(df_base: pd.DataFrame, df_alerts: pd.DataFrame) -> pd.Data
 			suffixes=("", "_alert"),
 		)
 		merged_chunk["num_updates"] = pd.to_numeric(merged_chunk["num_updates"], errors="coerce").fillna(0)
+		merged_chunk["seconds_since_last_alert"] = (
+			merged_chunk["merge_time"] - merged_chunk["timestamp_start"]
+		).dt.total_seconds()
 		merged_chunk["seconds_since_last_alert"] = pd.to_numeric(
-			merged_chunk["seconds_since_last_alert"],
-			errors="coerce",
+			merged_chunk["seconds_since_last_alert"], errors="coerce"
 		).fillna(2592000)
 		chunks.append(merged_chunk)
 
@@ -697,7 +697,7 @@ def apply_final_column_policy(df: pd.DataFrame) -> pd.DataFrame:
 	return df.loc[:, existing].copy()
 
 
-def build_final_dataset(start: str, end: str, output_base: str = "grupo5/final/dataset_entrenamiento") -> None:
+def build_final_dataset(start: str, end: str, output_base: str = "grupo5/final") -> None:
 	"""
 	Orquesta la generación del dataset final por bloques mensuales con continuidad temporal.
 	- GTFS/Clima: mes estricto.
@@ -799,7 +799,7 @@ def main() -> int:
 	args = parse_args()
 	output_base = args.output_object
 	if output_base == OUTPUT_OBJECT:
-		output_base = "grupo5/final/dataset_entrenamiento"
+		output_base = "grupo5/final"
 
 	build_final_dataset(start=args.start, end=args.end, output_base=output_base)
 	print("[generate_final_dataset] DONE monthly processing completed")
