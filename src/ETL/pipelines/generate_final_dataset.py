@@ -473,22 +473,17 @@ def merge_gtfs_events(df_base: pd.DataFrame, df_events: pd.DataFrame) -> pd.Data
 	if "stop_id" in base.columns:
 		base["stop_id"] = base["stop_id"].astype("string")
 
-	# Tiempo real del tren en segundos (fallback a scheduled_time).
-	if "actual_time" in base.columns:
-		time_col = base["actual_time"]
-		if "scheduled_time" in base.columns:
-			time_col = time_col.fillna(base["scheduled_time"])
-	elif "merge_time" in base.columns:
-		mt = pd.to_datetime(base["merge_time"], errors="coerce")
-		time_col = mt.dt.hour * 3600 + mt.dt.minute * 60 + mt.dt.second
-		base["_actual_secs"] = time_col.astype("float64")
-	elif "scheduled_time" in base.columns:
-		time_col = base["scheduled_time"]
+	# Tiempo real del tren en segundos (numérico): actual_seconds con fallback a scheduled_seconds.
+	if "actual_seconds" in base.columns:
+		time_col = base["actual_seconds"]
+		if "scheduled_seconds" in base.columns:
+			time_col = time_col.fillna(base["scheduled_seconds"])
+	elif "scheduled_seconds" in base.columns:
+		time_col = base["scheduled_seconds"]
 	else:
-		raise ValueError("GTFS base requires 'actual_time', 'scheduled_time' or 'merge_time'.")
+		raise ValueError("GTFS base requires 'actual_seconds' or 'scheduled_seconds'.")
 
-	if "_actual_secs" not in base.columns:
-		base["_actual_secs"] = time_col.apply(_time_str_to_seconds)
+	base["_actual_secs"] = pd.to_numeric(time_col, errors="coerce")
 
 	# Índice original para hacer join de vuelta.
 	base["_tren_idx"] = base.index
@@ -606,7 +601,11 @@ def merge_gtfs_alerts(df_base: pd.DataFrame, df_alerts: pd.DataFrame) -> pd.Data
 		out["category"] = pd.NA
 		out["num_updates"] = 0
 		out["timestamp_start"] = pd.NaT
-		out["seconds_since_last_alert"] = 2592000
+		out["seconds_since_last_alert"] = np.nan
+		out["is_alert_just_published"] = 0
+		out["seconds_to_next_alert"] = np.nan
+		out["alert_in_next_15m"] = 0
+		out["alert_in_next_30m"] = 0
 		return out
 
 	left = df_base.copy()
@@ -628,7 +627,11 @@ def merge_gtfs_alerts(df_base: pd.DataFrame, df_alerts: pd.DataFrame) -> pd.Data
 	left_invalid["category"] = pd.NA
 	left_invalid["num_updates"] = 0
 	left_invalid["timestamp_start"] = pd.NaT
-	left_invalid["seconds_since_last_alert"] = 2592000
+	left_invalid["seconds_since_last_alert"] = np.nan
+	left_invalid["is_alert_just_published"] = 0
+	left_invalid["seconds_to_next_alert"] = np.nan
+	left_invalid["alert_in_next_15m"] = 0
+	left_invalid["alert_in_next_30m"] = 0
 
 	right = right.dropna(subset=["route_id", "timestamp_start"])
 
@@ -645,7 +648,11 @@ def merge_gtfs_alerts(df_base: pd.DataFrame, df_alerts: pd.DataFrame) -> pd.Data
 			left_chunk["category"] = pd.NA
 			left_chunk["num_updates"] = 0
 			left_chunk["timestamp_start"] = pd.NaT
-			left_chunk["seconds_since_last_alert"] = 2592000
+			left_chunk["seconds_since_last_alert"] = np.nan
+			left_chunk["is_alert_just_published"] = 0
+			left_chunk["seconds_to_next_alert"] = np.nan
+			left_chunk["alert_in_next_15m"] = 0
+			left_chunk["alert_in_next_30m"] = 0
 			chunks.append(left_chunk)
 			continue
 
@@ -665,7 +672,31 @@ def merge_gtfs_alerts(df_base: pd.DataFrame, df_alerts: pd.DataFrame) -> pd.Data
 		).dt.total_seconds()
 		merged_chunk["seconds_since_last_alert"] = pd.to_numeric(
 			merged_chunk["seconds_since_last_alert"], errors="coerce"
-		).fillna(2592000)
+		)
+		merged_chunk["is_alert_just_published"] = (
+			merged_chunk["seconds_since_last_alert"] <= 60
+		).astype(int)
+
+		next_alert_chunk = pd.merge_asof(
+			left_chunk,
+			right_chunk,
+			left_on="merge_time",
+			right_on="timestamp_start",
+			direction="forward",
+			suffixes=("", "_next"),
+		)
+		merged_chunk["seconds_to_next_alert"] = (
+			next_alert_chunk["timestamp_start"] - next_alert_chunk["merge_time"]
+		).dt.total_seconds()
+		merged_chunk["seconds_to_next_alert"] = pd.to_numeric(
+			merged_chunk["seconds_to_next_alert"], errors="coerce"
+		)
+		merged_chunk["alert_in_next_15m"] = (
+			merged_chunk["seconds_to_next_alert"] <= 900
+		).astype(int)
+		merged_chunk["alert_in_next_30m"] = (
+			merged_chunk["seconds_to_next_alert"] <= 1800
+		).astype(int)
 		chunks.append(merged_chunk)
 
 	if not chunks:
@@ -679,9 +710,11 @@ def merge_gtfs_alerts(df_base: pd.DataFrame, df_alerts: pd.DataFrame) -> pd.Data
 def apply_final_column_policy(df: pd.DataFrame) -> pd.DataFrame:
 	"""Aplica la política estricta de columnas: keep list + drop explícito."""
 	gtfs_keep = [
+		"date",
 		"match_key",
 		"stop_id",
 		"route_id",
+		"direction",
 		"delay_seconds",
 		"lagged_delay_1",
 		"lagged_delay_2",
@@ -697,11 +730,18 @@ def apply_final_column_policy(df: pd.DataFrame) -> pd.DataFrame:
 		"target_delay_30m",
 		"target_delay_45m",
 		"target_delay_60m",
+		"station_delay_10m",
+		"station_delay_20m",
+		"station_delay_30m",
+		"target_delay_end",
 		"delta_delay_10m",
 		"delta_delay_20m",
 		"delta_delay_30m",
 		"delta_delay_45m",
 		"delta_delay_60m",
+		"delta_delay_end",
+		"stops_to_end",
+		"merge_time",
 		"scheduled_time_to_end"
 	]
 
@@ -715,13 +755,21 @@ def apply_final_column_policy(df: pd.DataFrame) -> pd.DataFrame:
 		"afecta_despues",
 	]
 
-	alerts_keep = ["category", "num_updates", "timestamp_start", "seconds_since_last_alert"]
+	alerts_keep = [
+		"category",
+		"num_updates",
+		"timestamp_start",
+		"seconds_since_last_alert",
+		"is_alert_just_published",
+		"seconds_to_next_alert",
+		"alert_in_next_15m",
+		"alert_in_next_30m",
+	]
 
 	explicit_drop = [
 		"trip_uid",
 		"scheduled_time",
 		"actual_time",
-		"stops_to_end",
 		"trip_progress",
 		"scheduled_seconds",
 		"actual_seconds",
@@ -744,7 +792,6 @@ def apply_final_column_policy(df: pd.DataFrame) -> pd.DataFrame:
 		"timestamp_end",
 		"text_snippet",
 		"description",
-		"merge_time",
 	]
 
 	wanted = gtfs_keep + weather_keep + events_keep + alerts_keep
@@ -797,7 +844,6 @@ def build_final_dataset(start: str, end: str, output_base: str = "grupo5/final")
 		del gtfs_raw
 		gc.collect()
 
-		gtfs = reduce_mem_usage(gtfs)
 		weather = prepare_weather(load_weather(client, days_gtfs))
 
 		# Orden de cruces: GTFS+Clima -> GTFS+Eventos -> GTFS+Alertas.
