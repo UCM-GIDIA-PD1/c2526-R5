@@ -7,26 +7,29 @@ Este documento detalla la selección de variables (feature selection) para la fa
 Las observaciones para este tipo de datos se definen como la llegada de un tren a una parada específica (match_key + stop_id).
 
 ### Variables que se quedan:
-- **`route_id`**: Crucial para diferenciar el comportamiento por línea (exprés vs. local).
-- **`lagged_delay_1` / `lagged_delay_2`**: Los predictores más potentes para el corto plazo (inercia del retraso).
-- **`route_rolling_delay`**: Indispensable para predicciones a medio plazo (30-60 min).
-- **`actual_headway_seconds`**: Clave para detectar anomalías y predecir avisos.
-- **`is_unscheduled`**: Señal de refuerzos operativos de la MTA.
-- **`hour_sin` / `hour_cos`**: Codificación cíclica que sustituye a las horas absolutas para el aprendizaje del modelo.
-- **`dow` / `is_weekend`**: Capturan la diferencia de comportamiento en fines de semana.
--  **`scheduled_time_to_end`**: Tiempo hasta la llegada teórica a la última parada.
+- **`date`** / **`match_key`** / **`stop_id`** / **`route_id`** / **`direction`**: Claves referenciales y dimensiones cruzadas para localizar tiempo/espacio en el modelo de forma inequívoca.
+- **`delay_seconds`**: Retraso del tren en la parada.
+- **`lagged_delay_1` / `lagged_delay_2`**: Los predictores más potentes para el corto plazo (inercia temporal del retraso).
+- **`route_rolling_delay`**: Indispensable para predicciones a medio plazo sobre la congestión de la red.
+- **`actual_headway_seconds`**: Clave para detectar anomalías de frecuencia entre trenes.
+- **`is_unscheduled`**: Señal binaria de refuerzos operativos en tiempo real de la MTA.
+- **`hour_sin` / `hour_cos`**: Codificación cíclica temporal, transformando horas absolutas de forma útil para los modelos.
+- **`dow` / `is_weekend`**: Capturan el comportamiento y tráfico de pasajeros drásticamente diferente en días libres.
+- **`scheduled_time_to_end`** / **`stops_to_end`**: Variables enfocadas hacia el tramo final, permitiendo discriminar dónde se encuentra un tren en la ruta generalizada.
+- **`station_delay_10m` a `station_delay_30m`**: Agrupación zonal referenciando tendencias focalizadas en demoras de la estación.
+- **`merge_time`**: Referencia general del cruce temporal.
 
 ### Variables objetivo (Targets):
-Se mantienen todos los horizontes de predicción para permitir diferentes enfoques de modelo:
-- **`target_delay_10m` hasta `target_delay_60m`**: Predicción del retraso absoluto en paradas futuras.
-- **`delta_delay_10m` hasta `delta_delay_60m`**: Predicción de la variación (incremento o recuperación) del retraso respecto al momento actual.
+Se mantienen todos los horizontes de predicción para permitir diferentes enfoques estructurados:
+- **`target_delay_10m` hasta `target_delay_60m` y `target_delay_end`**: Predicción del retraso absoluto en paradas venideras.
+- **`delta_delay_10m` hasta `delta_delay_60m` y `delta_delay_end`**: Predicción escalonada de la variación (recuperación o empeoramiento) del retraso respecto al instante actual.
 
 ### Variables que se van:
-- **`trip_uid`**: Eliminada por redundancia con match_key
-- **`scheduled_time` / `actual_time`**: Estas variables se usan para el cruce de datasets (merge con clima y eventos), pero se eliminan del dataset final de entrenamiento ya que su información queda contenida en las variables cíclicas de hora.
-- **`stops_to_end` / `trip_progress`**: Se descartan debido a la inconsistencia entre líneas; el número de paradas restantes tiene significados distintos dependiendo de la longitud de la ruta, y nuestro análisis demuestra que la congestión de la red (`rolling_delay`) es un predictor mucho más robusto.
-* **`scheduled_seconds` / `actual_seconds`**: Descartadas por redundancia.
-* **`delay_minutes`**: Eliminada por redundancia con la variable en segundos.
+- **`trip_uid`**: Eliminada enteramente por redundancia ante `match_key`.
+- **`scheduled_time` / `actual_time`**: Sirven originariamente para el cruce asíncrono, pero se descartan una vez la información es asimilada en las cíclicas y en `merge_time`.
+- **`trip_progress`**: Descartada por complejidad entre sub-rutas dinámicas que difieren grandemente.
+- **`scheduled_seconds` / `actual_seconds`**: Descartadas por redundancia semántica tras normalizarse en intervalos más explicativos.
+- **`delay_minutes`**: Eliminada a favor de mantener todo el flujo temporal consolidado en la métrica continua base (`*_seconds`).
 
 ---
 
@@ -49,26 +52,35 @@ Se mantienen todos los horizontes de predicción para permitir diferentes enfoqu
 ---
 ## Variables de eventos
 
--Hubo evento en el día (hubo_evento_en_el_dia)
--Cantidad de eventos (n_eventos)
--Tipo de evento principal (tipo_evento_prioritario)
--Fases de impacto del evento (durante_entrada, durante_evento, despues_evento)
--Evento nocturno (evento_nocturno)
+### Variables que se incorporan:
+- **`n_eventos_afectando`**: Cantidad de eventos masivos activos y solapados a lo largo del paso del tren.
+- **`tipo_referente`**: Categorización focalizada en el tipo de evento principal (aquel de mayor afectación y relevancia implícita o 'score').
+- **`afecta_previo`**, **`afecta_durante`**, **`afecta_despues`**: Indicadores bandera determinando el instante cronológico de afectación de los viandantes que interactúan con el metro en torno a dichos eventos.
 
-Tras el analisis de como afectan los eventos a la red de transporte, hemos sacado las siguientes variables que nos permiten añadir información valiosa al dataset principal, sin expandirlo de tamaño. Hubo evento en el dia nos indica si algún evento va a priori influir a la red, la cantidad de eventos nos indica cuantos han habido en el dia, el tipo de evento principal se elige el que mayor score tenga, que va a ser el que más afectación tenga sobre la red. Las fases de impacto nos diferencian el momento del evento que es clave por ejemplo en eventos con salidas masivas de espectadores y por último si es un evento nocturno debido a que a altas horas de la noche hay menos trenes de circulación, junto a una fuerte propagación del retraso, por lo cual puede ser una métrica util para los modelos.
+Tras el análisis de cómo perturban los eventos a la red de transporte, logramos estructurar estas agregaciones. Permiten sumar información contextual imprescindible (diferenciando flujos en embudo previos vs masificación paralela) limitando de manera eficiente la dimensionalidad sin recargar el motor algorítmico posterior.
 
-Descartamos: las paradas afectadas y sus lineas, que van a ser usadas para el cruce de datasets, el score que nos va a servir para elegir el evento prioritario, pero después no aporta nada. El resto de columnas son compartidas con el dataset principal, como por ejemplo el dia, hora.
+### Variables que se descartan:
+- **`paradas_afectadas`**, **`parada_nombre`**, **`parada_lineas`**: Se utilizan transversalmente y únicamente en la estrategia inicial del merge geo-espacial, descartándose con posterioridad.
+- **`score`**: Valor originario en crudo que dirime transitoriamente el cálculo de "tipo_referente". Descartado por ser información instrumental.
+- **Resto de metadatos tabulados de evento**: Desechados ya que heredan las representaciones temporales y estacionales generadas para base en GTFS (haciéndose redundantes o residuales).
 
 ---
 ## Variables de alertas
 
-- Categoría de la alerta (category)
-- Número de actualizaciones que ha tenido la alerta (num_updates)
-- Líneas afectadas (lines)
-- Fecha y hora exacta de la publicación de la alerta (timestamp_start)
-- Minutos / segundos desde la última publicación de alerta (seconds_since_last_alert)
+### Variables que se incorporan:
+- **`category`**: Tipología categórica general de la alerta registrada.
+- **`num_updates`**: Número de iteraciones que ha sufrido la incidencia en sistema.
+- **`timestamp_start`**: Sello temporal inicial base de la publicación oficial.
+- **`seconds_since_last_alert`**: Ventana cronometrada en segundos transcurridos desde la publicación subyacente de notificación a una alerta. 
+- **`is_alert_just_published`**: Booleano reaccionario si la difusión acaba de sucederse de forma inminente (<= 60 segundos).
+- **`seconds_to_next_alert`**: Margen temporal en segundos para manifestarse la retransmisión paralela o de relevo colindante (forecast a futuro útil para modelos predictivos).
+- **`alert_in_next_15m`** / **`alert_in_next_30m`**: Banderas proyectivas que alertan sobre la probabilidad de proximidad a perturbaciones inminentes en el sistema o reportes sistémicos.
 
-Tras el análisis exploratorio , consideramos suficientes estas variables para las alertas. Hay que hacer un explode de la columna 'lines' en el dataframe de alertas antes del join, para tener una fila por línea afectada, y entonces poder cruzarlo correctamente con GTFS. La variable 'seconds_since_last_alert' muestra para cada observación , el tiempo en segundos que ha transcurrido desde la última publicación de una alerta. Nos hemos desprendido de la variable 'event_id' ya que es un identificador que no nos aporta información útil para modelar. Descartamos 'timestamp_end', ya que puede ser malinterpretada, porque no determina el fin de una alerta sino el momento de publicación de la última actualización (si tiene) de una alerta, por lo que si una alerta no tiene actualizaciones el timestamp_start y el end es el mismo, lo que puede llevar a confusión.'Text_snippet' y 'description' también se van porque son texto libre y no hemos hallado nada suficientemente útil procesándolas.
+### Variables que se descartan:
+- **`lines`**: Aprovechada inicial y fundamentalmente para la segmentación vía 'explode' enlazando múltiples rutas conectadas, y omitida ulteriormente de acuerdo a la granularidad preprocesada.
+- **`event_id`**: Identificador arbitrario instrumental sin rastro predictivo real.
+- **`timestamp_end`**: Estimulaba ruido confusional, dado que no expone el final resolutivo de una incidencia, limitándose a proyectar la estimación de validez u última constancia de modificación oficial. 
+- **`text_snippet` / `description`**: Cadenas descriptivas textuales libres descartadas proactivamente al ya delegar su representatividad abstracta en `category`. Evitar columnas no estructuradas optimiza drásticamente todo el procesamiento algorítmico tabular posterior.
 
 
 
