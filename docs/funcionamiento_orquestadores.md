@@ -104,3 +104,24 @@ Para añadir nuevas fuentes o etapas basta con:
 1. Crear el módulo correspondiente (`<source>/ingest.py` o `<source>/transform.py`).
 2. Implementar una función `run_transform` u otro nombre con la firma adecuada.
 3. Registrar la función en el `REGISTRY` del orquestador.
+
+---
+
+## 5. Generación del Dataset Final (`generate_final_dataset.py`)
+
+Al final del proceso de transformación, se ejecuta el script **`src.ETL.pipelines.generate_final_dataset`**, responsable de construir el dataset maestro de entrenamiento a partir de las capas guardadas (`cleaned`) en MinIO:
+
+1. **Recopilación**: Descarga y concatena los datos limpios de GTFS, Clima, Eventos y Alertas para el rango de fechas especificado.
+2. **Optimización de memoria**: Aplica downcasting de tipos numéricos y convierte cadenas de texto repetitivas en categorías para procesar grandes volúmenes en RAM de forma eficiente.
+3. **Cruce temporal y espacial (Merge)**:
+   - Cruza GTFS con **Clima** por `date` y `hour`.
+   - Cruza GTFS con **Eventos**, identificando solapamientos temporales (pre-evento, durante, post-evento) y espaciales (`stop_id`).
+   - Cruza GTFS con **Alertas**, asociando a cada paso de tren la alerta activa más reciente en su línea (`route_id`).
+4. **Filtrado de variables**: Aplica una política estricta de selección de características (documentada en `src/models/seleccion_variables.md`), eliminando variables colineales e IDs innecesarios (texto libre, IDs internos, etc.) y asegurando únicamente los predictores finales.
+5. **Carga a MinIO**: Por último, transfiere el archivo tabulado en formato Parquet a la capa final (`final/year=YYYY/month=MM/dataset_final.parquet`).
+
+Su ejecución manual es similar a los orquestadores:
+
+```bash
+uv run python -m src.ETL.pipelines.generate_final_dataset --start 2025-01-01 --end 2025-01-31
+```
