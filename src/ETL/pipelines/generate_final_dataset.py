@@ -330,7 +330,7 @@ def prepare_alerts(df_alerts: pd.DataFrame) -> pd.DataFrame:
 	Preprocesa alertas oficiales:
 	- Estandariza timestamp y claves temporales.
 	- Hace explode de líneas afectadas.
-	- Calcula `seconds_since_last_alert` por `route_id`.
+	- Normaliza columnas para el merge posterior con GTFS.
 	"""
 	df = df_alerts.copy()
 	if df.empty:
@@ -365,11 +365,8 @@ def prepare_alerts(df_alerts: pd.DataFrame) -> pd.DataFrame:
 			df["num_updates"] = 0
 	df["num_updates"] = pd.to_numeric(df["num_updates"], errors="coerce").fillna(0)
 
-	# Segundos transcurridos desde la alerta anterior de la misma línea.
-	df = df.sort_values(["timestamp_start", "route_id"]) 
-	df["seconds_since_last_alert"] = (
-		df.groupby("route_id")["timestamp_start"].diff().dt.total_seconds()
-	)
+	# Orden estable para merge temporal posterior.
+	df = df.sort_values(["route_id", "timestamp_start"])
 
 	return df
 
@@ -430,46 +427,82 @@ def merge_gtfs_weather(df_gtfs: pd.DataFrame, df_weather: pd.DataFrame) -> pd.Da
 	return out
 
 
+def _time_str_to_seconds(t: object) -> float:
+	"""Convierte un string HH:MM[:SS] a segundos desde medianoche."""
+	if pd.isna(t):
+		return np.nan
+	parts = str(t).split(":")
+	return int(parts[0]) * 3600 + int(parts[1]) * 60 + (int(parts[2]) if len(parts) > 2 else 0)
+
+
 def merge_gtfs_events(df_base: pd.DataFrame, df_events: pd.DataFrame) -> pd.DataFrame:
 	"""
-	LEFT JOIN GTFS + Eventos por `date` y `stop_id`.
-	Explota `paradas_afectadas` y conserva el evento prioritario por tren/parada.
+	Cruza GTFS + Eventos usando ventana temporal en segundos (±VENTANA).
+
+	Lógica idéntica al notebook de prueba:
+	1. Convierte tiempos a segundos desde medianoche.
+	2. INNER JOIN por `stop_id` + `service_date` para encontrar candidatos.
+	3. Filtra solo los pares tren-evento cuyo actual_secs cae dentro de
+	   [evento_inicio - VENTANA, evento_fin + VENTANA].
+	4. Agrega por tren: n_eventos_afectando, tipo_referente (mayor score),
+	   afecta_previo, afecta_durante, afecta_despues.
+	5. JOIN de vuelta a la base GTFS para preservar todas las filas.
 	"""
+	VENTANA = 5400  # 1.5 horas en segundos
+
 	if df_events.empty:
 		out = df_base.copy()
-		out["hubo_evento_en_el_dia"] = 0
-		out["n_eventos"] = 0
-		out["tipo_evento_prioritario"] = "Ninguno"
-		out["durante_entrada"] = 0
-		out["durante_evento"] = 0
-		out["despues_evento"] = 0
-		out["evento_nocturno"] = 0
+		out["n_eventos_afectando"] = 0
+		out["tipo_referente"] = "Ninguno"
+		out["afecta_previo"] = 0
+		out["afecta_durante"] = 0
+		out["afecta_despues"] = 0
 		return out
 
 	base = df_base.copy()
 	evt = df_events.copy()
+
+	# --- Preparar clave de fecha en base (service_date como string YYYY-MM-DD) ---
+	if "service_date" not in base.columns:
+		if "date" in base.columns:
+			base["service_date"] = pd.to_datetime(base["date"], errors="coerce").dt.strftime("%Y-%m-%d")
+		else:
+			raise ValueError("GTFS base requires 'service_date' or 'date'.")
+	base["service_date"] = base["service_date"].astype("string")
+
 	if "stop_id" in base.columns:
 		base["stop_id"] = base["stop_id"].astype("string")
 
+	# Tiempo real del tren en segundos (numérico): actual_seconds con fallback a scheduled_seconds.
+	if "actual_seconds" in base.columns:
+		time_col = base["actual_seconds"]
+		if "scheduled_seconds" in base.columns:
+			time_col = time_col.fillna(base["scheduled_seconds"])
+	elif "scheduled_seconds" in base.columns:
+		time_col = base["scheduled_seconds"]
+	else:
+		raise ValueError("GTFS base requires 'actual_seconds' or 'scheduled_seconds'.")
+
+	base["_actual_secs"] = pd.to_numeric(time_col, errors="coerce")
+
+	# Índice original para hacer join de vuelta.
+	base["_tren_idx"] = base.index
+
+	# --- Preparar eventos ---
 	if "date" in evt.columns:
-		evt["date"] = pd.to_datetime(evt["date"], errors="coerce").dt.date
+		evt["service_date"] = pd.to_datetime(evt["date"], errors="coerce").dt.strftime("%Y-%m-%d")
 	elif "fecha_inicio" in evt.columns:
-		evt["date"] = pd.to_datetime(evt["fecha_inicio"], errors="coerce").dt.date
+		evt["service_date"] = pd.to_datetime(evt["fecha_inicio"], errors="coerce").dt.strftime("%Y-%m-%d")
 	else:
 		raise ValueError("Events data requires 'date' or 'fecha_inicio'.")
+	evt["service_date"] = evt["service_date"].astype("string")
 
-	if "paradas_afectadas" in evt.columns:
-		evt = evt.explode("paradas_afectadas", ignore_index=True)
-		evt = evt.rename(columns={"paradas_afectadas": "stop_id"})
-	elif "stop_id" not in evt.columns:
-		raise ValueError("Events data requires 'paradas_afectadas' or 'stop_id' for spatial merge.")
 
 	evt["stop_id"] = evt["stop_id"].astype("string")
 
 	tipo_col = "tipo" if "tipo" in evt.columns else "tipo_evento"
 	if tipo_col not in evt.columns:
 		evt[tipo_col] = "Desconocido"
-
 	if "nombre_evento" not in evt.columns:
 		evt["nombre_evento"] = "evento_sin_nombre"
 	if "score" not in evt.columns:
@@ -480,83 +513,105 @@ def merge_gtfs_events(df_base: pd.DataFrame, df_events: pd.DataFrame) -> pd.Data
 	if "hora_salida_estimada" not in evt.columns:
 		evt["hora_salida_estimada"] = "23:59:59"
 
-	if "merge_time" not in base.columns:
-		raise ValueError("GTFS base requires 'merge_time' for temporal event features.")
-	base["merge_time"] = pd.to_datetime(base["merge_time"], errors="coerce")
-	base["date"] = pd.to_datetime(base["date"], errors="coerce").dt.date
+	evt["_evento_inicio_secs"] = evt["hora_inicio"].apply(_time_str_to_seconds)
+	evt["_evento_fin_secs"] = evt["hora_salida_estimada"].apply(_time_str_to_seconds)
 
-	evt["inicio_dt"] = pd.to_datetime(
-		evt["date"].astype("string") + " " + evt["hora_inicio"].astype("string"),
-		errors="coerce",
+	# --- INNER JOIN por stop_id + service_date (solo candidatos espaciales) ---
+	merged = base[["_tren_idx", "stop_id", "service_date", "_actual_secs"]].merge(
+		evt[["service_date", "stop_id", "nombre_evento", tipo_col, "score",
+			 "_evento_inicio_secs", "_evento_fin_secs"]],
+		on=["stop_id", "service_date"],
+		how="inner",
 	)
-	if "fecha_final" in evt.columns:
-		evt["fecha_final"] = pd.to_datetime(evt["fecha_final"], errors="coerce").dt.date
-	else:
-		evt["fecha_final"] = evt["date"]
-	evt["fin_dt"] = pd.to_datetime(
-		evt["fecha_final"].astype("string") + " " + evt["hora_salida_estimada"].astype("string"),
-		errors="coerce",
+
+	# --- Filtrar por ventana temporal ---
+	merged["_ventana_pre"] = merged["_evento_inicio_secs"] - VENTANA
+	merged["_ventana_post"] = merged["_evento_fin_secs"] + VENTANA
+
+	mask = (
+		merged["_actual_secs"].notna()
+		& (merged["_actual_secs"] >= merged["_ventana_pre"])
+		& (merged["_actual_secs"] <= merged["_ventana_post"])
 	)
-	evt["fin_dt"] = evt["fin_dt"].fillna(evt["inicio_dt"])
+	afectados = merged[mask].copy()
 
-	# Requisito: cruce espacial + temporal con LEFT JOIN por fecha y parada.
-	df_temp = base.merge(
-		evt[["date", "stop_id", "nombre_evento", tipo_col, "score", "inicio_dt", "fin_dt"]],
-		how="left",
-		on=["date", "stop_id"],
+	if afectados.empty:
+		out = base.drop(columns=["_tren_idx", "_actual_secs", "service_date"], errors="ignore")
+		out["n_eventos_afectando"] = 0
+		out["tipo_referente"] = "Ninguno"
+		out["afecta_previo"] = 0
+		out["afecta_durante"] = 0
+		out["afecta_despues"] = 0
+		return out
+
+	# --- Flags de fase temporal ---
+	afectados["es_previo"] = (
+		afectados["_actual_secs"] < afectados["_evento_inicio_secs"]
+	).astype(int)
+	afectados["es_durante"] = (
+		(afectados["_actual_secs"] >= afectados["_evento_inicio_secs"])
+		& (afectados["_actual_secs"] <= afectados["_evento_fin_secs"])
+	).astype(int)
+	afectados["es_despues"] = (
+		afectados["_actual_secs"] > afectados["_evento_fin_secs"]
+	).astype(int)
+
+	# --- Agregar por tren (nombres idénticos al notebook) ---
+	n_eventos = afectados.groupby("_tren_idx").size().rename("n_eventos_afectando")
+
+	tipo_ref = (
+		afectados.sort_values("score", ascending=False)
+		.groupby("_tren_idx")
+		.first()[tipo_col]
+		.rename("tipo_referente")
 	)
-	df_temp["event_count"] = df_temp.groupby(["match_key", "stop_id"])["nombre_evento"].transform("nunique")
-	df_temp = df_temp.sort_values(by=["score"], ascending=False)
-	df_temp = df_temp.drop_duplicates(subset=["date","match_key", "stop_id"], keep="first")
 
-	ventana_entrada_inicio = df_temp["inicio_dt"] - pd.Timedelta(hours=1.5)
-	ventana_salida_fin = df_temp["fin_dt"] + pd.Timedelta(hours=1.5)
+	afecta_previo = afectados.groupby("_tren_idx")["es_previo"].sum().rename("afecta_previo")
+	afecta_durante = afectados.groupby("_tren_idx")["es_durante"].sum().rename("afecta_durante")
+	afecta_despues = afectados.groupby("_tren_idx")["es_despues"].sum().rename("afecta_despues")
 
-	df_temp["durante_entrada"] = ((df_temp["merge_time"] >= ventana_entrada_inicio) & (df_temp["merge_time"] < df_temp["inicio_dt"])).astype(int)
-	df_temp["durante_evento"] = ((df_temp["merge_time"] >= df_temp["inicio_dt"]) & (df_temp["merge_time"] <= df_temp["fin_dt"])).astype(int)
-	df_temp["despues_evento"] = ((df_temp["merge_time"] > df_temp["fin_dt"]) & (df_temp["merge_time"] <= ventana_salida_fin)).astype(int)
-	df_temp["evento_nocturno"] = (df_temp["fin_dt"].dt.hour >= 22).astype(int)
-
-	out = df_temp.copy()
-	out["hubo_evento_en_el_dia"] = out["nombre_evento"].notna().astype(int)
-	out["n_eventos"] = out["event_count"].fillna(0).astype(int)
-	out["tipo_evento_prioritario"] = out[tipo_col].fillna("Ninguno")
-	out["hubo_evento_en_el_dia"] = out["hubo_evento_en_el_dia"].fillna(0).astype(int)
-	out["n_eventos"] = out["n_eventos"].fillna(0).astype(int)
-	out["durante_entrada"] = out["durante_entrada"].fillna(0).astype(int)
-	out["durante_evento"] = out["durante_evento"].fillna(0).astype(int)
-	out["despues_evento"] = out["despues_evento"].fillna(0).astype(int)
-	out["evento_nocturno"] = out["evento_nocturno"].fillna(0).astype(int)
-	out["tipo_evento_prioritario"] = out["tipo_evento_prioritario"].fillna("Ninguno")
-
-	out = out.drop(
-		columns=[
-			"event_count",
-			"inicio_dt",
-			"fin_dt",
-		],
-		errors="ignore",
+	agg = pd.concat(
+		[n_eventos, tipo_ref, afecta_previo, afecta_durante, afecta_despues],
+		axis=1,
 	)
+
+	# --- JOIN de vuelta preservando todas las filas GTFS ---
+	out = base.join(agg, on="_tren_idx")
+
+	out["n_eventos_afectando"] = out["n_eventos_afectando"].fillna(0).astype(int)
+	out["afecta_previo"] = out["afecta_previo"].fillna(0).astype(int)
+	out["afecta_durante"] = out["afecta_durante"].fillna(0).astype(int)
+	out["afecta_despues"] = out["afecta_despues"].fillna(0).astype(int)
+	out["tipo_referente"] = out["tipo_referente"].fillna("Ninguno")
+
+	# Limpiar columnas auxiliares.
+	out = out.drop(columns=["_tren_idx", "_actual_secs", "service_date"], errors="ignore")
+
 	return out
 
 
 def merge_gtfs_alerts(df_base: pd.DataFrame, df_alerts: pd.DataFrame) -> pd.DataFrame:
 	"""
 	LEFT JOIN temporal GTFS + Alertas por `route_id` usando `merge_asof` hacia atrás.
-	Asocia a cada tren la alerta más reciente activa en su línea.
+	Asocia a cada tren la alerta más reciente activa en su línea y calcula
+	`seconds_since_last_alert` en el instante del evento GTFS.
 	"""
 	if df_alerts.empty:
 		out = df_base.copy()
 		out["category"] = pd.NA
 		out["num_updates"] = 0
 		out["timestamp_start"] = pd.NaT
-		out["seconds_since_last_alert"] = 2592000
+		out["seconds_since_last_alert"] = np.nan
+		out["is_alert_just_published"] = 0
+		out["seconds_to_next_alert"] = np.nan
+		out["alert_in_next_15m"] = 0
+		out["alert_in_next_30m"] = 0
 		return out
 
 	left = df_base.copy()
 	# Reducir alertas al mínimo imprescindible antes del cruce.
 	right = df_alerts[
-		["route_id", "timestamp_start", "category", "num_updates", "seconds_since_last_alert"]
+		["route_id", "timestamp_start", "category", "num_updates"]
 	].copy()
 
 	left["route_id"] = normalize_route_id(left["route_id"])
@@ -572,7 +627,11 @@ def merge_gtfs_alerts(df_base: pd.DataFrame, df_alerts: pd.DataFrame) -> pd.Data
 	left_invalid["category"] = pd.NA
 	left_invalid["num_updates"] = 0
 	left_invalid["timestamp_start"] = pd.NaT
-	left_invalid["seconds_since_last_alert"] = 2592000
+	left_invalid["seconds_since_last_alert"] = np.nan
+	left_invalid["is_alert_just_published"] = 0
+	left_invalid["seconds_to_next_alert"] = np.nan
+	left_invalid["alert_in_next_15m"] = 0
+	left_invalid["alert_in_next_30m"] = 0
 
 	right = right.dropna(subset=["route_id", "timestamp_start"])
 
@@ -589,7 +648,11 @@ def merge_gtfs_alerts(df_base: pd.DataFrame, df_alerts: pd.DataFrame) -> pd.Data
 			left_chunk["category"] = pd.NA
 			left_chunk["num_updates"] = 0
 			left_chunk["timestamp_start"] = pd.NaT
-			left_chunk["seconds_since_last_alert"] = 2592000
+			left_chunk["seconds_since_last_alert"] = np.nan
+			left_chunk["is_alert_just_published"] = 0
+			left_chunk["seconds_to_next_alert"] = np.nan
+			left_chunk["alert_in_next_15m"] = 0
+			left_chunk["alert_in_next_30m"] = 0
 			chunks.append(left_chunk)
 			continue
 
@@ -604,10 +667,36 @@ def merge_gtfs_alerts(df_base: pd.DataFrame, df_alerts: pd.DataFrame) -> pd.Data
 			suffixes=("", "_alert"),
 		)
 		merged_chunk["num_updates"] = pd.to_numeric(merged_chunk["num_updates"], errors="coerce").fillna(0)
+		merged_chunk["seconds_since_last_alert"] = (
+			merged_chunk["merge_time"] - merged_chunk["timestamp_start"]
+		).dt.total_seconds()
 		merged_chunk["seconds_since_last_alert"] = pd.to_numeric(
-			merged_chunk["seconds_since_last_alert"],
-			errors="coerce",
-		).fillna(2592000)
+			merged_chunk["seconds_since_last_alert"], errors="coerce"
+		)
+		merged_chunk["is_alert_just_published"] = (
+			merged_chunk["seconds_since_last_alert"] <= 60
+		).astype(int)
+
+		next_alert_chunk = pd.merge_asof(
+			left_chunk,
+			right_chunk,
+			left_on="merge_time",
+			right_on="timestamp_start",
+			direction="forward",
+			suffixes=("", "_next"),
+		)
+		merged_chunk["seconds_to_next_alert"] = (
+			next_alert_chunk["timestamp_start"] - next_alert_chunk["merge_time"]
+		).dt.total_seconds()
+		merged_chunk["seconds_to_next_alert"] = pd.to_numeric(
+			merged_chunk["seconds_to_next_alert"], errors="coerce"
+		)
+		merged_chunk["alert_in_next_15m"] = (
+			merged_chunk["seconds_to_next_alert"] <= 900
+		).astype(int)
+		merged_chunk["alert_in_next_30m"] = (
+			merged_chunk["seconds_to_next_alert"] <= 1800
+		).astype(int)
 		chunks.append(merged_chunk)
 
 	if not chunks:
@@ -621,9 +710,11 @@ def merge_gtfs_alerts(df_base: pd.DataFrame, df_alerts: pd.DataFrame) -> pd.Data
 def apply_final_column_policy(df: pd.DataFrame) -> pd.DataFrame:
 	"""Aplica la política estricta de columnas: keep list + drop explícito."""
 	gtfs_keep = [
+		"date",
 		"match_key",
 		"stop_id",
 		"route_id",
+		"direction",
 		"delay_seconds",
 		"lagged_delay_1",
 		"lagged_delay_2",
@@ -639,33 +730,46 @@ def apply_final_column_policy(df: pd.DataFrame) -> pd.DataFrame:
 		"target_delay_30m",
 		"target_delay_45m",
 		"target_delay_60m",
+		"station_delay_10m",
+		"station_delay_20m",
+		"station_delay_30m",
+		"target_delay_end",
 		"delta_delay_10m",
 		"delta_delay_20m",
 		"delta_delay_30m",
 		"delta_delay_45m",
 		"delta_delay_60m",
+		"delta_delay_end",
+		"stops_to_end",
+		"merge_time",
 		"scheduled_time_to_end"
 	]
 
 	weather_keep = ["temp_extreme"]
 
 	events_keep = [
-		"hubo_evento_en_el_dia",
-		"n_eventos",
-		"tipo_evento_prioritario",
-		"durante_entrada",
-		"durante_evento",
-		"despues_evento",
-		"evento_nocturno",
+		"n_eventos_afectando",
+		"tipo_referente",
+		"afecta_previo",
+		"afecta_durante",
+		"afecta_despues",
 	]
 
-	alerts_keep = ["category", "num_updates", "timestamp_start", "seconds_since_last_alert"]
+	alerts_keep = [
+		"category",
+		"num_updates",
+		"timestamp_start",
+		"seconds_since_last_alert",
+		"is_alert_just_published",
+		"seconds_to_next_alert",
+		"alert_in_next_15m",
+		"alert_in_next_30m",
+	]
 
 	explicit_drop = [
 		"trip_uid",
 		"scheduled_time",
 		"actual_time",
-		"stops_to_end",
 		"trip_progress",
 		"scheduled_seconds",
 		"actual_seconds",
@@ -688,7 +792,6 @@ def apply_final_column_policy(df: pd.DataFrame) -> pd.DataFrame:
 		"timestamp_end",
 		"text_snippet",
 		"description",
-		"merge_time",
 	]
 
 	wanted = gtfs_keep + weather_keep + events_keep + alerts_keep
@@ -697,7 +800,7 @@ def apply_final_column_policy(df: pd.DataFrame) -> pd.DataFrame:
 	return df.loc[:, existing].copy()
 
 
-def build_final_dataset(start: str, end: str, output_base: str = "grupo5/final/dataset_entrenamiento") -> None:
+def build_final_dataset(start: str, end: str, output_base: str = "grupo5/final") -> None:
 	"""
 	Orquesta la generación del dataset final por bloques mensuales con continuidad temporal.
 	- GTFS/Clima: mes estricto.
@@ -741,7 +844,6 @@ def build_final_dataset(start: str, end: str, output_base: str = "grupo5/final/d
 		del gtfs_raw
 		gc.collect()
 
-		gtfs = reduce_mem_usage(gtfs)
 		weather = prepare_weather(load_weather(client, days_gtfs))
 
 		# Orden de cruces: GTFS+Clima -> GTFS+Eventos -> GTFS+Alertas.
@@ -799,7 +901,7 @@ def main() -> int:
 	args = parse_args()
 	output_base = args.output_object
 	if output_base == OUTPUT_OBJECT:
-		output_base = "grupo5/final/dataset_entrenamiento"
+		output_base = "grupo5/final"
 
 	build_final_dataset(start=args.start, end=args.end, output_base=output_base)
 	print("[generate_final_dataset] DONE monthly processing completed")
