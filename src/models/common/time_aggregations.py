@@ -1,0 +1,142 @@
+import os
+import pandas as pd
+import numpy as np
+import gc
+import argparse
+
+from src.common.minio_client import download_df_parquet, upload_df_parquet
+
+INPUT_PATH = "grupo5/final/year=2025/month={mes}/dataset_final.parquet"
+OUTPUT_PATH = "grupo5/aggregations/DataFrameGroupedByMin={time}.parquet"
+
+def agrupar_mes(df, tiempo):
+    df['merge_time'] = pd.to_datetime(df['merge_time'])
+    df = pd.get_dummies(df, columns=['category', 'tipo_referente'], dummy_na=False)
+
+    limite_segundos = 43200
+
+    columnas_tiempo = [
+        'delay_seconds', 'lagged_delay_1', 'lagged_delay_2', 
+        'route_rolling_delay', 'target_delay_10m', 'target_delay_20m',
+        'target_delay_30m', 'target_delay_45m', 'target_delay_60m',
+        'station_delay_10m', 'station_delay_20m', 'station_delay_30m',
+        'target_delay_end', 'delta_delay_10m', 'delta_delay_20m',
+        'delta_delay_30m', 'delta_delay_45m', 'delta_delay_60m',
+        'delta_delay_end',
+    ]
+
+    for col in columnas_tiempo:
+        if col in df.columns:
+            # Reemplaza valores mayores al límite por NaN
+            df.loc[(df[col] > limite_segundos) | (df[col] < -limite_segundos), col] = np.nan
+
+
+    # Guardamos los nombres de las nuevas columnas categóricas creadas
+    cat_columns = [col for col in df.columns if col.startswith(('category_', 'tipo_referente_'))]
+    # 3. Diccionario masivo de agregación
+    agg_dict = {
+        # Booleanos y flags -> max (si pasó una vez, es True)
+        'is_unscheduled': 'max', 'is_weekend': 'max', 'temp_extreme': 'max',
+        'afecta_previo': 'max', 'afecta_durante': 'max', 'afecta_despues': 'max',
+        'is_alert_just_published': 'max', 'alert_in_next_15m': 'max', 'alert_in_next_30m': 'max',
+        
+        # Retrasos y Targets -> mean y max
+        'delay_seconds': ['mean', 'max'], 'lagged_delay_1': ['mean', 'max'], 'lagged_delay_2': ['mean', 'max'],
+        'route_rolling_delay': ['mean', 'max'], 'target_delay_10m': ['mean', 'max'], 'target_delay_20m': ['mean', 'max'],
+        'target_delay_30m': ['mean', 'max'], 'target_delay_45m': ['mean', 'max'], 'target_delay_60m': ['mean', 'max'],
+        'station_delay_10m': ['mean', 'max'], 'station_delay_20m': ['mean', 'max'], 'station_delay_30m': ['mean', 'max'],
+        'target_delay_end': ['mean', 'max'], 'delta_delay_10m': ['mean', 'max'], 'delta_delay_20m': ['mean', 'max'],
+        'delta_delay_30m': ['mean', 'max'], 'delta_delay_45m': ['mean', 'max'], 'delta_delay_60m': ['mean', 'max'],
+        'delta_delay_end': ['mean', 'max'],
+
+        'match_key': 'nunique',
+        
+        # Tiempos, distancias y conteos -> mean
+        'actual_headway_seconds': 'mean', 'stops_to_end': 'mean', 'merge_time': 'mean',
+        'scheduled_time_to_end': 'mean', 'seconds_since_last_alert': 'mean', 'seconds_to_next_alert': 'mean',
+        'num_updates': 'sum', 'n_eventos_afectando': 'max',
+        
+        # Cíclicas -> first (es el mismo día y hora para toda la ventana)
+        'hour_sin': 'first', 'hour_cos': 'first', 'dow': 'first'
+    }
+
+    # Añadimos las columnas generadas por el One-Hot Encoding para sumarlas
+    for col in cat_columns:
+        agg_dict[col] = 'sum'
+
+    frecuencia = tiempo + 'min'
+    print("Iniciando agrupación (esto puede tardar unos minutos)...")
+    df_grouped = df.groupby([
+        'stop_id', 
+        'route_id', 
+        'direction',
+        pd.Grouper(key='merge_time', freq=frecuencia) 
+    ]).agg(agg_dict).reset_index()
+
+    nuevas_columnas = []
+    for col in df_grouped.columns.values:
+        if isinstance(col, tuple):
+            # Si la columna tiene una tupla como ('delay_seconds', 'mean')
+            if col[1]: 
+                nuevas_columnas.append(f"{col[0]}_{col[1]}")
+            else:
+                nuevas_columnas.append(col[0])
+        else:
+            nuevas_columnas.append(col)
+
+    df_grouped.columns = nuevas_columnas
+
+    return df_grouped
+
+
+
+
+
+def aggregate_by_x_min(tiempo = '60'):
+    access_key = os.getenv("MINIO_ACCESS_KEY")
+    secret_key = os.getenv("MINIO_SECRET_KEY")
+    if not access_key or not secret_key:
+        raise ValueError("Las variables de entorno MINIO_ACCESS_KEY y MINIO_SECRET_KEY no están definidas")
+    
+    meses = ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12"]
+    lista_df_agrupados = []
+    for mes in meses:
+        try:
+            df_mes = download_df_parquet(access_key, secret_key, INPUT_PATH.format(mes = mes))
+           
+            
+        except Exception as e:
+           print(f"\n ERROR al leer el mes {mes}: {type(e).__name__} - {e}")
+        
+        df_mes_agrupado = agrupar_mes(df_mes, tiempo)
+        lista_df_agrupados.append(df_mes_agrupado)
+        del df_mes
+        gc.collect()
+        print(f"  -> Mes {mes} agrupado y guardado en lista. RAM liberada.\n")
+
+
+    df_final = pd.concat(lista_df_agrupados, ignore_index=True)
+    del lista_df_agrupados
+    gc.collect()
+    print("Cargando datos a MinIO...")
+    upload_df_parquet(access_key, secret_key, OUTPUT_PATH.format(time=tiempo), df_final)
+
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Script para agregar datos del transporte en ventanas de tiempo.")
+    
+    # Añadimos el argumento --time (por defecto '60' como tenías en tu función)
+    parser.add_argument(
+        '--time', 
+        type=str, 
+        default='60', 
+        help="Tamaño de la ventana de tiempo en minutos (ej. 30, 60, 120)"
+    )
+    
+    # Leemos los argumentos que el usuario haya puesto en la terminal
+    args = parser.parse_args()
+    
+    # Ejecutamos la función pasándole el argumento
+    print(f"Iniciando el proceso con una ventana de {args.time} minutos...")
+    aggregate_by_x_min(tiempo=args.time)
