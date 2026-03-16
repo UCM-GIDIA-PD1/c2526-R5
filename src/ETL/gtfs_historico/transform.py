@@ -289,6 +289,13 @@ def add_future_targets(df: pd.DataFrame) -> pd.DataFrame:
     # Cuántas paradas le quedan
     out["stops_to_end"] = out.groupby("match_key", group_keys=False).cumcount(ascending=False)
 
+    # Deltas históricos por horizonte (compatibilidad con modelos previos)
+    out["delta_delay_10m"] = out["target_delay_10m"] - out["delay_seconds"]
+    out["delta_delay_20m"] = out["target_delay_20m"] - out["delay_seconds"]
+    out["delta_delay_30m"] = out["target_delay_30m"] - out["delay_seconds"]
+    out["delta_delay_45m"] = out["target_delay_45m"] - out["delay_seconds"]
+    out["delta_delay_60m"] = out["target_delay_60m"] - out["delay_seconds"]
+
     # Diferencia del retraso futuro respecto al actual, para modelar la evolución del retraso en el tiempo
     out["delta_delay_end"] = out["target_delay_end"] - out["delay_seconds"]
 
