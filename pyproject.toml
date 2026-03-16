@@ -27,6 +27,7 @@ dependencies = [
   "google-api-python-client>=2.191.0",
   "wandb>=0.25.1",
   "lightgbm>=4.6.0",
+  "xgboost>=3.2.0",
 ]
 
 [dependency-groups]
