@@ -10,7 +10,7 @@ Validación y Optimización:
     Aceleración: Uso de `tree_method='hist'` y `enable_categorical=True` para procesar millones de filas de forma eficiente.
 
 Uso:
-    python -m src.models.prediccion_retrasos.train_xgb_retrasos
+    python -m src.models.prediccion_retrasos.XGBoost
 
 Variables de entorno necesarias:
     MINIO_ACCESS_KEY
@@ -22,6 +22,8 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_absolute_error
 import xgboost as xgb
 import os
+import wandb
+from wandb.integration.xgboost import WandbCallback
 from src.common.minio_client import download_df_parquet
 
 
@@ -32,7 +34,7 @@ columnas_a_excluir = [
     # 1. TARGETS ALTERNATIVOS (Y el tuyo propio, que pasará a ser 'y')
     'target_delay_10m_mean', 'target_delay_10m_max',
     'target_delay_20m_mean', 'target_delay_20m_max',
-    'target_delay_30m_mean', 'target_delay_30m_max', # <-- Tu objetivo probable
+    'target_delay_30m_mean', 'target_delay_30m_max',
     'target_delay_45m_mean', 'target_delay_45m_max',
     'target_delay_60m_mean', 'target_delay_60m_max',
     'target_delay_end_mean', 'target_delay_end_max',
@@ -97,25 +99,42 @@ def XGBoost():
     y = df_procesado[OBJETIVO]              # Solo el retraso
 
     # 3. Dividir los datos en Entrenamiento (80%) y Prueba (20%)
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, shuffle=False)
+    # --- INICIO WANDB ---
+    # Inicializamos wandb y guardamos los hiperparámetros en 'config'
+    WANDB_PROJECT  = "pd1-c2526-team5"
+    wandb.init(
+        project= WANDB_PROJECT, # Nombre de tu proyecto en wandb
+        name="xgb_stop_delay_60min",                  # Nombre de esta ejecución en particular
+        config={
+            "n_estimators": 100,
+            "learning_rate": 0.1,
+            "max_depth": 7,
+            "early_stopping_rounds": 20,
+            "tree_method": 'hist',
+            "objetivo": OBJETIVO
+        }
+    )
+    # --------------------
 
-    # 4. Configurar el Modelo XGBoost
+    # 4. Configurar el Modelo XGBoost (usando la config de wandb para mantener consistencia)
     modelo_xgb = xgb.XGBRegressor(
-        n_estimators=1000,       # Número de árboles que va a construir (prueba subirlo a 500 luego)
-        learning_rate=0.05,      # Qué tan rápido aprende (si subes los árboles, baja esto a 0.05 o 0.01)
-        max_depth=7,            # Nivel de detalle de cada árbol (entre 3 y 10 suele ir bien)
-        n_jobs=-1,              # Usa todos los núcleos de tu procesador para que vaya más rápido
+        n_estimators=wandb.config.n_estimators,
+        learning_rate=wandb.config.learning_rate,
+        max_depth=wandb.config.max_depth,
+        n_jobs=-1,
         random_state=42,
-        tree_method='hist',
-        enable_categorical = True,
-        early_stopping_rounds=20
+        tree_method=wandb.config.tree_method,
+        enable_categorical=True,
+        early_stopping_rounds=wandb.config.early_stopping_rounds,
+        callbacks=[WandbCallback(log_model=True)]
     )
 
     # 5. Entrenar el Modelo
     print("Entrenando el modelo...")
     modelo_xgb.fit(X_train, y_train,
                     eval_set=[(X_train, y_train), (X_test, y_test)],
-                    verbose=10)
+                    verbose=10) 
 
     # 6. Predecir y Evaluar
     predicciones = modelo_xgb.predict(X_test)
@@ -123,6 +142,11 @@ def XGBoost():
 
     print(f"Error Absoluto Medio (MAE): El modelo se equivoca en promedio por {mae:.2f} segundos.")
 
+    # --- CIERRE WANDB ---
+    # Registramos la métrica final y cerramos la ejecución
+    wandb.log({"test_mae": mae})
+    wandb.finish()
+    # --------------------
 
 if __name__ == "__main__":
     XGBoost()
