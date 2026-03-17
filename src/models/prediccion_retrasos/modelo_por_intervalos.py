@@ -1,3 +1,28 @@
+"""
+Entrenamiento LGBM — Predicción de retraso por intervalos
+
+Predice el tiempo de retraso absoluto (en segundos) de un tren al llegar a una estación.
+    Objetivo: 'clase_retraso' :
+        'Adelantado (>1 min)', 
+        'Puntual (-1 a 1 min)', 
+        'Retraso leve (1-3 min)', 
+        'Retraso moderado (3-5 min)', 
+        'Retraso grave (5-7.5 min)',
+        'Retraso muy grave (>7.5 min)'
+
+Validación y Optimización:
+    Train  → 80% de los datos históricos (aleatorio)
+    Val    → 20% de los datos históricos (eval_set / early stopping)
+   
+Uso:
+    python -m src.models.prediccion_retrasos.modelo_por_intervalos
+
+Variables de entorno necesarias:
+    MINIO_ACCESS_KEY
+    MINIO_SECRET_KEY
+    WANDB_API_KEY  (o haber hecho `wandb login` previamente)
+"""
+
 import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split
@@ -63,7 +88,7 @@ config.class_weight = 'balanced'
 
 # 2. Definir los intervalos de retraso (Binning)
 # Asumimos que la variable objetivo está en segundos.
-# Intervalos: < 60s (Sin retraso), 60-120s (Leve), 120-300s (Moderado), > 300s (Grave)
+
 bins = [-np.inf, -60, 60, 180, 300, 450, np.inf]
 labels = [
     'Adelantado (>1 min)', 
@@ -74,7 +99,7 @@ labels = [
     'Retraso muy grave (>7.5 min)'
 ]
 
-# Creamos la nueva columna objetivo categórica
+# 3. Creamos la nueva columna objetivo categórica
 columna_objetivo = 'target_delay_10m_max'
 df['clase_retraso'] = pd.cut(df[columna_objetivo], bins=bins, labels=labels)
 
@@ -82,7 +107,7 @@ df['clase_retraso'] = pd.cut(df[columna_objetivo], bins=bins, labels=labels)
 df_procesado = procesar(df)
 
 columnas_a_excluir = [
-    # 1. TARGETS ALTERNATIVOS (Y el tuyo propio, que pasará a ser 'y')
+    # 1. TARGETS ALTERNATIVOS 
     'target_delay_10m_mean', 'target_delay_10m_max',
     'target_delay_20m_mean', 'target_delay_20m_max',
     'target_delay_30m_mean', 'target_delay_30m_max',
@@ -123,10 +148,10 @@ X = pd.get_dummies(X, drop_first=True)
 columnas_fecha = X.select_dtypes(include=['datetime', 'datetime64', 'datetimetz']).columns
 X = X.drop(columns=columnas_fecha)
 
-# Manejo básico de nulos (puedes ajustar esto según tu conocimiento de los datos)
+# Manejo básico de nulos 
 X = X.fillna(0)
 y = y.dropna() 
-X = X.loc[y.index] # Asegurar que X e y tengan las mismas filas
+X = X.loc[y.index] 
 
 # 5. Dividir los datos en Entrenamiento y Prueba
 # IMPORTANTE: shuffle=False para datos temporales (entrenamos con el pasado, probamos con el futuro)
@@ -136,7 +161,7 @@ X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle
 print("Entrenando el modelo...")
 
 # ==========================================
-# 2. ENTRENAR CON LOS PARÁMETROS DE W&B
+# 1. ENTRENAR CON LOS PARÁMETROS DE W&B
 # ==========================================
 modelo = LGBMClassifier(
     n_estimators=config.max_iter,
@@ -148,11 +173,11 @@ modelo = LGBMClassifier(
 modelo.fit(
     X_train, y_train,
     eval_set=[(X_test, y_test)], # Para ver el progreso en test
-    callbacks=[wandb_callback()] # ¡Magia en vivo!
+    callbacks=[wandb_callback()] 
 )
 
 # ==========================================
-# 3. PREDICCIONES Y LOG EN W&B
+# 2. PREDICCIONES Y LOG EN W&B
 # ==========================================
 print("Generando predicciones y enviando datos a W&B...")
 y_pred = modelo.predict(X_test)
@@ -166,7 +191,7 @@ wandb.log({"accuracy": acc})
 print("\n--- Reporte de Clasificación ---")
 print(classification_report(y_test, y_pred))
 
-# LA MAGIA DE W&B: Crear dashboard automático de Scikit-Learn
+# Crear dashboard automático de Scikit-Learn
 # Esto generará: Matriz de confusión, Feature Importance, Curvas ROC y Precision-Recall
 wandb.sklearn.plot_classifier(
     modelo, 

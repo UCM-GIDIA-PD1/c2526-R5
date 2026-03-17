@@ -88,6 +88,7 @@ def XGBoost():
     ACCESS_KEY = os.getenv('MINIO_ACCESS_KEY')
     SECRET_KEY = os.getenv('MINIO_SECRET_KEY')
 
+    # 1. Cargar los datos
     print('Cargando datos...')
     df = download_df_parquet(ACCESS_KEY, SECRET_KEY, INPUT_PATH)
     print('Todo cargado correctamente')
@@ -104,8 +105,8 @@ def XGBoost():
     # Inicializamos wandb y guardamos los hiperparámetros en 'config'
     WANDB_PROJECT  = "pd1-c2526-team5"
     wandb.init(
-        project= WANDB_PROJECT, # Nombre de tu proyecto en wandb
-        name="xgb_stop_delay_60min",                  # Nombre de esta ejecución en particular
+        project= WANDB_PROJECT, 
+        name="xgb_stop_delay_60min",                 
         config={
             "n_estimators": 100,
             "learning_rate": 0.1,

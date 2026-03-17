@@ -28,10 +28,7 @@ dependencies = [
   "wandb>=0.25.1",
   "lightgbm>=4.6.0",
   "xgboost>=3.2.0",
-<<<<<<< HEAD
-=======
   "missingno>=0.5.2",
->>>>>>> 3e14e10d3cd1662c6848a17604eb0db988012b35
 ]
 
 [dependency-groups]
