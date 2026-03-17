@@ -117,7 +117,7 @@ wheels = [
 [[package]]
 name = "c2526-r5"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "bs4" },
     { name = "geopy" },

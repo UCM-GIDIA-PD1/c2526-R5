@@ -241,6 +241,28 @@ def prepare_gtfs(df_gtfs: pd.DataFrame) -> pd.DataFrame:
 	# Mantener compatibilidad con posibles usos históricos de train_timestamp.
 	df["train_timestamp"] = df["merge_time"]
 	df["hour"] = df["merge_time"].dt.hour
+
+	if "is_unscheduled" in df.columns and "match_key" in df.columns:
+		# Máscara para aislar solo los trenes no programados
+		mask_unscheduled = df["is_unscheduled"] == True
+        
+		if mask_unscheduled.any():
+            # Extraemos la ruta aplicando la lógica de partición
+            # Ejemplo match_key: "145650_1..S03R" -> split('_')[1] da "1..S03R" -> split('.')[0] da "1"
+			extracted_route = (
+                df.loc[mask_unscheduled, "match_key"]
+                .astype("string")
+                .str.split("_")
+                .str[1]
+                .str.split(".")
+                .str[0] 
+            )
+			# Nos quedamos solo con los strings cuya longitud sea menor a 3 (lineas válidas)
+			rutas_validas = extracted_route[extracted_route.str.len() < 3]
+            
+            # Asignamos al DataFrame original usando el índice de las rutas que pasaron el filtro
+			df.loc[rutas_validas.index, "route_id"] = rutas_validas
+
 	if "route_id" in df.columns:
 		df["route_id"] = normalize_route_id(df["route_id"])
 	if "stop_id" in df.columns:
