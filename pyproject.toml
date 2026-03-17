@@ -29,6 +29,8 @@ dependencies = [
   "lightgbm>=4.6.0",
   "xgboost>=3.2.0",
   "missingno>=0.5.2",
+  "optuna>=4.8.0",
+  "shap>=0.51.0",
 ]
 
 [dependency-groups]
