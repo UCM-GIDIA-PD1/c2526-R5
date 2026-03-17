@@ -133,7 +133,7 @@ wheels = [
 [[package]]
 name = "c2526-r5"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "bs4" },
     { name = "geopy" },
@@ -143,7 +143,6 @@ dependencies = [
     { name = "gtfs-realtime-bindings" },
     { name = "lightgbm" },
     { name = "minio" },
-    { name = "missingno" },
     { name = "numpy" },
     { name = "openmeteo-requests" },
     { name = "optuna" },
@@ -183,7 +182,6 @@ requires-dist = [
     { name = "gtfs-realtime-bindings" },
     { name = "lightgbm", specifier = ">=4.6.0" },
     { name = "minio" },
-    { name = "missingno", specifier = ">=0.5.2" },
     { name = "numpy" },
     { name = "openmeteo-requests" },
     { name = "optuna", specifier = ">=4.8.0" },
@@ -1268,21 +1266,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/40/df/6dfc6540f96a74125a11653cce717603fd5b7d0001a8e847b3e54e72d238/minio-7.2.20.tar.gz", hash = "sha256:95898b7a023fbbfde375985aa77e2cd6a0762268db79cf886f002a9ea8e68598", size = 136113, upload-time = "2025-11-27T00:37:15.569Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/3e/9a/b697530a882588a84db616580f2ba5d1d515c815e11c30d219145afeec87/minio-7.2.20-py3-none-any.whl", hash = "sha256:eb33dd2fb80e04c3726a76b13241c6be3c4c46f8d81e1d58e757786f6501897e", size = 93751, upload-time = "2025-11-27T00:37:13.993Z" },
-]
-
-[[package]]
-name = "missingno"
-version = "0.5.2"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "matplotlib" },
-    { name = "numpy" },
-    { name = "scipy" },
-    { name = "seaborn" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/2b/f9/e20220b851bc6d7abf70b403a3080d6af946ed4b13b2bf91ef4e74d2aec9/missingno-0.5.2.tar.gz", hash = "sha256:4a4baa9ca9f9e4e0d9402455df26b656632e94b99e87fa64c0cdbbbc722837ac", size = 17489, upload-time = "2023-02-26T20:10:29.329Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/87/22/cd5cf999af21c2f97486622c551ac3d07361ced8125121e907f588ff5f24/missingno-0.5.2-py3-none-any.whl", hash = "sha256:55782621ce09ba0f0a1d08e5bd6d6fe1946469fb03951fadf7d209911ca5b072", size = 8704, upload-time = "2023-02-26T20:10:26.042Z" },
 ]
 
 [[package]]
