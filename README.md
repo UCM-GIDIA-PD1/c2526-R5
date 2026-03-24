@@ -167,7 +167,7 @@ Este orquestador ejecuta la descarga de datos desde las distintas fuentes extern
 #### Ejemplo de ejecución
 
 ```bash
-uv run python -m src.ETL.pipelines.run_extraccion --source all --start 2025-01-01 --end 2025-01-03
+uv run python src/ETL/pipelines/run_extraccion --source all --start 2025-01-01 --end 2025-01-03
 ```
 
 Este comando descargará los datos del rango indicado y los almacenará en:
@@ -198,7 +198,7 @@ Este orquestador procesa los datos almacenados en `raw/ y/o processed`, realiza 
 #### Ejemplo de ejecución
 
 ```bash
-uv run python -m src.ETL.pipelines.run_transform --source all --start 2025-01-01 --end 2025-01-03
+uv run python src/ETL/pipelines/run_transform --source all --start 2025-01-01 --end 2025-01-03
 ```
 
 Tras su ejecución, los datos seguirán el flujo:

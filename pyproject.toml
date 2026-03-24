@@ -30,9 +30,11 @@ dependencies = [
   "xgboost>=3.2.0",
   "missingno>=0.5.2",
   "optuna>=4.8.0",
+  "optuna-integration>=4.8.0",
   "shap>=0.51.0",
   "torch==2.10.0",
   "torch-geometric-temporal",
+  "category-encoders>=2.9.0",
 ]
 
 [dependency-groups]
@@ -44,6 +46,8 @@ dev = [
   "mypy",
   "pre-commit",
   "ipykernel",
+  "nbdime>=4.0.4",
+  "nbstripout>=0.9.1",
 ]
 
 [build-system]
