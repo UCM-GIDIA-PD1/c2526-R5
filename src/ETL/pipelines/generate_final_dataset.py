@@ -740,6 +740,8 @@ def apply_final_column_policy(df: pd.DataFrame) -> pd.DataFrame:
 		"delay_seconds",
 		"lagged_delay_1",
 		"lagged_delay_2",
+		#"lagged_delay_3",
+		#"lagged_delay_4",
 		"route_rolling_delay",
 		"actual_headway_seconds",
 		"is_unscheduled",
