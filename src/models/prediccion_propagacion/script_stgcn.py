@@ -21,8 +21,6 @@ import wandb
 from pathlib import Path
 import sys
 
-# Archivo actual: .../src/models/prediccion_propagacion/tu_script.py
-# Subimos 3 niveles hasta la raíz del proyecto
 ROOT = Path(__file__).resolve().parents[3]
 
 if str(ROOT) not in sys.path:
@@ -35,10 +33,8 @@ print("Importación realizada con éxito desde:", ROOT)
 
 
 #Descargar dataset
-#access_key = os.getenv("MINIO_ACCESS_KEY")
-#secret_key = os.getenv("MINIO_SECRET_KEY")
-access_key = "e8T60glxkUKjHHEhcNwR"
-secret_key = "VeV7cbs96fDRyh3c0aw6lFKZxENmPvhoZeooNXhb"
+access_key = os.getenv("MINIO_ACCESS_KEY")
+secret_key = os.getenv("MINIO_SECRET_KEY")
 
 ruta_archivo = "grupo5/final/year=2025/month=01/dataset_final.parquet"
 df_final = download_df_parquet(access_key, secret_key, ruta_archivo)
@@ -94,7 +90,7 @@ nodes = sorted(list(set(df['stop_id'].unique()) | set(df['next_stop_id'].dropna(
 n_nodes = len(nodes)
 node_to_idx = {stop_id: idx for idx, stop_id in enumerate(nodes)}
 
-# 5. CREACIÓN DE LA MATRIZ PONDERADA (Kernel Gaussiano)
+# 5. CREACIÓN DE LA MATRIZ PONDERADA 
 A_weighted = np.zeros((n_nodes, n_nodes), dtype=np.float32)
 sigma = graph_df['median_travel_time'].std()
 
@@ -132,9 +128,7 @@ print(f"Número de nodos únicos: {n_nodes}")
 print(f"Matriz de Adyacencia lista y normalizada. Forma: {A_tensor.shape}")
 
 
-#Preprocesamiento y creación del tensor 4d
-
-# 2. Definir las variables exactamente como las queremos
+# Definir las variables 
 variables_entrada = [
     'delay_seconds', 'lagged_delay_1', 'lagged_delay_2', 'is_unscheduled',
     'temp_extreme', 'n_eventos_afectando', 'route_rolling_delay',
@@ -143,7 +137,7 @@ variables_entrada = [
 variables_objetivo = ['target_delay_10m', 'target_delay_20m', 'target_delay_30m', 'station_delay_10m', 'station_delay_20m',
        'station_delay_30m']
 
-# 3. Función para crear el tensor asegurando que cuadre con tu matriz de adyacencia
+# Función para crear el tensor asegurando que cuadre con la matriz de adyacencia
 def crear_tensores_stgcn(df, mapa_nodos, features, targets, freq='15min'):
     # Filtrar solo las estaciones que existen en nuestra matriz de adyacencia
     nodos_validos = list(mapa_nodos.keys())
@@ -178,7 +172,6 @@ def crear_tensores_stgcn(df, mapa_nodos, features, targets, freq='15min'):
     gc.collect()
     
     # Crear un "Grid" (cuadrícula) perfecto: Tiempos x Nodos
-    # Esto asegura que no falte ningún instante de tiempo para ninguna estación
     todos_los_tiempos = pd.date_range(
         start=df_agrupado.index.get_level_values('time_bin').min(),
         end=df_agrupado.index.get_level_values('time_bin').max(),
@@ -208,7 +201,7 @@ def crear_tensores_stgcn(df, mapa_nodos, features, targets, freq='15min'):
     df_completo['hour_cos'] = np.cos(2 * np.pi * df_completo['time_bin'].dt.hour / 24)
     df_completo['dow'] = df_completo['time_bin'].dt.dayofweek.astype(float)
     
-    # IMPORTANTE: Ordenar el dataframe usando el mismo índice de la matriz de adyacencia
+    # Ordenar el dataframe usando el mismo índice de la matriz de adyacencia
     df_completo['nodo_idx'] = df_completo['stop_id'].map(mapa_nodos)
     df_completo = df_completo.sort_values(['time_bin', 'nodo_idx'])
     
@@ -227,7 +220,6 @@ def crear_tensores_stgcn(df, mapa_nodos, features, targets, freq='15min'):
     
     return X_tensor, Y_tensor, todos_los_tiempos
 
-# 4. ¡Ejecutar la creación! (Asegúrate de que node_to_idx ya está en memoria)
 X_full, Y_full, array_tiempos = crear_tensores_stgcn(
     df_final, 
     node_to_idx, 
@@ -238,8 +230,8 @@ X_full, Y_full, array_tiempos = crear_tensores_stgcn(
 print(f"\\n Tensor de entrada X_full creado: {X_full.shape} -> (Tiempos, Nodos, Features)")
 print(f"Tensor objetivo Y_full creado: {Y_full.shape} -> (Tiempos, Nodos, Targets)")
 
-# 1. Parche de seguridad: Eliminar cualquier NaN que haya quedado en X o en Y
-# Reemplazamos los NaNs por 0 (que significa 0 retraso en ese horizonte)
+# Eliminar cualquier NaN que haya quedado en X o en Y
+# Reemplazamos los NaNs por 0 
 X_full = np.nan_to_num(X_full, nan=0.0)
 Y_full = np.nan_to_num(Y_full, nan=0.0)
 
@@ -248,7 +240,7 @@ print(f"¿Hay NaNs en X_full?: {np.isnan(X_full).any()}")
 print(f"¿Hay NaNs en Y_full?: {np.isnan(Y_full).any()}")
 
 
-# 1. Separación temporal: Usamos el 80% del tiempo para entrenar y el 20% para test
+# Separación temporal: Usamos el 80% del tiempo para entrenar y el 20% para test
 num_tiempos = X_full.shape[0]
 limite_corte = int(num_tiempos * 0.8)
 
@@ -260,8 +252,7 @@ Y_test = Y_full[limite_corte:]
 print(f"Secuencias de entrenamiento: {X_train.shape[0]}")
 print(f"Secuencias de test: {X_test.shape[0]}")
 
-# 2. Escalado (Aplanamos temporalmente a 2D, escalamos y devolvemos a 3D)
-# Es vital ajustar (fit) solo con Train para no hacer fuga de datos (data leakage)
+# Escalado (Aplanamos temporalmente a 2D, escalamos y devolvemos a 3D)
 T_train, N, F = X_train.shape
 T_test = X_test.shape[0]
 
@@ -307,7 +298,7 @@ test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 print(f"Lotes de entrenamiento (batches): {len(train_loader)}")
 
 
-#Arquitectura del modelo
+# Arquitectura del modelo
 class GraphConv(nn.Module):
     def __init__(self, in_channels, out_channels):
         super(GraphConv, self).__init__()
@@ -372,8 +363,6 @@ class STGCN_Metro(nn.Module):
         x = self.block1(x, self.adj_matrix)
         x = self.block2(x, self.adj_matrix)
         
-        # Ahora x tiene forma (Batch, Tiempo, Nodos, 64)
-        # Queremos predecir por cada nodo, así que fusionamos Tiempo y Canales
         x = x.reshape(batch_size, nodos, -1) 
         
         # Predicción final: (Batch, Nodos, num_targets)
@@ -404,10 +393,7 @@ import time
 # 1. Configuración del entrenamiento
 epocas = 50 
 tasa_aprendizaje = 0.001
-
-# Función de pérdida (MSE es ideal para que los gradientes converjan bien)
 criterio = nn.MSELoss()
-# Optimizador Adam
 optimizador = optim.Adam(modelo.parameters(), lr=tasa_aprendizaje)
 
 wandb.init(project="pd1-c2526-team5", name="test-stgcn-1", mode="offline")
