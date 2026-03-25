@@ -32,7 +32,6 @@ from sklearn.metrics import (
 )
 
 from src.common.minio_client import download_df_parquet
-
 warnings.filterwarnings("ignore")
 
 # ── Configuración ──────────────────────────────────────────────────────────────
@@ -44,7 +43,7 @@ YEAR          = 2025
 MONTHS        = range(1, 2)
 DATA_TEMPLATE = "grupo5/final/year={year}/month={month:02d}/dataset_final.parquet"
 
-TARGET_DELTA  = "delta_delay_10m"   # cambiar para otro horizonte: _20m, _30m, etc.
+TARGET_DELTA  = "delta_delay_10m"   # cambiar para otro horizonte: _20m, _30m, _45m, _60m, etc.
 TARGET        = "target_mejora"
 
 TRAIN_RATIO   = 0.70
