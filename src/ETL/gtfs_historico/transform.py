@@ -127,7 +127,7 @@ def add_derivated_features(df: pd.DataFrame, service_date: str) -> pd.DataFrame:
 def add_time_series_features(df: pd.DataFrame) -> pd.DataFrame:
     """
     Añade características temporales y de viaje al DataFrame:
-    - **lagged_delay_1 / lagged_delay_2**: retraso del stop anterior y del antepenúltimo dentro del mismo viaje
+    - **lagged_delay_1 / lagged_delay_x**: retraso del stop anterior y del stop actual - x dentro del mismo viaje, respectivamente
     - **actual_headway_seconds**: tiempo transcurrido desde el tren previo en la misma parada
     - **route_rolling_delay**: promedio móvil a corto plazo de los retrasos en la misma ruta (no incluye el tren actual)
     - **period_of_day**: franja horaria categórica (morning_peak, midday, evening_peak, off_peak)
@@ -147,6 +147,8 @@ def add_time_series_features(df: pd.DataFrame) -> pd.DataFrame:
         out = out.sort_values(by=["match_key", "actual_seconds"], na_position="last")
         out["lagged_delay_1"] = out.groupby("match_key", group_keys=False)["delay_seconds"].shift(1)
         out["lagged_delay_2"] = out.groupby("match_key", group_keys=False)["delay_seconds"].shift(2)
+        #out["lagged_delay_3"] = out.groupby("match_key", group_keys=False)["delay_seconds"].shift(3)
+        #out["lagged_delay_4"] = out.groupby("match_key", group_keys=False)["delay_seconds"].shift(4)
 
     # actual headway: tiempo desde el tren anterior en la misma parada
     if "actual_seconds" in out.columns and "stop_id" in out.columns:
