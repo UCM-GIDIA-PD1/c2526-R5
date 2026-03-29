@@ -46,7 +46,7 @@ def filtro_comportamiento_alterado(df):
         df['alert_in_next_30m_max'] == 0            
     )
 
-    df = df[mask_positivos | mask_negativos_limpios].copy()
+    df = df[mask_positivos | mask_negativos_limpios]
     df = df.reset_index(drop=True)
 
     print(f"Dataset tras filtrar negativos ambiguos: {len(df):,} filas")
@@ -100,7 +100,7 @@ def main():
     print("✓ Dataset cargado con exito")
 
     # Eliminar filas sin target
-    df = df.dropna(subset=[TARGET]).copy()
+    df = df.dropna(subset=[TARGET])
     df[TARGET] = df[TARGET].astype(int)
     df = filtro_comportamiento_alterado(df)
 
