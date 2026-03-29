@@ -4,10 +4,12 @@ import pandas as pd
 import numpy as np
 import wandb
 from sklearn.preprocessing import OrdinalEncoder
+from sklearn.dummy import DummyClassifier
 import optuna
 from xgboost import XGBClassifier
 from sklearn.metrics import (average_precision_score, roc_auc_score, f1_score,
-                              recall_score, precision_score, classification_report)
+                              recall_score, precision_score, classification_report,
+                              precision_recall_curve)
 from src.common.minio_client import download_df_parquet
 
 
@@ -65,6 +67,32 @@ def encoding_categorias(X_train, X_val, X_test):
     print("✓ Encoding completado")
     return X_train, X_val, X_test
 
+
+def evaluar_baseline(X_train, y_train, X_test, y_test):
+    """Entrena un clasificador aleatorio estratificado y devuelve sus métricas."""
+    print("\nEvaluando baseline estratificado...")
+
+    baseline = DummyClassifier(strategy="stratified", random_state=42)
+    baseline.fit(X_train, y_train)
+
+    y_prob_base  = baseline.predict_proba(X_test)[:, 1]
+    y_pred_base  = baseline.predict(X_test)
+
+    metricas = {
+        "baseline_pr_auc":   average_precision_score(y_test, y_prob_base),
+        "baseline_roc_auc":  roc_auc_score(y_test, y_prob_base),
+        "baseline_f1":       f1_score(y_test, y_pred_base, zero_division=0),
+        "baseline_recall":   recall_score(y_test, y_pred_base, zero_division=0),
+        "baseline_precision":precision_score(y_test, y_pred_base, zero_division=0),
+    }
+
+    print(f"  PR-AUC   baseline: {metricas['baseline_pr_auc']:.4f}  "
+          f"(≈ prevalencia positivos: {y_test.mean():.4f})")
+    print(f"  ROC-AUC  baseline: {metricas['baseline_roc_auc']:.4f}")
+    print(f"  F1       baseline: {metricas['baseline_f1']:.4f}")
+
+    return metricas, y_prob_base
+
 def main():
 
     print(f"\nCargando dataset...")
@@ -76,7 +104,7 @@ def main():
     df[TARGET] = df[TARGET].astype(int)
     df = filtro_comportamiento_alterado(df)
 
-    #Nueva feature
+    # Nueva feature
     df['delay_acceleration'] = df['delay_seconds_mean'] - df['lagged_delay_1_mean']
 
     df_sorted = df.sort_values('merge_time')
@@ -121,6 +149,8 @@ def main():
 
 
     X_train, X_val, X_test = encoding_categorias(X_train, X_val, X_test)
+
+    metricas_baseline, y_prob_base = evaluar_baseline(X_train, y_train, X_test, y_test)
 
 
     # ── Búsqueda de hiperparámetros óptimos ─────────────────────────────────────────
@@ -198,12 +228,58 @@ def main():
     print(f"\nThreshold óptimo: {threshold_opt:.2f}")
     print(classification_report(y_test, y_pred, zero_division=0))
 
+    # Curvas PR
+    precision_base, recall_base, _   = precision_recall_curve(y_test, y_prob_base)
+    precision_model, recall_model, _ = precision_recall_curve(y_test, y_prob)
+
+    #Importancia Features
+    importancias = pd.DataFrame({
+        "feature":    FEATURES,
+        "importance": modelo_agregado.feature_importances_
+    }).sort_values("importance", ascending=False)
+
     wandb.log({
+        **metricas_baseline,
+
         "auc_roc":   roc_auc_score(y_test, y_prob),
         "pr_auc":    average_precision_score(y_test, y_prob),
         "f1":        f1_score(y_test, y_pred, zero_division=0),
         "recall":    recall_score(y_test, y_pred, zero_division=0),
         "precision": precision_score(y_test, y_pred, zero_division=0),
+        "threshold_opt": float(threshold_opt),
+
+        # Curva PR - Baseline
+        "curva_pr_baseline": wandb.plot.line_series(
+            xs=recall_base.tolist(),
+            ys=[precision_base.tolist()],
+            keys=["Baseline"],
+            title="Precision-Recall Curve - Baseline",
+            xname="Recall"
+        ),
+
+        # Curva PR - Modelo
+        "curva_pr_modelo": wandb.plot.line_series(
+            xs=recall_model.tolist(),
+            ys=[precision_model.tolist()],
+            keys=["XGBoost"],
+            title="Precision-Recall Curve - Modelo",
+            xname="Recall"
+        ),
+
+        # Matriz de confusión
+        "confusion_matrix": wandb.plot.confusion_matrix(
+            y_true=y_test.tolist(),
+            preds=y_pred.tolist(),
+            class_names=["No alerta", "Alerta"]
+        ),
+
+        # Importancia de features
+        "feature_importance": wandb.plot.bar(
+            wandb.Table(dataframe=importancias),
+            label="feature",
+            value="importance",
+            title="Feature Importance"
+        ),
     })
 
     modelo_agregado.save_model("modelo_agregado_30min.json")
