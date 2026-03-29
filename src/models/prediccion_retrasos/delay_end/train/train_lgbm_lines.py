@@ -1,15 +1,17 @@
 """
-Entrenamiento LightGBM — Predicción de retraso en parada para una línea específica.
+Entrenamiento LightGBM — Predicción de retraso al final del viaje para una línea específica.
 
 Carga el dataset anual de una línea concreta desde:
     pd1/grupo5/aggregations/lines/line=XX/dataset_final.parquet
 
-Y hace la división temporal internamente:
+Solo usa registros con scheduled_time_to_end < 1800s (menos de 30 min restantes).
+
+División temporal:
     Train  → meses 01–09  (enero–septiembre 2025)
     Val    → meses 10–12  (octubre–diciembre 2025)
 
 Uso:
-    uv run python -m src.models.prediccion_retrasos.train_lgbm_line
+    uv run python -m src.models.prediccion_retrasos.delay_end.train.train_lgbm_lines
 
 Variables de entorno necesarias:
     MINIO_ACCESS_KEY
@@ -35,27 +37,31 @@ warnings.filterwarnings("ignore")
 ACCESS_KEY = os.environ["MINIO_ACCESS_KEY"]
 SECRET_KEY = os.environ["MINIO_SECRET_KEY"]
 
-LINE           = "1"   
-TARGET         = "target_delay_30m"
+LINE           = "1"
+TARGET         = "target_delay_end"
 DATA_PATH      = f"grupo5/aggregations/lines/line={LINE}/dataset_final.parquet"
 MODEL_PATH_OUT = f"grupo5/models/lgbm_line{LINE}_{TARGET}.txt"
 
 WANDB_PROJECT  = "pd1-c2526-team5"
 WANDB_RUN_NAME = f"lgbm-line{LINE}-{TARGET}"
 
-TRAIN_MONTHS   = range(1, 10)   
-VAL_MONTHS     = range(10, 13)  
+TRAIN_MONTHS   = range(1, 10)
+VAL_MONTHS     = range(10, 13)
 
 CAT_FEATURES = ["route_id", "direction", "category", "tipo_referente"]
 
 EXCLUDE_COLS = {
-    "date", "match_key", "stop_id", "merge_time", "timestamp_start", "is_unscheduled",
+    "date", "match_key", "stop_id", "merge_time", "timestamp_start",
+    "service_date", "trip_uid", "is_unscheduled",
     "target_delay_10m", "target_delay_20m", "target_delay_30m",
     "target_delay_45m", "target_delay_60m", "target_delay_end",
     "delta_delay_10m",  "delta_delay_20m",  "delta_delay_30m",
     "delta_delay_45m",  "delta_delay_60m",  "delta_delay_end",
     "alert_in_next_15m", "alert_in_next_30m", "seconds_to_next_alert",
+    "delay_minutes", "scheduled_time", "actual_time",
 }
+
+STOP_ID_COL = "stop_id"
 
 LGBM_PARAMS = {
     "objective":         "regression_l1",
@@ -87,6 +93,32 @@ def encode_categoricals(df_train: pd.DataFrame, df_val: pd.DataFrame) -> tuple[p
     return df_train, df_val
 
 
+def add_derived_features(df: pd.DataFrame) -> pd.DataFrame:
+    if "lagged_delay_1" in df.columns and "delay_seconds" in df.columns:
+        df["delay_velocity"] = df["delay_seconds"] - df["lagged_delay_1"]
+    if "lagged_delay_1" in df.columns and "lagged_delay_2" in df.columns:
+        df["delay_acceleration"] = (
+            (df["delay_seconds"] - df["lagged_delay_1"])
+            - (df["lagged_delay_1"] - df["lagged_delay_2"])
+        )
+    if "delay_seconds" in df.columns and "stops_to_end" in df.columns:
+        df["delay_x_stops_remaining"] = df["delay_seconds"] * df["stops_to_end"]
+    if "delay_seconds" in df.columns and "scheduled_time_to_end" in df.columns:
+        df["delay_ratio"] = df["delay_seconds"] / (df["scheduled_time_to_end"] + 1)
+    if "hour" in df.columns:
+        df["is_rush_hour"] = df["hour"].isin([7, 8, 9, 17, 18, 19]).astype(int)
+    return df
+
+
+def add_target_encoding(df_train: pd.DataFrame, df_val: pd.DataFrame,
+                        col: str, target: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+    means = df_train.groupby(col)[target].mean()
+    global_mean = df_train[target].mean()
+    df_train[f"{col}_target_enc"] = df_train[col].map(means)
+    df_val[f"{col}_target_enc"]   = df_val[col].map(means).fillna(global_mean)
+    return df_train, df_val
+
+
 def get_features(df: pd.DataFrame) -> list[str]:
     return [c for c in df.columns if c not in EXCLUDE_COLS]
 
@@ -103,20 +135,17 @@ def compute_metrics(y_true, y_pred, prefix="") -> dict:
     }
 
 
-
 def main():
-  
     print(f"\nCargando dataset de line={LINE}...")
     print(f"  Ruta: pd1/{DATA_PATH}")
     df = download_df_parquet(ACCESS_KEY, SECRET_KEY, DATA_PATH)
     print(f"  {len(df):,} filas  ~{df.memory_usage(deep=True).sum() / 1e6:.0f} MB\n")
 
-   
     df = df[df["is_unscheduled"] == False]
     df = df.dropna(subset=[TARGET])
+    df = df[df["scheduled_time_to_end"] < 1800]
     print(f"  Tras filtrado: {len(df):,} filas\n")
 
-   
     df["date"] = pd.to_datetime(df["date"])
     df_train = df[df["date"].dt.month.isin(TRAIN_MONTHS)].copy()
     df_val   = df[df["date"].dt.month.isin(VAL_MONTHS)].copy()
@@ -125,20 +154,21 @@ def main():
     print(f"  Train (meses {list(TRAIN_MONTHS)}): {len(df_train):,} filas")
     print(f"  Val   (meses {list(VAL_MONTHS)}):  {len(df_val):,} filas\n")
 
-   
     df_train, df_val = encode_categoricals(df_train, df_val)
+    df_train, df_val = add_target_encoding(df_train, df_val, STOP_ID_COL, TARGET)
+    df_train = add_derived_features(df_train)
+    df_val   = add_derived_features(df_val)
 
-    
     feats = get_features(df_train)
     print(f"Features usadas ({len(feats)}): {feats}\n")
 
     X_train, y_train = df_train[feats], df_train[TARGET]
     X_val,   y_val   = df_val[feats],   df_val[TARGET]
 
-    
     wandb.init(
         project=WANDB_PROJECT,
         name=WANDB_RUN_NAME,
+        group="prediccion-retrasos-end",
         config={
             **LGBM_PARAMS,
             "line":         LINE,
@@ -151,7 +181,6 @@ def main():
         }
     )
 
-  
     print(f"Entrenando LightGBM (line={LINE}, target={TARGET})...")
     lgb_train = lgb.Dataset(X_train, label=y_train)
     lgb_val   = lgb.Dataset(X_val,   label=y_val, reference=lgb_train)
@@ -170,7 +199,6 @@ def main():
 
     print(f"\nMejor iteración: {model.best_iteration}")
 
-    
     y_pred_train = model.predict(X_train, num_iteration=model.best_iteration)
     y_pred_val   = model.predict(X_val,   num_iteration=model.best_iteration)
 
@@ -182,7 +210,6 @@ def main():
 
     wandb.log({**metrics_train, **metrics_val, "best_iteration": model.best_iteration})
 
-    
     importance = pd.DataFrame({
         "feature":    model.feature_name(),
         "importance": model.feature_importance(importance_type="gain"),
