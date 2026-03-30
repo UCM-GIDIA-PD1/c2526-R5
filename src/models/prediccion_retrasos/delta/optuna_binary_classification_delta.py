@@ -34,7 +34,8 @@ ACCESS_KEY = os.environ.get("MINIO_ACCESS_KEY", "")
 SECRET_KEY = os.environ.get("MINIO_SECRET_KEY", "")
 
 YEAR          = 2025
-MONTHS        = range(1, 2)
+MONTHS        = range(1, 13)
+SAMPLE_FRAC   = 0.5
 DATA_TEMPLATE = "grupo5/final/year={year}/month={month:02d}/dataset_final.parquet"
 
 TARGET_DELTA  = "delta_delay_10m"   # cambiar para otro horizonte: _20m, _30m, _45m, _60m, etc.
@@ -63,7 +64,7 @@ CAT_FEATURES = [
 ]
 
 # Configuración de Optuna
-N_TRIALS = 20 # Número de combinaciones automáticas que probará antes de detenerse
+N_TRIALS = 30 # Número de combinaciones automáticas que probará antes de detenerse
 
 
 
@@ -75,8 +76,10 @@ def load_months(months: range) -> pd.DataFrame:
             df = download_df_parquet(ACCESS_KEY, SECRET_KEY, path)
             total = len(df)
             df = df.dropna(subset=[TARGET_DELTA])
+            if SAMPLE_FRAC < 1.0:
+                df = df.sample(frac=SAMPLE_FRAC, random_state=SEED)
             mb = df.memory_usage(deep=True).sum() / 1e6
-            print(f"  month={month:02d}  {total:>10,} filas  ->  {len(df):>10,} tras filtrado  ~{mb:.0f} MB")
+            print(f"  month={month:02d}  {total:>10,} filas  ->  {len(df):>10,} muestreadas  ~{mb:.0f} MB")
             dfs.append(df)
         except Exception as e:
             print(f"  month={month:02d}  no encontrado ({e})")
