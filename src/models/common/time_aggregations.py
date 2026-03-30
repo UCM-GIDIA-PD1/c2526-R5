@@ -107,6 +107,7 @@ def aggregate_by_x_min(tiempo = '60'):
             
         except Exception as e:
            print(f"\n ERROR al leer el mes {mes}: {type(e).__name__} - {e}")
+           continue
         
         df_mes_agrupado = agrupar_mes(df_mes, tiempo)
         lista_df_agrupados.append(df_mes_agrupado)
@@ -118,10 +119,32 @@ def aggregate_by_x_min(tiempo = '60'):
     df_final = pd.concat(lista_df_agrupados, ignore_index=True)
     del lista_df_agrupados
     gc.collect()
+<<<<<<< HEAD
 
     print("Calculando variables de retraso previo (lags)...")
     
 
+=======
+    print("Calculando variables de retraso previo (lags)...")
+
+    df_final = df_final.sort_values(by=['stop_id', 'route_id', 'direction', 'merge_time'])
+
+    columna_objetivo = 'delay_seconds_mean'
+    grupos = df_final.groupby(['stop_id', 'route_id', 'direction'])
+
+    df_final['delay_1_before'] = grupos[columna_objetivo].shift(1)
+    df_final['delay_2_before'] = grupos[columna_objetivo].shift(2)
+    df_final['delay_3_before'] = grupos[columna_objetivo].shift(3)
+
+    # Verificar que el lag es realmente de 30/60/90 minutos
+    tiempo_anterior = grupos['merge_time'].shift(1)
+    diff_minutos = (df_final['merge_time'] - tiempo_anterior).dt.total_seconds() / 60
+
+    # Si el hueco es mayor de 35 minutos, el lag no es fiable → NaN
+    df_final.loc[diff_minutos > 35, 'delay_1_before'] = np.nan
+    df_final.loc[diff_minutos > 65, 'delay_2_before'] = np.nan
+    df_final.loc[diff_minutos > 95, 'delay_3_before'] = np.nan
+>>>>>>> 7c8c460346be5f0dbefdc159b41b926706d7134d
     print("Cargando datos a MinIO...")
     upload_df_parquet(access_key, secret_key, OUTPUT_PATH.format(time=tiempo), df_final)
 
