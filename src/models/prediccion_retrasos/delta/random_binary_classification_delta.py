@@ -35,7 +35,7 @@ SECRET_KEY = os.environ.get("MINIO_SECRET_KEY", "")
 
 YEAR          = 2025
 MONTHS        = range(1, 13)
-SAMPLE_FRAC   = 0.5
+SAMPLE_FRAC   = 0.1  
 DATA_TEMPLATE = "grupo5/final/year={year}/month={month:02d}/dataset_final.parquet"
 
 TARGET_DELTA  = "delta_delay_10m"   # cambiar para otro horizonte: _20m, _30m, _45m, _60m, etc.
