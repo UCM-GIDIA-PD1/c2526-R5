@@ -118,6 +118,10 @@ def aggregate_by_x_min(tiempo = '60'):
     df_final = pd.concat(lista_df_agrupados, ignore_index=True)
     del lista_df_agrupados
     gc.collect()
+
+    print("Calculando variables de retraso previo (lags)...")
+    
+
     print("Cargando datos a MinIO...")
     upload_df_parquet(access_key, secret_key, OUTPUT_PATH.format(time=tiempo), df_final)
 
@@ -126,7 +130,7 @@ def aggregate_by_x_min(tiempo = '60'):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Script para agregar datos del transporte en ventanas de tiempo.")
     
-    # Añadimos el argumento --time (por defecto '60' como tenías en tu función)
+    # Añadimos el argumento --time
     parser.add_argument(
         '--time', 
         type=str, 
