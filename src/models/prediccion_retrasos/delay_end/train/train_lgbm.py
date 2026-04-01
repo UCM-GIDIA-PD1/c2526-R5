@@ -1,15 +1,15 @@
 """
-Entrenamiento LightGBM — Predicción de retraso en parada (Objetivo 1)
+Entrenamiento LightGBM — Predicción de retraso al final del viaje (Objetivo 2)
 
-Predice target_delay_30m = retraso absoluto del tren en los próximos 30 min.
-Usa Huber loss para robustez frente a outliers + aprendizaje eficiente en la zona central.
+Predice target_delay_end = retraso absoluto del tren al terminar el viaje.
+Solo usa registros con scheduled_time_to_end < 1800s (menos de 30 min restantes).
 
 Validación temporal:
     Train  → meses 01–09  (enero–septiembre 2025)
     Val    → meses 10–12  (octubre–diciembre 2025)
 
 Uso:
-    uv run python -m src.models.prediccion_retrasos.train_lgbm_stop_delay
+    uv run python -m src.models.prediccion_retrasos.delay_end.train.train_lgbm
 
 Variables de entorno necesarias:
     MINIO_ACCESS_KEY
@@ -31,19 +31,18 @@ from src.common.minio_client import download_df_parquet
 warnings.filterwarnings("ignore")
 
 
-
 ACCESS_KEY = os.environ["MINIO_ACCESS_KEY"]
 SECRET_KEY = os.environ["MINIO_SECRET_KEY"]
 
 YEAR           = 2025
-TRAIN_MONTHS   = range(1, 10)   
-VAL_MONTHS     = range(10, 13)  
-TARGET         = "target_delay_30m"
+TRAIN_MONTHS   = range(1, 10)
+VAL_MONTHS     = range(10, 13)
+TARGET         = "target_delay_end"
 DATA_TEMPLATE  = "grupo5/final/year={year}/month={month:02d}/dataset_final.parquet"
-MODEL_PATH_OUT = "grupo5/models/lgbm_stop_delay30m_huber.txt"
+MODEL_PATH_OUT = "grupo5/models/lgbm_stop_delay_end.txt"
 
 WANDB_PROJECT  = "pd1-c2526-team5"
-WANDB_RUN_NAME = "lgbm-stop-delay30m-huber"
+WANDB_RUN_NAME = "lgbm-stop-delay-end"
 
 
 EXCLUDE_COLS = {
@@ -51,46 +50,46 @@ EXCLUDE_COLS = {
     "date", "match_key", "stop_id", "merge_time", "timestamp_start",
     "service_date", "trip_uid",
     "is_unscheduled",
-    # Todos los targets (el nuestro se excluye automáticamente al ser TARGET)
+    # Todos los targets
     "target_delay_10m", "target_delay_20m", "target_delay_30m",
     "target_delay_45m", "target_delay_60m", "target_delay_end",
-    # Deltas (todos, son targets futuros = leakage)
+    # Deltas (leakage)
     "delta_delay_10m",  "delta_delay_20m",  "delta_delay_30m",
     "delta_delay_45m",  "delta_delay_60m",  "delta_delay_end",
     # Leakage
     "alert_in_next_15m", "alert_in_next_30m", "seconds_to_next_alert",
-    # Redundantes: delay_minutes = delay_seconds/60, scheduled/actual_time redundan con hour_sin/cos
+    # Redundantes
     "delay_minutes", "scheduled_time", "actual_time",
 }
 
 
 CAT_FEATURES = ["route_id", "direction", "category", "tipo_referente"]
+STOP_ID_COL  = "stop_id"
 
 
 LGBM_PARAMS = {
-    "objective":         "huber",          # Robusto a outliers, más eficiente que L1 en zona central
-    "alpha":             0.9,              # Huber delta: L2 dentro de ±alpha, L1 fuera
+    "objective":         "regression_l1",
     "metric":            "mae",
     "learning_rate":     0.1,
     "num_leaves":        511,
-    "min_child_samples": 100,
-    "feature_fraction":  0.976,
-    "bagging_fraction":  0.839,
+    "max_depth":         -1,
+    "min_child_samples": 200,
+    "min_split_gain":    0.24014,
+    "feature_fraction":  0.91404,
+    "bagging_fraction":  0.6773,
     "bagging_freq":      5,
-    "reg_alpha":         1.578,
-    "reg_lambda":        1.803,
+    "reg_alpha":         1.49806,
+    "reg_lambda":        0.62436,
     "n_jobs":            -1,
     "verbose":           -1,
     "seed":              42,
 }
-NUM_BOOST_ROUND = 5000
+NUM_BOOST_ROUND = 10000
 EARLY_STOPPING  = 100
 SAMPLE_FRAC = 1.0
 
+
 def load_months(months: range) -> pd.DataFrame:
-    """Descarga, filtra y concatena los parquets mensuales indicados.
-    Filtra is_unscheduled y nulls en target MES A MES para no acumular RAM innecesaria.
-    """
     dfs = []
     for month in months:
         path = DATA_TEMPLATE.format(year=YEAR, month=month)
@@ -99,9 +98,10 @@ def load_months(months: range) -> pd.DataFrame:
             total = len(df)
             df = df[df["is_unscheduled"] == False]
             df = df.dropna(subset=[TARGET])
+            df = df[df["scheduled_time_to_end"] < 1800]
             if SAMPLE_FRAC < 1.0:
                 df = df.sample(frac=SAMPLE_FRAC, random_state=42)
-            
+
             for col in CAT_FEATURES:
                 if col in df.columns:
                     df[col] = df[col].astype("category")
@@ -114,14 +114,9 @@ def load_months(months: range) -> pd.DataFrame:
 
 
 def encode_categoricals(df_train: pd.DataFrame, df_val: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Codifica las columnas categóricas como enteros usando el vocabulario del train.
-    Los valores desconocidos en val se mapean a -1.
-    Evita el problema de pd.concat convirtiendo categorías a str.
-    """
     for col in CAT_FEATURES:
         if col not in df_train.columns:
             continue
-        
         vocab = {v: i for i, v in enumerate(df_train[col].astype(str).unique())}
         df_train[col] = df_train[col].astype(str).map(vocab).astype(int)
         df_val[col]   = df_val[col].astype(str).map(vocab).fillna(-1).astype(int)
@@ -129,7 +124,6 @@ def encode_categoricals(df_train: pd.DataFrame, df_val: pd.DataFrame) -> tuple[p
 
 
 def add_derived_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Añade features derivadas: velocidad y aceleración del retraso."""
     if "lagged_delay_1" in df.columns and "delay_seconds" in df.columns:
         df["delay_velocity"] = df["delay_seconds"] - df["lagged_delay_1"]
     if "lagged_delay_1" in df.columns and "lagged_delay_2" in df.columns:
@@ -137,11 +131,25 @@ def add_derived_features(df: pd.DataFrame) -> pd.DataFrame:
             (df["delay_seconds"] - df["lagged_delay_1"])
             - (df["lagged_delay_1"] - df["lagged_delay_2"])
         )
+    if "delay_seconds" in df.columns and "stops_to_end" in df.columns:
+        df["delay_x_stops_remaining"] = df["delay_seconds"] * df["stops_to_end"]
+    if "delay_seconds" in df.columns and "scheduled_time_to_end" in df.columns:
+        df["delay_ratio"] = df["delay_seconds"] / (df["scheduled_time_to_end"] + 1)
+    if "hour" in df.columns:
+        df["is_rush_hour"] = df["hour"].isin([7, 8, 9, 17, 18, 19]).astype(int)
     return df
 
 
+def add_target_encoding(df_train: pd.DataFrame, df_val: pd.DataFrame,
+                        col: str, target: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+    means = df_train.groupby(col)[target].mean()
+    global_mean = df_train[target].mean()
+    df_train[f"{col}_target_enc"] = df_train[col].map(means)
+    df_val[f"{col}_target_enc"]   = df_val[col].map(means).fillna(global_mean)
+    return df_train, df_val
+
+
 def get_features(df: pd.DataFrame) -> list[str]:
-    """Devuelve las columnas del df que son features (todo menos EXCLUDE_COLS y TARGET)."""
     return [c for c in df.columns if c not in EXCLUDE_COLS and c != TARGET]
 
 
@@ -159,7 +167,6 @@ def compute_metrics(y_true, y_pred, prefix="") -> dict:
 
 
 def main():
-    # 1. Cargar datos
     print(f"\nCargando datos de entrenamiento (meses {list(TRAIN_MONTHS)})...")
     df_train = load_months(TRAIN_MONTHS)
     print(f"  Total: {len(df_train):,} filas\n")
@@ -169,12 +176,11 @@ def main():
     print(f"  Total: {len(df_val):,} filas\n")
 
     df_train, df_val = encode_categoricals(df_train, df_val)
+    df_train, df_val = add_target_encoding(df_train, df_val, STOP_ID_COL, TARGET)
 
-    # Feature engineering: velocidad y aceleración del retraso
     df_train = add_derived_features(df_train)
     df_val   = add_derived_features(df_val)
     print(f"Tras filtrado + FE  —  train: {len(df_train):,}  |  val: {len(df_val):,}\n")
-
 
     feats = get_features(df_train)
     print(f"Features usadas ({len(feats)}): {feats}\n")
@@ -182,10 +188,10 @@ def main():
     X_train, y_train = df_train[feats], df_train[TARGET]
     X_val,   y_val   = df_val[feats],   df_val[TARGET]
 
-   
     wandb.init(
         project=WANDB_PROJECT,
         name=WANDB_RUN_NAME,
+        group="prediccion-retrasos-end",
         config={
             **LGBM_PARAMS,
             "target":       TARGET,
@@ -197,7 +203,6 @@ def main():
         }
     )
 
-   
     print(f"Entrenando LightGBM (target={TARGET})...")
     lgb_train = lgb.Dataset(X_train, label=y_train)
     lgb_val   = lgb.Dataset(X_val,   label=y_val,   reference=lgb_train)
@@ -216,7 +221,6 @@ def main():
 
     print(f"\nMejor iteración: {model.best_iteration}")
 
-   
     y_pred_train = model.predict(X_train, num_iteration=model.best_iteration)
     y_pred_val   = model.predict(X_val,   num_iteration=model.best_iteration)
 
@@ -228,7 +232,6 @@ def main():
 
     wandb.log({**metrics_train, **metrics_val, "best_iteration": model.best_iteration})
 
-   
     importance = pd.DataFrame({
         "feature":    model.feature_name(),
         "importance": model.feature_importance(importance_type="gain"),
@@ -236,8 +239,6 @@ def main():
 
     print(f"\nTop 15 features:\n{importance.head(15).to_string(index=False)}")
     wandb.log({"feature_importance": wandb.Table(dataframe=importance.head(20))})
-
-   
 
     wandb.finish()
     print("\nEntrenamiento completado.")

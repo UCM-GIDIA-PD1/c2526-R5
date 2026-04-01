@@ -18,7 +18,7 @@ import wandb
 from optuna.integration.wandb import WeightsAndBiasesCallback
 from sklearn.model_selection import train_test_split
 from lightgbm import LGBMClassifier
-from sklearn.metrics import f1_score
+from sklearn.metrics import f1_score, precision_score, recall_score
 
 from src.common.minio_client import download_df_parquet
 
@@ -95,7 +95,7 @@ def cargar_y_preparar_datos():
     # IMPORTANTE: shuffle=False para datos temporales
     return train_test_split(X, y, test_size=0.2, shuffle=False)
 
-def objective(trial, X_train, X_test, y_train, y_test):
+def objective(trial, X_train, X_test, y_train, y_test, labels):
     # 1. Definir el espacio de búsqueda (Search Space)
     param = {
         'n_estimators': trial.suggest_int('n_estimators', 50, 300),
@@ -111,47 +111,70 @@ def objective(trial, X_train, X_test, y_train, y_test):
         'verbose': -1
     }
 
-    # 2. Entrenar el modelo
+    # ==========================================
+    # INICIAR W&B PARA ESTE INTENTO ESPECÍFICO
+    # ==========================================
+    run = wandb.init(
+        project="pd1-c2526-team5",
+        group="optuna-lgbm-tuning-intervalos-group60min-obj-target10m", 
+        name=f"trial_{trial.number}", 
+        config=param, 
+        reinit=True 
+    )
+
+
     modelo = LGBMClassifier(**param)
     modelo.fit(
         X_train, y_train,
         eval_set=[(X_test, y_test)],
     )
 
-    # 3. Evaluar
     y_pred = modelo.predict(X_test)
+    y_probas = modelo.predict_proba(X_test)
     
-    # Usamos f1_score macro porque nos importan todas las clases por igual (incluso los retrasos raros)
-    score = f1_score(y_test, y_pred, average='macro')
+    f1 = f1_score(y_test, y_pred, average='macro')
+    precision = precision_score(y_test, y_pred, average='macro', zero_division=0)
+    recall = recall_score(y_test, y_pred, average='macro', zero_division=0)
     
-    return score
+    wandb.log({
+        "f1_macro": f1,
+        "precision_macro": precision,
+        "recall_macro": recall
+    })
+
+    wandb.sklearn.plot_classifier(
+        modelo, 
+        X_train, X_test, 
+        y_train, y_test, 
+        y_pred, y_probas, 
+        labels=labels,
+        model_name=f"LGBM_Trial_{trial.number}",
+        feature_names=X_train.columns.tolist()
+    )
+
+    run.finish()
+    
+    return f1
 
 if __name__ == "__main__":
-    # 1. Preparar datos una sola vez
     X_train, X_test, y_train, y_test = cargar_y_preparar_datos()
 
-    # 2. Configurar Weights & Biases para rastrear Optuna
-    WANDB_PROJECT  = "pd1-c2526-team5"
-    wandb_kwargs = {"project": WANDB_PROJECT, "name": "optuna-lgbm-tuning"}
-    wandbc = WeightsAndBiasesCallback(metric_name="f1_macro", wandb_kwargs=wandb_kwargs)
+    labels = [
+        'Adelantado (>1 min)', 'Puntual (-1 a 1 min)', 
+        'Retraso leve (1-3 min)', 'Retraso moderado (3-5 min)', 
+        'Retraso grave (5-7.5 min)', 'Retraso muy grave (>7.5 min)'
+    ]
 
-    # 3. Crear el estudio de Optuna
-    # Direction="maximize" porque queremos el F1-Score más alto posible
     study = optuna.create_study(direction='maximize', study_name="lgbm_retrasos_tuning")
     
     print("Iniciando la búsqueda de hiperparámetros...")
-    # Ejecutamos 30 pruebas (puedes subirlo a 50 o 100 si tienes tiempo/recursos)
     study.optimize(
-        lambda trial: objective(trial, X_train, X_test, y_train, y_test), 
-        n_trials=30, 
-        callbacks=[wandbc]
+        lambda trial: objective(trial, X_train, X_test, y_train, y_test, labels), 
+        n_trials=30
     )
 
-    # 4. Resultados finales
     print("\n--- ¡Búsqueda completada! ---")
-    print(f"Mejor F1-Score: {study.best_value}")
-    print("Mejores hiperparámetros:")
+    print(f"Mejor F1-Score general: {study.best_value}")
+    print("Mejores hiperparámetros encontrados:")
     for key, value in study.best_params.items():
         print(f"    {key}: {value}")
-
-    wandb.finish()

@@ -15,7 +15,7 @@ Validación y Optimización:
     Val    → 20% de los datos históricos (eval_set / early stopping)
    
 Uso:
-    python -m src.models.prediccion_retrasos.modelo_por_intervalos
+    python src/models/prediccion_retrasos/modelo_por_intervalos.py
 
 Variables de entorno necesarias:
     MINIO_ACCESS_KEY
@@ -26,9 +26,7 @@ Variables de entorno necesarias:
 import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import classification_report, confusion_matrix
-from sklearn.ensemble import HistGradientBoostingClassifier
 import os
 import wandb
 from lightgbm import LGBMClassifier
@@ -74,7 +72,7 @@ WANDB_PROJECT  = "pd1-c2526-team5"
 
 wandb.init(
     project= WANDB_PROJECT, 
-    name="hist-gradient-boosting-60min", 
+    name="hist-gradient-boosting-60min-nuevas-variables", 
     notes="Primer modelo por intervalos con HistGradientBoosting"
 )
 
