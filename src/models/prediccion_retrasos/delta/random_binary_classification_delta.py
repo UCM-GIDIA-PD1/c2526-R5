@@ -38,7 +38,7 @@ MONTHS        = range(1, 13)
 SAMPLE_FRAC   = 0.1  
 DATA_TEMPLATE = "grupo5/final/year={year}/month={month:02d}/dataset_final.parquet"
 
-TARGET_DELTA  = "delta_delay_10m"   # cambiar para otro horizonte: _20m, _30m, _45m, _60m, etc.
+TARGET_DELTA  = "delta_delay_45m"   # cambiar para otro horizonte: _20m, _30m, _45m, _60m, etc.
 TARGET        = "target_mejora"
 
 TRAIN_RATIO   = 0.70
@@ -64,7 +64,7 @@ CAT_FEATURES = [
 ]
 
 # Configuración de Random Search
-N_TRIALS = 20 # Número de combinaciones automáticas que probará antes de detenerse
+N_TRIALS = 30 # Número de combinaciones automáticas que probará antes de detenerse
 
 
 
@@ -197,7 +197,8 @@ def run_random_search():
             "n_jobs":            -1,
             "verbose":           -1,
             "seed":              SEED,
-            "is_unbalance":      class_ratio < 0.3 or class_ratio > 0.7
+            "is_unbalance":      class_ratio < 0.3 or class_ratio > 0.7,
+            "feature_pre_filter": False,
         }
         
         num_boost_round = random.choice(range(1500, 4500, 500))
