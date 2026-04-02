@@ -43,7 +43,7 @@ DATA_TEMPLATE  = "grupo5/final/year={year}/month={month:02d}/dataset_final.parqu
 MODEL_PATH_OUT = "grupo5/models/lgbm_stop_delay30m_huber.txt"
 
 WANDB_PROJECT  = "pd1-c2526-team5"
-WANDB_RUN_NAME = "lgbm-stop-delay30m-huber"
+WANDB_RUN_NAME = "lgbm-stop-delay30m-optuna-params"
 
 
 EXCLUDE_COLS = {
@@ -71,21 +71,21 @@ STOP_ID_COL  = "stop_id"
 LGBM_PARAMS = {
     "objective":         "regression_l1",
     "metric":            "mae",
-    "learning_rate":     0.1,
+    "learning_rate":     0.05,
     "num_leaves":        511,
-    "max_depth":         -1,
-    "min_child_samples": 200,
-    "min_split_gain":    0.24014,
-    "feature_fraction":  0.91404,
-    "bagging_fraction":  0.6773,
+    "max_depth":         16,
+    "min_child_samples": 100,
+    "min_split_gain":    0.37042771510661165,
+    "feature_fraction":  0.7426288737567357,
+    "bagging_fraction":  0.8165370010747616,
     "bagging_freq":      5,
-    "reg_alpha":         1.49806,
-    "reg_lambda":        0.62436,
+    "reg_alpha":         1.5346393797283635,
+    "reg_lambda":        1.2926631392622208,
     "n_jobs":            -1,
     "verbose":           -1,
     "seed":              42,
 }
-NUM_BOOST_ROUND = 10000
+NUM_BOOST_ROUND = 20000
 EARLY_STOPPING  = 100
 SAMPLE_FRAC = 1.0
 
@@ -144,8 +144,6 @@ def add_derived_features(df: pd.DataFrame) -> pd.DataFrame:
         df["delay_x_stops_remaining"] = df["delay_seconds"] * df["stops_to_end"]
     if "delay_seconds" in df.columns and "scheduled_time_to_end" in df.columns:
         df["delay_ratio"] = df["delay_seconds"] / (df["scheduled_time_to_end"] + 1)
-    if "hour" in df.columns:
-        df["is_rush_hour"] = df["hour"].isin([7, 8, 9, 17, 18, 19]).astype(int)
     return df
 
 
