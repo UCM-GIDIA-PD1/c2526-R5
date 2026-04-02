@@ -1,5 +1,5 @@
 """
-Entrenamiento LGBM — Predicción de retraso por intervalos
+Entrenamiento LGBM — Predicción de retraso por intervalos (Optimizado)
 
 Predice el tiempo de retraso absoluto (en segundos) de un tren al llegar a una estación.
     Objetivo: 'clase_retraso' :
@@ -15,7 +15,7 @@ Validación y Optimización:
     Val    → 20% de los datos históricos (eval_set / early stopping)
    
 Uso:
-    python src/models/prediccion_retrasos/modelo_por_intervalos.py
+    uv run python src/models/prediccion_retrasos/prediccion_por_intervalos/train/train_modelo_por_intervalos.py
 
 Variables de entorno necesarias:
     MINIO_ACCESS_KEY
@@ -26,19 +26,15 @@ Variables de entorno necesarias:
 import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import classification_report, confusion_matrix
+from sklearn.metrics import classification_report, accuracy_score, f1_score, precision_score, recall_score
 import os
 import wandb
 from lightgbm import LGBMClassifier
 from wandb.integration.lightgbm import wandb_callback
-from sklearn.metrics import classification_report, accuracy_score
 
 from src.common.minio_client import download_df_parquet
 
-
-
 def procesar(df):
-
     df['hora'] = df['merge_time'].dt.hour
     df['minuto'] = df['merge_time'].dt.minute
     df['dia_semana'] = df['merge_time'].dt.dayofweek # Lunes=0, Domingo=6
@@ -54,11 +50,7 @@ def procesar(df):
 
     return df
 
-
-
-
 # 1. Cargar los datos
-
 INPUT_PATH = 'grupo5/aggregations/DataFrameGroupedByMin=60.parquet'
     
 ACCESS_KEY = os.getenv('MINIO_ACCESS_KEY')
@@ -71,22 +63,25 @@ print('Todo cargado correctamente')
 WANDB_PROJECT  = "pd1-c2526-team5"
 
 wandb.init(
-    project= WANDB_PROJECT, 
-    name="hist-gradient-boosting-60min-nuevas-variables", 
-    notes="Primer modelo por intervalos con HistGradientBoosting"
+    project=WANDB_PROJECT, 
+    group="modelos-retraso-clasificacion",
+    name="lgbm-60min-target_10m_max-optimizado", 
+    notes="Modelo LGBM entrenado con hiperparámetros optimizados para target_delay_10m_max"
 )
 
-# Definimos los hiperparámetros en W&B para trackearlos
+# Definimos los hiperparámetros obtenidos de la búsqueda en W&B
 config = wandb.config
-config.max_iter = 100
-config.learning_rate = 0.1
-config.random_state = 42
-config.class_weight = 'balanced'
-
+config.n_estimators = 300
+config.learning_rate = 0.07871471055008013
+config.num_leaves = 110
+config.max_depth = 15
+config.min_child_samples = 68
+config.subsample = 0.6461196867570685
+config.colsample_bytree = 0.6595256666381162
+config.class_weight = None
+config.random_state = 42 # Fijo para reproducibilidad
 
 # 2. Definir los intervalos de retraso (Binning)
-# Asumimos que la variable objetivo está en segundos.
-
 bins = [-np.inf, -60, 60, 180, 300, 450, np.inf]
 labels = [
     'Adelantado (>1 min)', 
@@ -100,7 +95,6 @@ labels = [
 # 3. Creamos la nueva columna objetivo categórica
 columna_objetivo = 'target_delay_10m_max'
 df['clase_retraso'] = pd.cut(df[columna_objetivo], bins=bins, labels=labels)
-
 
 df_procesado = procesar(df)
 
@@ -151,25 +145,34 @@ X = X.fillna(0)
 y = y.dropna() 
 X = X.loc[y.index] 
 
-# 5. Dividir los datos en Entrenamiento y Prueba
-# IMPORTANTE: shuffle=False para datos temporales (entrenamos con el pasado, probamos con el futuro)
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
+
+X_temp, X_test, y_temp, y_test = train_test_split(X, y, test_size=0.15, shuffle=False)
+
+X_train, X_val, y_train, y_val = train_test_split(X_temp, y_temp, test_size=0.1764, shuffle=False)
+
+X_train_full = pd.concat([X_train, X_val])
+y_train_full = pd.concat([y_train, y_val])
 
 # 6. Entrenar el Modelo
 print("Entrenando el modelo...")
 
 # ==========================================
-# 1. ENTRENAR CON LOS PARÁMETROS DE W&B
+# 1. ENTRENAR CON LOS PARÁMETROS ÓPTIMOS
 # ==========================================
 modelo = LGBMClassifier(
-    n_estimators=config.max_iter,
+    n_estimators=config.n_estimators,
     learning_rate=config.learning_rate,
-    random_state=config.random_state,
-    class_weight=config.class_weight
+    num_leaves=config.num_leaves,
+    max_depth=config.max_depth,
+    min_child_samples=config.min_child_samples,
+    subsample=config.subsample,
+    colsample_bytree=config.colsample_bytree,
+    class_weight=config.class_weight,
+    random_state=config.random_state
 )
 
 modelo.fit(
-    X_train, y_train,
+    X_train_full, y_train_full,
     eval_set=[(X_test, y_test)], # Para ver el progreso en test
     callbacks=[wandb_callback()] 
 )
@@ -177,27 +180,39 @@ modelo.fit(
 # ==========================================
 # 2. PREDICCIONES Y LOG EN W&B
 # ==========================================
+# ==========================================
+# 2. PREDICCIONES Y LOG EN W&B
+# ==========================================
 print("Generando predicciones y enviando datos a W&B...")
 y_pred = modelo.predict(X_test)
-y_probas = modelo.predict_proba(X_test) # Necesario para las curvas ROC de W&B
+y_probas = modelo.predict_proba(X_test) 
 
-# Loguear métricas simples
+# Calcular métricas explícitamente usando el promedio 'macro'
 acc = accuracy_score(y_test, y_pred)
-wandb.log({"accuracy": acc})
+f1_macro = f1_score(y_test, y_pred, average='macro')
+precision_macro = precision_score(y_test, y_pred, average='macro', zero_division=0)
+recall_macro = recall_score(y_test, y_pred, average='macro', zero_division=0)
+
+# Loguear todas las métricas personalizadas a W&B
+wandb.log({
+    "accuracy": acc,
+    "f1_macro": f1_macro,
+    "precision_macro": precision_macro,
+    "recall_macro": recall_macro
+})
 
 # Imprimir reporte en la consola local
 print("\n--- Reporte de Clasificación ---")
 print(classification_report(y_test, y_pred))
 
 # Crear dashboard automático de Scikit-Learn
-# Esto generará: Matriz de confusión, Feature Importance, Curvas ROC y Precision-Recall
 wandb.sklearn.plot_classifier(
     modelo, 
     X_train, X_test, 
     y_train, y_test, 
     y_pred, y_probas, 
     labels=labels,
-    model_name="HistGradientBoosting_Retrasos",
+    model_name="LGBM_Retrasos_Optimizado",
     feature_names=X.columns.tolist()
 )
 
