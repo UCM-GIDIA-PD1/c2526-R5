@@ -21,16 +21,14 @@ PATH = f"grupo5/aggregations/DataFrameGroupedByMin=30.parquet"
 
 ENTITY = "pd1-c2526-team5"
 PROJECT = "pd1-c2526-team5"
-NAME = "modelo_agregado_30min_XGBoost"
+NAME = "optuna_modelo_agregado_30min_XGBoost"
 
 FEATURES = [
-    "delay_seconds_mean", "lagged_delay_1_mean", "lagged_delay_2_mean",
-    "route_rolling_delay_mean", "actual_headway_seconds_mean", "seconds_since_last_alert_mean",
-    "afecta_previo_max", "hour_sin_first", "hour_cos_first",
+    "route_rolling_delay_mean", "actual_headway_seconds_mean", 
+    "seconds_since_last_alert_mean", "hour_sin_first", "hour_cos_first",
     "dow_first", "is_weekend_max", "is_unscheduled_max",
     "temp_extreme_max", "stops_to_end_mean", "scheduled_time_to_end_mean",
-    "num_updates_sum", "match_key_nunique", "direction",
-    "route_id", "delay_acceleration",
+    "num_updates_sum", "match_key_nunique", "route_id", 'delay_3_before',
 ]
 TARGET = 'alert_in_next_15m_max'
 
@@ -57,7 +55,7 @@ def filtro_comportamiento_alterado(df):
 
 
 def encoding_categorias(X_train, X_val, X_test):
-    cols_ordinal_enc = ['route_id', 'direction']   
+    cols_ordinal_enc = ['route_id']   
 
     enc = OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1)
     X_train[cols_ordinal_enc] = enc.fit_transform(X_train[cols_ordinal_enc])
@@ -103,9 +101,6 @@ def main():
     df = df.dropna(subset=[TARGET])
     df[TARGET] = df[TARGET].astype(int)
     df = filtro_comportamiento_alterado(df)
-
-    # Nueva feature
-    df['delay_acceleration'] = df['delay_seconds_mean'] - df['lagged_delay_1_mean']
 
     df_sorted = df.sort_values('merge_time')
 
