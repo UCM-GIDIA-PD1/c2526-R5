@@ -39,7 +39,7 @@ DATA_TEMPLATE = "grupo5/final/year={year}/month={month:02d}/dataset_final.parque
 
 WANDB_PROJECT = "pd1-c2526-team5"
 SAMPLE_FRAC   = 0.5
-NUM_RUNS      = 50
+NUM_RUNS      = 15
 SEED          = 42
 
 CAT_FEATURES = ["route_id", "direction", "category", "tipo_referente"]
@@ -94,6 +94,7 @@ def sample_params(rng: random.Random) -> dict:
         "reg_alpha":         draw(PARAM_SPACE["reg_alpha"]),
         "reg_lambda":        draw(PARAM_SPACE["reg_lambda"]),
         "min_split_gain":    draw(PARAM_SPACE["min_split_gain"]),
+        "feature_pre_filter": False,
         "n_jobs":            -1,
         "verbose":           -1,
         "seed":              42,
@@ -150,8 +151,6 @@ def add_derived_features(df: pd.DataFrame) -> pd.DataFrame:
         df["delay_x_stops_remaining"] = df["delay_seconds"] * df["stops_to_end"]
     if "delay_seconds" in df.columns and "scheduled_time_to_end" in df.columns:
         df["delay_ratio"] = df["delay_seconds"] / (df["scheduled_time_to_end"] + 1)
-    if "hour" in df.columns:
-        df["is_rush_hour"] = df["hour"].isin([7, 8, 9, 17, 18, 19]).astype(int)
     return df
 
 

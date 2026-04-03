@@ -38,7 +38,7 @@ MONTHS        = range(1, 13)
 SAMPLE_FRAC   = 0.1  
 DATA_TEMPLATE = "grupo5/final/year={year}/month={month:02d}/dataset_final.parquet"
 
-TARGET_DELTA  = "delta_delay_10m"   # cambiar para otro horizonte: _20m, _30m, _45m, _60m, etc.
+TARGET_DELTA  = "delta_delay_45m"   # cambiar para otro horizonte: _20m, _30m, _45m, _60m, etc.
 TARGET        = "target_mejora"
 
 TRAIN_RATIO   = 0.70
@@ -188,6 +188,7 @@ def objective(trial, X_train, y_train, X_val, y_val, X_test, y_test, feats):
         "n_jobs":            -1,
         "verbose":           -1,
         "seed":              SEED,
+        "feature_pre_filter": False,
     }
     
     num_boost_round = trial.suggest_int("num_boost_round", 1500, 4000, step=500)
