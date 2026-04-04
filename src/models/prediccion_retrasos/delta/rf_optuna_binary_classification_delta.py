@@ -1,20 +1,20 @@
 """
-Optimización de hiperparámetros automatizada con Random Search para LightGBM
+Optimización de hiperparámetros automatizada con Optuna para Random Forest
 Registra cada prueba (trial) como una ejecución independiente en Weights & Biases.
 
 Uso:
-    uv run python -m src.models.prediccion_retrasos.delta.random_binary_classification_delta
+    uv run python -m src.models.prediccion_retrasos.delta.rf_optuna_binary_classification_delta
 """
 
 import gc
 import os
-import random
 import warnings
 
-import lightgbm as lgb
 import numpy as np
 import pandas as pd
+import optuna
 import wandb
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import (
     accuracy_score,
     average_precision_score,
@@ -35,10 +35,10 @@ SECRET_KEY = os.environ.get("MINIO_SECRET_KEY", "")
 
 YEAR          = 2025
 MONTHS        = range(1, 13)
-SAMPLE_FRAC   = 0.1  
+SAMPLE_FRAC   = 0.1
 DATA_TEMPLATE = "grupo5/final/year={year}/month={month:02d}/dataset_final.parquet"
 
-TARGET_DELTA  = "delta_delay_end"   # cambiar para otro horizonte: _20m, _30m, _45m, _60m, etc.
+TARGET_DELTA  = "delta_delay_10m"   # cambiar para otro horizonte: _20m, _30m, _45m, _60m, etc.
 TARGET        = "target_mejora"
 
 TRAIN_RATIO   = 0.70
@@ -63,9 +63,8 @@ CAT_FEATURES = [
     "is_alert_just_published", "has_alert",
 ]
 
-# Configuración de Random Search
-N_TRIALS = 20 # Número de combinaciones automáticas que probará antes de detenerse
-
+# Configuración de Optuna
+N_TRIALS = 20  # Número de combinaciones automáticas que probará antes de detenerse
 
 
 def load_months(months: range) -> pd.DataFrame:
@@ -126,10 +125,10 @@ def compute_metrics(y_true, y_prob, y_pred, prefix="") -> dict:
     }
 
 
-# ── Parte de Random Search ──────────────────────────────────────────────────
+# ── Parte de Optuna ────────────────────────────────────────────────────────────
 
 def load_and_prepare_data():
-    """Carga los datos una única vez en memoria para acelerar todos los intentos."""
+    """Carga los datos una única vez en memoria para acelerar todos los intentos de Optuna."""
     print(f"\nCargando datos (meses {list(MONTHS)})...")
     df = load_months(MONTHS)
     print(f"  Total: {len(df):,} filas\n")
@@ -157,113 +156,94 @@ def load_and_prepare_data():
 
     df_train, df_val, df_test = encode_categoricals(df_train, df_val, df_test)
     feats = get_features(df_train)
-    
+
     X_train, y_train = df_train[feats], df_train[TARGET]
     X_val,   y_val   = df_val[feats],   df_val[TARGET]
     X_test,  y_test  = df_test[feats],  df_test[TARGET]
-    
+
     return X_train, y_train, X_val, y_val, X_test, y_test, feats
 
 
-def run_random_search():
+def objective(trial, X_train, y_train, X_val, y_val, X_test, y_test, feats):
+    """
+    Función de evaluación de Optuna.
+    En cada iteración, elige al azar (Bayes) unos parámetros, entrena, predice y lo envía a Wandb.
+    """
+    # 1. Optuna elige los hiperparámetros
+    class_ratio  = y_train.mean()
+    class_weight = "balanced" if class_ratio < 0.3 or class_ratio > 0.7 else None
+
+    params = {
+        "n_estimators":     trial.suggest_int("n_estimators", 100, 1000, step=100),
+        "max_depth":        trial.suggest_categorical("max_depth", [None, 5, 10, 15, 20, 30]),
+        "min_samples_leaf": trial.suggest_int("min_samples_leaf", 10, 200),
+        "max_features":     trial.suggest_categorical("max_features", ["sqrt", "log2", 0.5, 0.8]),
+        "bootstrap":        trial.suggest_categorical("bootstrap", [True, False]),
+        "n_jobs":           -1,
+        "random_state":     SEED,
+        "class_weight":     class_weight,
+    }
+
+    # 2. Iniciar sesión de Weights and Biases
+    run = wandb.init(
+        project=WANDB_PROJECT,
+        name=f"rf_optuna_binary_delta_{TARGET_DELTA}",
+        reinit=True,
+        config={**params, "model": "RandomForest"}
+    )
+
+    # 3. Entrenar el modelo
+    model = RandomForestClassifier(**params)
+    model.fit(X_train, y_train)
+
+    # 4. Calcular Métricas
+    y_prob_val = model.predict_proba(X_val)[:, 1]
+    y_pred_val = (y_prob_val >= 0.5).astype(int)
+    m_val = compute_metrics(y_val, y_prob_val, y_pred_val, prefix="val_")
+
+    # Umbral óptimo por F1
+    thresholds = np.arange(0.20, 0.80, 0.01)
+    f1s = [f1_score(y_val, (y_prob_val >= t).astype(int), zero_division=0) for t in thresholds]
+    best_idx       = int(np.argmax(f1s))
+    best_threshold = float(thresholds[best_idx])
+
+    y_prob_test = model.predict_proba(X_test)[:, 1]
+    y_pred_test_opt = (y_prob_test >= best_threshold).astype(int)
+    m_test_opt = compute_metrics(y_test, y_prob_test, y_pred_test_opt, prefix="test_opt_")
+
+    # 5. Guardar todas las métricas en WandB
+    wandb.log({
+        **m_val,
+        **m_test_opt,
+        "best_threshold": best_threshold,
+        "val_best_f1":    f1s[best_idx],
+        "target_delta":   TARGET_DELTA,
+    })
+
+    run.finish()
+
+    # Devolvemos el AUC de validación a Optuna
+    return m_val["val_roc_auc"]
+
+
+def run_optuna_study():
     X_train, y_train, X_val, y_val, X_test, y_test, feats = load_and_prepare_data()
-    class_ratio = y_train.mean()
-    
-    print(f"\nIniciando Búsqueda Aleatoria en {N_TRIALS} pruebas consecutivas...")
-    
-    best_auc = 0.0
-    best_params_overall = {}
-    best_trial_num = -1
 
-    lgb_train = lgb.Dataset(X_train, label=y_train)
-    lgb_val   = lgb.Dataset(X_val,   label=y_val, reference=lgb_train)
+    # direction="maximize" para obtener luego el máximo AUC posible
+    study = optuna.create_study(direction="maximize", study_name=f"RF_Optuna_{TARGET_DELTA}")
 
-    for trial_idx in range(N_TRIALS):
-        # 1. Elección Aleatoria de hiperparámetros
-        params = {
-            "objective":         "binary",
-            "metric":            "auc",
-            "boosting_type":     "gbdt",
-            "extra_trees":       random.choice([True, False]),
-            "learning_rate":     10 ** random.uniform(np.log10(0.01), np.log10(0.1)),
-            "num_leaves":        random.randint(50, 200),
-            "max_depth":         random.randint(5, 9),
-            "min_child_samples": random.randint(50, 250),
-            "feature_fraction":  round(random.uniform(0.6, 1.0), 2),
-            "bagging_fraction":  round(random.uniform(0.6, 1.0), 2),
-            "bagging_freq":      random.randint(1, 10),
-            "reg_alpha":         round(random.uniform(0.0, 5.0), 2),
-            "reg_lambda":        round(random.uniform(0.0, 5.0), 2),
-            "n_jobs":            -1,
-            "verbose":           -1,
-            "seed":              SEED,
-            "is_unbalance":      class_ratio < 0.3 or class_ratio > 0.7,
-            "feature_pre_filter": False,
-        }
-        
-        num_boost_round = random.choice(range(1500, 4500, 500))
-        early_stopping  = random.choice(range(50, 175, 25))
-        
-        # 2. Iniciar sesión de Weights and Biases
-        run = wandb.init(
-            project=WANDB_PROJECT,
-            name=f"random_binary_delta_{TARGET_DELTA}",
-            reinit=True,
-            config={**params, "num_boost_round": num_boost_round, "early_stopping": early_stopping}
-        )
+    print(f"\nIniciando Optuna:")
+    study.optimize(
+        lambda trial: objective(trial, X_train, y_train, X_val, y_val, X_test, y_test, feats),
+        n_trials=N_TRIALS
+    )
 
-        # 3. Entrenar el modelo
-        model = lgb.train(
-            params,
-            lgb_train,
-            num_boost_round=num_boost_round,
-            valid_sets=[lgb_train, lgb_val],
-            valid_names=["train", "val"],
-            callbacks=[
-                lgb.early_stopping(early_stopping, verbose=False),
-            ],
-        )
-
-        # 4. Calcular Métricas
-        y_prob_val  = model.predict(X_val,  num_iteration=model.best_iteration)
-        y_pred_val  = (y_prob_val  >= 0.5).astype(int)
-        m_val  = compute_metrics(y_val,  y_prob_val,  y_pred_val,  prefix="val_")
-
-        # Umbral óptimo por F1
-        thresholds = np.arange(0.20, 0.80, 0.01)
-        f1s = [f1_score(y_val, (y_prob_val >= t).astype(int), zero_division=0) for t in thresholds]
-        best_idx       = int(np.argmax(f1s))
-        best_threshold = float(thresholds[best_idx])
-
-        y_prob_test = model.predict(X_test, num_iteration=model.best_iteration)
-        y_pred_test_opt = (y_prob_test >= best_threshold).astype(int)
-        m_test_opt = compute_metrics(y_test, y_prob_test, y_pred_test_opt, prefix="test_opt_")
-
-        # 5. Guardar todas las métricas en WandB
-        wandb.log({
-            **m_val,
-            **m_test_opt,
-            "best_iteration": model.best_iteration,
-            "best_threshold": best_threshold,
-            "val_best_f1": f1s[best_idx],
-            "target_delta": TARGET_DELTA,
-        })
-        
-        run.finish()
-
-        # Registro del mejor modelo localmente
-        val_auc = m_val["val_roc_auc"]
-        if val_auc > best_auc:
-            best_auc = val_auc
-            best_params_overall = {**params, "num_boost_round": num_boost_round, "early_stopping": early_stopping}
-            best_trial_num = trial_idx
-
-    print("\nBÚSQUEDA ALEATORIA TERMINADA")
-    print(f"La mejor prueba ha sido la Número: {best_trial_num}")
-    print(f"Mejor AUC en validación: {best_auc}")
-    print("Los hiperparámetros ganadores fueron:")
-    for k, v in best_params_overall.items():
+    print("\nBÚSQUEDA DE OPTUNA TERMINADA")
+    print(f"La mejor prueba ha sido la Trial: {study.best_trial.number}")
+    print(f"Mejor AUC en validación: {study.best_value}")
+    print("El modelo de Optuna determinó que los mejores hiperparámetros fueron:")
+    for k, v in study.best_params.items():
         print(f"    '{k}': {v},")
 
 if __name__ == "__main__":
-    run_random_search()
+    run_optuna_study()
