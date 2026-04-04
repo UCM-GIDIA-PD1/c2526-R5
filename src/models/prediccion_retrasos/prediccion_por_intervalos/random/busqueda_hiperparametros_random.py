@@ -2,7 +2,7 @@
 Optimización de Hiperparámetros LGBM (Random Search) — Predicción de retraso por intervalos
 
 Uso:
-    uv run python src/models/prediccion_retrasos/busqueda_hiperparametros_random.py
+    uv run python src/models/prediccion_retrasos/prediccion_por_intervalos/random/busqueda_hiperparametros_random.py
 
 Variables de entorno necesarias:
     MINIO_ACCESS_KEY
@@ -79,30 +79,25 @@ def cargar_y_preparar_datos():
     y = y.dropna() 
     X = X.loc[y.index] 
 
-    # Mantener tamaño de muestra para agilizar
+    
     if len(X) > 1000000:
         X = X.tail(1000000)
         y = y.tail(1000000)
 
-    # IMPORTANTE: shuffle=False para datos temporales
     X_temp, X_test, y_temp, y_test = train_test_split(X, y, test_size=0.15, shuffle=False)
     
-    # 2. Del 85% restante, separamos un 15% (sobre el total) para Validación
     X_train, X_val, y_train, y_val = train_test_split(X_temp, y_temp, test_size=0.1764, shuffle=False)
 
-    # Devolvemos solo Train y Val.
     return X_train, X_val, y_train, y_val
 
 def evaluate_random_combination(trial_number, param_dict, X_train, X_val, y_train, y_val, labels):
     """
     Función que entrena el modelo con una combinación específica y loguea en W&B.
     """
-    # Fijamos parámetros fijos de control
     param_dict['random_state'] = 42
     param_dict['n_jobs'] = -1
     param_dict['verbose'] = -1
 
-    # Iniciar W&B para esta combinación específica
     run = wandb.init(
         project="pd1-c2526-team5",
         group="optuna-lgbm-tuning-intervalos-group60min-obj-target10m", 

@@ -2,7 +2,7 @@
 Optimización de Hiperparámetros Logistic Regression — Predicción de retraso por intervalos
 
 Uso:
-    python -m src.models.prediccion_retrasos.optimizacion_logreg
+    uv run python src/models/prediccion_retrasos/prediccion_por_intervalos/optuna/optuna_regresion_logistica_intervalos.py
 
 Variables de entorno necesarias:
     MINIO_ACCESS_KEY
@@ -42,8 +42,7 @@ def cargar_y_preparar_datos():
 
     print('Cargando datos desde MinIO...')
     df = download_df_parquet(ACCESS_KEY, SECRET_KEY, INPUT_PATH)
-    
-    # 2. Definir intervalos
+
     bins = [-np.inf, -60, 60, 180, 300, 450, np.inf]
     labels = [
         'Adelantado (>1 min)', 'Puntual (-1 a 1 min)', 
@@ -90,8 +89,7 @@ def cargar_y_preparar_datos():
     # IMPORTANTE: Escalado de datos para Regresión Logística
     print("Escalando características con StandardScaler...")
     scaler = StandardScaler()
-    
-    # Mantenemos el formato DataFrame para no perder los nombres de las columnas (necesario para plots de W&B)
+
     X_train_scaled = pd.DataFrame(scaler.fit_transform(X_train), columns=X_train.columns, index=X_train.index)
     X_val_scaled = pd.DataFrame(scaler.transform(X_val), columns=X_val.columns, index=X_val.index)
 
@@ -99,7 +97,6 @@ def cargar_y_preparar_datos():
 
 
 def objective(trial, X_train, X_val, y_train, y_val, labels):
-    # 1. Definir el espacio de búsqueda para Regresión Logística
     penalty = trial.suggest_categorical('penalty', ['l1', 'l2', 'elasticnet'])
     
     param = {
@@ -107,7 +104,7 @@ def objective(trial, X_train, X_val, y_train, y_val, labels):
         'penalty': penalty,
         'solver': 'saga', # 'saga' es la mejor opción para datasets grandes y soporta l1, l2 y elasticnet
         'class_weight': trial.suggest_categorical('class_weight', ['balanced', None]),
-        'max_iter': 500,  # Aumentado para asegurar convergencia con 'saga'
+        'max_iter': 500,  
         'random_state': 42,
         'n_jobs': -1
     }
@@ -131,7 +128,6 @@ def objective(trial, X_train, X_val, y_train, y_val, labels):
 
     modelo = LogisticRegression(**param)
     
-    # OJO: LogisticRegression en sklearn no utiliza eval_set para early stopping
     modelo.fit(X_train, y_train)
     
     y_pred = modelo.predict(X_val)
