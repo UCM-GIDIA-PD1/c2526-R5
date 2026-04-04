@@ -38,7 +38,7 @@ MONTHS        = range(1, 13)
 SAMPLE_FRAC   = 0.1
 DATA_TEMPLATE = "grupo5/final/year={year}/month={month:02d}/dataset_final.parquet"
 
-TARGET_DELTA  = "delta_delay_10m"   # cambiar para otro horizonte: _20m, _30m, _45m, _60m, etc.
+TARGET_DELTA  = "delta_delay_210m"   # cambiar para otro horizonte: _20m, _30m, _45m, _60m, etc.
 TARGET        = "target_mejora"
 
 TRAIN_RATIO   = 0.70
@@ -178,11 +178,11 @@ def run_random_search():
     for trial_idx in range(N_TRIALS):
         # 1. Elección Aleatoria de hiperparámetros
         params = {
-            "n_estimators":     random.choice(range(100, 1100, 100)),
-            "max_depth":        random.choice([None, 5, 10, 15, 20, 30]),
-            "min_samples_leaf": random.randint(10, 200),
-            "max_features":     random.choice(["sqrt", "log2", 0.5, 0.8]),
-            "bootstrap":        random.choice([True, False]),
+            "n_estimators":     random.choice(range(50, 300, 50)),
+            "max_depth":        random.choice([5, 10, 15, 20]),
+            "min_samples_leaf": random.randint(20, 200),
+            "max_features":     random.choice(["sqrt", "log2"]),
+            "bootstrap":        True,
             "n_jobs":           -1,
             "random_state":     SEED,
             "class_weight":     class_weight,

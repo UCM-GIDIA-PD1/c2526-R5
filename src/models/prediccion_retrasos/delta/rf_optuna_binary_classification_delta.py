@@ -64,7 +64,7 @@ CAT_FEATURES = [
 ]
 
 # Configuración de Optuna
-N_TRIALS = 20  # Número de combinaciones automáticas que probará antes de detenerse
+N_TRIALS = 15  # Número de combinaciones automáticas que probará antes de detenerse
 
 
 def load_months(months: range) -> pd.DataFrame:
@@ -174,11 +174,11 @@ def objective(trial, X_train, y_train, X_val, y_val, X_test, y_test, feats):
     class_weight = "balanced" if class_ratio < 0.3 or class_ratio > 0.7 else None
 
     params = {
-        "n_estimators":     trial.suggest_int("n_estimators", 100, 1000, step=100),
-        "max_depth":        trial.suggest_categorical("max_depth", [None, 5, 10, 15, 20, 30]),
-        "min_samples_leaf": trial.suggest_int("min_samples_leaf", 10, 200),
-        "max_features":     trial.suggest_categorical("max_features", ["sqrt", "log2", 0.5, 0.8]),
-        "bootstrap":        trial.suggest_categorical("bootstrap", [True, False]),
+        "n_estimators":     trial.suggest_int("n_estimators", 50, 300, step=50),
+        "max_depth":        trial.suggest_categorical("max_depth", [5, 10, 15, 20]),
+        "min_samples_leaf": trial.suggest_int("min_samples_leaf", 20, 200),
+        "max_features":     trial.suggest_categorical("max_features", ["sqrt", "log2"]),
+        "bootstrap":        True,
         "n_jobs":           -1,
         "random_state":     SEED,
         "class_weight":     class_weight,
