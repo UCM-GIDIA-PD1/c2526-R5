@@ -105,8 +105,6 @@ def add_derived_features(df: pd.DataFrame) -> pd.DataFrame:
         df["delay_x_stops_remaining"] = df["delay_seconds"] * df["stops_to_end"]
     if "delay_seconds" in df.columns and "scheduled_time_to_end" in df.columns:
         df["delay_ratio"] = df["delay_seconds"] / (df["scheduled_time_to_end"] + 1)
-    if "hour" in df.columns:
-        df["is_rush_hour"] = df["hour"].isin([7, 8, 9, 17, 18, 19]).astype(int)
     return df
 
 
