@@ -132,9 +132,21 @@ def agregar_por_linea(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
     df_linea['delay_acceleration_linea'] = (
         df_linea['delay_mean_linea'] - df_linea['lag1_mean_linea']
     )
+    df_linea['headway_cv'] = (
+        df_linea['headway_std_linea'] / df_linea['headway_mean_linea'].clip(lower=1)
+    )
+    df_linea['colapso_linea'] = (
+        (df_linea['pct_paradas_retrasadas'] > 0.5).astype(int)
+    )
+    df_linea['delay_x_aceleracion'] = (
+        df_linea['delay_mean_linea'] * df_linea['delay_acceleration_linea'].clip(lower=0)
+    )
  
     del df_work
     gc.collect()
+
+    df_linea = df_linea.dropna(subset=[TARGET])
+    df_linea[TARGET] = df_linea[TARGET].astype(int)
  
     print(f"Dataset por línea: {len(df_linea):,} filas x {df_linea.shape[1]} columnas")
     print(f"Reducción: {len(df):,} → {len(df_linea):,} filas")
@@ -172,6 +184,7 @@ def agregar_features_rolling_retraso(df_linea: pd.DataFrame) -> pd.DataFrame:
 def get_features(cat_cols: list[str], df: pd.DataFrame) -> list[str]:
     """Features a nivel de línea"""
     features = [
+        'headway_cv', 'colapso_linea', 'delay_x_aceleracion',
         # Retraso global de la línea
         'delay_mean_linea', 'delay_max_linea', 'delay_std_linea',
         # Proporción de paradas afectadas
@@ -189,7 +202,7 @@ def get_features(cat_cols: list[str], df: pd.DataFrame) -> list[str]:
         # Identidad de la línea
         'route_id', 'direction',
         # Historial de alertas a nivel de línea
-        #  'seg_desde_ultima_alerta_linea',
+        'seg_desde_ultima_alerta_linea',
     ] + cat_cols
     return [f for f in features if f in df.columns]
 
@@ -246,8 +259,6 @@ def main():
     print("\nRe-agregando a nivel de línea...")
     df, cat_cols = agregar_por_linea(df)
     df = agregar_features_rolling_retraso(df)
-    df = df.dropna(subset=[TARGET])
-    df[TARGET] = df[TARGET].astype(int)
 
     # ── Features ──────────────────────────────────────────────────────────────
     FEATURES = get_features(cat_cols, df)

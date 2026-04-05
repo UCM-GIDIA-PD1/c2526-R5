@@ -46,7 +46,8 @@ Uso:
 import gc
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import LabelEncoder
+from sklearn.dummy import DummyClassifier
+from sklearn.preprocessing import OrdinalEncoder
 from sklearn.metrics import (
     average_precision_score, roc_auc_score,
     f1_score, recall_score, precision_score,
@@ -66,6 +67,25 @@ FEATURES_SIN = [
 ]
 
 FEATURES_CON = FEATURES_SIN + ['seg_desde_ultima_alerta_linea']
+
+
+def filtro_comportamiento_alterado(df):
+    """Elimina paradas que no tienen alerta en 15 minutos 
+    y sí tienen en 30 minutos y por tanto alteran la línea"""
+
+    mask_positivos = df[TARGET] == 1
+    mask_negativos_limpios = (
+        df['alert_in_next_30m_max'] == 0            
+    )
+
+    df = df[mask_positivos | mask_negativos_limpios]
+    df = df.reset_index(drop=True)
+
+    print(f"Dataset tras filtrar negativos ambiguos: {len(df):,} filas")
+    print(f"  Positivos: {df[TARGET].sum():,} ({df[TARGET].mean()*100:.1f}%)")
+    print(f"  Negativos: {(df[TARGET]==0).sum():,} ({(df[TARGET]==0).mean()*100:.1f}%)")
+
+    return df
 
 
 def agregar_por_linea(df_raw):
@@ -137,15 +157,30 @@ def agregar_por_linea(df_raw):
         f'{TARGET_RAW}_max':                 TARGET,
     })
 
+
+    # Features derivadas
+    df_linea['pct_paradas_retrasadas']   = (
+        df_linea['paradas_retrasadas'] / df_linea['total_paradas'].clip(lower=1)
+    )
+    df_linea['delay_acceleration_linea'] = (
+        df_linea['delay_mean_linea'] - df_linea['lag1_mean_linea']
+    )
+    df_linea['headway_cv'] = (
+        df_linea['headway_std_linea'] / df_linea['headway_mean_linea'].clip(lower=1)
+    )
+    df_linea['colapso_linea'] = (
+        (df_linea['pct_paradas_retrasadas'] > 0.5).astype(int)
+    )
+    df_linea['delay_x_aceleracion'] = (
+        df_linea['delay_mean_linea'] * df_linea['delay_acceleration_linea'].clip(lower=0)
+    )
+
+
     del df
     gc.collect()
 
     df_linea['pct_paradas_retrasadas']   = df_linea['paradas_retrasadas'] / df_linea['total_paradas'].clip(lower=1)
     df_linea['delay_acceleration_linea'] = df_linea['delay_mean_linea'] - df_linea['delay_1_before_mean']
-
-    for col in ['route_id', 'direction']:
-        le = LabelEncoder()
-        df_linea[col] = le.fit_transform(df_linea[col].astype(str).fillna('UNKNOWN'))
 
     df_linea['seg_desde_ultima_alerta_linea'] = df_linea['seg_desde_ultima_alerta_linea'].fillna(999999)
     df_linea = df_linea.dropna(subset=[TARGET])
@@ -155,6 +190,69 @@ def agregar_por_linea(df_raw):
     print(f"Positivos: {df_linea[TARGET].mean()*100:.1f}%")
 
     return df_linea
+
+
+def agregar_features_rolling_retraso(df_linea: pd.DataFrame) -> pd.DataFrame:
+    df_linea = df_linea.sort_values(['route_id', 'direction', 'merge_time'])
+    grp = df_linea.groupby(['route_id', 'direction'])
+
+    # Media móvil del retraso en las últimas 4 ventanas
+    df_linea['delay_rolling4_mean'] = (
+        grp['delay_mean_linea']
+        .transform(lambda x: x.shift(1).rolling(4, min_periods=1).mean())
+    )
+
+    # Máximo retraso en las últimas 4 ventanas
+    df_linea['delay_rolling4_max'] = (
+        grp['delay_max_linea']
+        .transform(lambda x: x.shift(1).rolling(4, min_periods=1).max())
+    )
+
+    # Varianza del headway reciente 
+    df_linea['headway_rolling4_std'] = (
+        grp['headway_mean_linea']
+        .transform(lambda x: x.shift(1).rolling(4, min_periods=1).std())
+        .fillna(0)
+    )
+
+    return df_linea
+
+def get_features(cat_cols: list[str], df: pd.DataFrame) -> list[str]:
+    """Features a nivel de línea"""
+    features = [
+        'headway_cv', 'colapso_linea', 'delay_x_aceleracion',
+        # Retraso global de la línea
+        'delay_mean_linea', 'delay_max_linea', 'delay_std_linea',
+        # Proporción de paradas afectadas
+        'paradas_retrasadas', 'pct_paradas_retrasadas',
+        # Evolución temporal del retraso
+        'lag1_mean_linea', 'lag2_mean_linea', 'delay_3_before_mean',
+        # Tendencia: ¿el retraso está empeorando?
+        'delay_acceleration_linea', 'delay_rolling4_mean', 'delay_rolling4_max', 'headway_rolling4_std',
+        # Irregularidad del servicio
+        'headway_mean_linea', 'headway_std_linea',
+        # Actividad operativa
+        'is_unscheduled', 'num_updates', 'match_key_nunique',
+        # Temporales
+        'hour_sin', 'hour_cos', 'dow', 'is_weekend',
+        # Identidad de la línea
+        'route_id', 'direction',
+        # Historial de alertas a nivel de línea
+        'seg_desde_ultima_alerta_linea',
+    ]
+    return [f for f in features if f in df.columns]
+
+
+def encoding_categorias(X_train, X_val, X_test):
+    cols_ordinal_enc = ['route_id', 'direction']   
+
+    enc = OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1)
+    X_train[cols_ordinal_enc] = enc.fit_transform(X_train[cols_ordinal_enc])
+    X_val[cols_ordinal_enc]   = enc.transform(X_val[cols_ordinal_enc])
+    X_test[cols_ordinal_enc]  = enc.transform(X_test[cols_ordinal_enc])
+
+    print("✓ Encoding completado")
+    return X_train, X_val, X_test
 
 
 def split_temporal(df_linea, train_frac=0.70, val_frac=0.15):
@@ -173,6 +271,32 @@ def split_temporal(df_linea, train_frac=0.70, val_frac=0.15):
     print(f"Positivos -> train: {train[TARGET].mean()*100:.1f}% | val: {val[TARGET].mean()*100:.1f}% | test: {test[TARGET].mean()*100:.1f}%")
 
     return train, val, test
+
+
+def evaluar_baseline(X_train, y_train, X_test, y_test):
+    """Entrena un clasificador aleatorio estratificado y devuelve sus métricas."""
+    print("\nEvaluando baseline estratificado...")
+
+    baseline = DummyClassifier(strategy="stratified", random_state=42)
+    baseline.fit(X_train, y_train)
+
+    y_prob_base  = baseline.predict_proba(X_test)[:, 1]
+    y_pred_base  = baseline.predict(X_test)
+
+    metricas = {
+        "baseline_pr_auc":   average_precision_score(y_test, y_prob_base),
+        "baseline_roc_auc":  roc_auc_score(y_test, y_prob_base),
+        "baseline_f1":       f1_score(y_test, y_pred_base, zero_division=0),
+        "baseline_recall":   recall_score(y_test, y_pred_base, zero_division=0),
+        "baseline_precision":precision_score(y_test, y_pred_base, zero_division=0),
+    }
+
+    print(f"  PR-AUC   baseline: {metricas['baseline_pr_auc']:.4f}  "
+          f"(≈ prevalencia positivos: {y_test.mean():.4f})")
+    print(f"  ROC-AUC  baseline: {metricas['baseline_roc_auc']:.4f}")
+    print(f"  F1       baseline: {metricas['baseline_f1']:.4f}")
+
+    return metricas, y_prob_base
 
 
 def evaluar_test(model, X, y):
