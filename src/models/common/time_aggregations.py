@@ -119,12 +119,6 @@ def aggregate_by_x_min(tiempo = '60'):
     df_final = pd.concat(lista_df_agrupados, ignore_index=True)
     del lista_df_agrupados
     gc.collect()
-<<<<<<< HEAD
-
-    print("Calculando variables de retraso previo (lags)...")
-    
-
-=======
     print("Calculando variables de retraso previo (lags)...")
 
     df_final = df_final.sort_values(by=['stop_id', 'route_id', 'direction', 'merge_time'])
@@ -144,7 +138,6 @@ def aggregate_by_x_min(tiempo = '60'):
     df_final.loc[diff_minutos > 35, 'delay_1_before'] = np.nan
     df_final.loc[diff_minutos > 65, 'delay_2_before'] = np.nan
     df_final.loc[diff_minutos > 95, 'delay_3_before'] = np.nan
->>>>>>> 7c8c460346be5f0dbefdc159b41b926706d7134d
     print("Cargando datos a MinIO...")
     upload_df_parquet(access_key, secret_key, OUTPUT_PATH.format(time=tiempo), df_final)
 
