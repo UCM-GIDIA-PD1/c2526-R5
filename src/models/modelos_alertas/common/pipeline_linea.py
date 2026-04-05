@@ -60,7 +60,8 @@ FEATURES_SIN = [
     'delay_mean_linea', 'delay_max_linea', 'delay_std_linea', 'delay_acceleration_linea',
     'paradas_retrasadas', 'pct_paradas_retrasadas',
     'delay_1_before_mean', 'delay_2_before_mean', 'delay_3_before_mean',
-    'headway_mean_linea', 'headway_std_linea',
+    'delay_rolling4_mean', 'delay_rolling4_max',   # tendencia ultimas 2h
+    'headway_mean_linea', 'headway_std_linea', 'headway_rolling4_std',
     'is_unscheduled', 'num_updates', 'match_key_nunique',
     'hour_sin', 'hour_cos', 'dow', 'is_weekend',
     'route_id', 'direction',
@@ -158,13 +159,12 @@ def agregar_por_linea(df_raw):
     })
 
 
+    del df
+    gc.collect()
+
     # Features derivadas
-    df_linea['pct_paradas_retrasadas']   = (
-        df_linea['paradas_retrasadas'] / df_linea['total_paradas'].clip(lower=1)
-    )
-    df_linea['delay_acceleration_linea'] = (
-        df_linea['delay_mean_linea'] - df_linea['lag1_mean_linea']
-    )
+    df_linea['pct_paradas_retrasadas']   = df_linea['paradas_retrasadas'] / df_linea['total_paradas'].clip(lower=1)
+    df_linea['delay_acceleration_linea'] = df_linea['delay_mean_linea'] - df_linea['delay_1_before_mean']
     df_linea['headway_cv'] = (
         df_linea['headway_std_linea'] / df_linea['headway_mean_linea'].clip(lower=1)
     )
@@ -174,13 +174,6 @@ def agregar_por_linea(df_raw):
     df_linea['delay_x_aceleracion'] = (
         df_linea['delay_mean_linea'] * df_linea['delay_acceleration_linea'].clip(lower=0)
     )
-
-
-    del df
-    gc.collect()
-
-    df_linea['pct_paradas_retrasadas']   = df_linea['paradas_retrasadas'] / df_linea['total_paradas'].clip(lower=1)
-    df_linea['delay_acceleration_linea'] = df_linea['delay_mean_linea'] - df_linea['delay_1_before_mean']
 
     df_linea['seg_desde_ultima_alerta_linea'] = df_linea['seg_desde_ultima_alerta_linea'].fillna(999999)
     df_linea = df_linea.dropna(subset=[TARGET])
@@ -226,7 +219,7 @@ def get_features(cat_cols: list[str], df: pd.DataFrame) -> list[str]:
         # Proporción de paradas afectadas
         'paradas_retrasadas', 'pct_paradas_retrasadas',
         # Evolución temporal del retraso
-        'lag1_mean_linea', 'lag2_mean_linea', 'delay_3_before_mean',
+        'delay_1_before_mean', 'delay_2_before_mean', 'delay_3_before_mean',
         # Tendencia: ¿el retraso está empeorando?
         'delay_acceleration_linea', 'delay_rolling4_mean', 'delay_rolling4_max', 'headway_rolling4_std',
         # Irregularidad del servicio
