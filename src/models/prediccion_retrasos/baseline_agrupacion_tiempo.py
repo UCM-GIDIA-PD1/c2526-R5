@@ -9,6 +9,7 @@ from src.common.minio_client import download_df_parquet
 
 
 def baseline(tiempo = '60'):
+    """Funcion principal que orquesta la carga de datos, el entrenamiento y el registro de resultados."""
     ### 1. Cargar los datos ###
     INPUT_PATH = 'grupo5/aggregations/DataFrameGroupedByMin={tiempo}.parquet'
     ACCESS_KEY = os.getenv('MINIO_ACCESS_KEY')
