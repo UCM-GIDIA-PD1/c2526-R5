@@ -34,7 +34,7 @@ from sklearn.metrics import (
 from src.common.minio_client import download_df_parquet
 warnings.filterwarnings("ignore")
 
-# ── Configuración ──────────────────────────────────────────────────────────────
+# Configuracion
 
 ACCESS_KEY = os.environ["MINIO_ACCESS_KEY"]
 SECRET_KEY = os.environ["MINIO_SECRET_KEY"]
@@ -86,9 +86,10 @@ LGBM_PARAMS = {
 NUM_BOOST_ROUND = 3000
 EARLY_STOPPING  = 50
 
-# ── Funciones auxiliares ───────────────────────────────────────────────────────
+# Funciones auxiliares
 
 def load_months(months: range) -> pd.DataFrame:
+    """Descarga y filtra los datos de entrenamiento y validacion desde MinIO."""
     dfs = []
     for month in months:
         path = DATA_TEMPLATE.format(year=YEAR, month=month)
@@ -105,6 +106,7 @@ def load_months(months: range) -> pd.DataFrame:
 
 
 def add_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Añade variables derivadas del retraso y de las alertas para enriquecer el modelo."""
     df = df.copy()
     df["delay_change"]      = df["delay_seconds"] - df["lagged_delay_1"]
     df["delay_change_prev"] = df["lagged_delay_1"] - df["lagged_delay_2"]
@@ -119,6 +121,7 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def encode_categoricals(df_train, df_val, df_test):
+    """Convierte las columnas categoricas a enteros usando el vocabulario del conjunto de entrenamiento."""
     for col in CAT_FEATURES:
         if col not in df_train.columns:
             continue
@@ -130,10 +133,12 @@ def encode_categoricals(df_train, df_val, df_test):
 
 
 def get_features(df: pd.DataFrame) -> list:
+    """Devuelve la lista de columnas que se usan como features, excluyendo el target y columnas no relevantes."""
     return [c for c in df.columns if c not in EXCLUDE_COLS and c != TARGET]
 
 
 def compute_metrics(y_true, y_prob, y_pred, prefix="") -> dict:
+    """Calcula las metricas principales a partir de las predicciones y los valores reales."""
     return {
         f"{prefix}roc_auc":   round(roc_auc_score(y_true, y_prob), 4),
         f"{prefix}pr_auc":    round(average_precision_score(y_true, y_prob), 4),
@@ -144,9 +149,10 @@ def compute_metrics(y_true, y_prob, y_pred, prefix="") -> dict:
     }
 
 
-# ── Entrenamiento ──────────────────────────────────────────────────────────────
+# Entrenamiento
 
 def train():
+    """Funcion principal que orquesta la carga de datos, el entrenamiento y el registro de resultados."""
     run = wandb.init(
         project=WANDB_PROJECT,
         name=f"binary_delta_{TARGET_DELTA}",
@@ -294,7 +300,7 @@ def train():
     run.finish()
 
 
-# ── Punto de entrada ───────────────────────────────────────────────────────────
+# Punto de entrada
 
 if __name__ == "__main__":
     train()

@@ -30,7 +30,7 @@ from src.common.minio_client import download_df_parquet
 warnings.filterwarnings("ignore")
 optuna.logging.set_verbosity(optuna.logging.WARNING)
 
-# ── Configuracion ─────────────────────────────────────────────────────────────
+# Configuracion
 
 ACCESS_KEY = os.environ["MINIO_ACCESS_KEY"]
 SECRET_KEY = os.environ["MINIO_SECRET_KEY"]
@@ -43,7 +43,8 @@ DATA_TEMPLATE = "grupo5/final/year={year}/month={month:02d}/dataset_final.parque
 
 WANDB_PROJECT = "pd1-c2526-team5"
 SAMPLE_FRAC   = 0.5
-NUM_RUNS      = 30
+NUM_RUNS      = 5
+TRIAL_OFFSET  = 0
 SEED          = 42
 
 CAT_FEATURES = ["route_id", "direction", "category", "tipo_referente"]
@@ -60,9 +61,10 @@ EXCLUDE_COLS = {
     "delay_minutes", "scheduled_time", "actual_time",
 }
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+# Helpers
 
 def load_data():
+    """Descarga y filtra los datos de entrenamiento y validacion desde MinIO."""
     def _load(months):
         dfs = []
         for month in months:
@@ -87,6 +89,7 @@ def load_data():
 
 
 def encode_categoricals(df_train, df_val):
+    """Convierte las columnas categoricas a enteros usando el vocabulario del conjunto de entrenamiento."""
     for col in CAT_FEATURES:
         if col not in df_train.columns:
             continue
@@ -97,6 +100,7 @@ def encode_categoricals(df_train, df_val):
 
 
 def add_derived_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Calcula variables derivadas del retraso como velocidad, aceleracion e interacciones."""
     if "lagged_delay_1" in df.columns and "delay_seconds" in df.columns:
         df["delay_velocity"] = df["delay_seconds"] - df["lagged_delay_1"]
     if "lagged_delay_1" in df.columns and "lagged_delay_2" in df.columns:
@@ -112,6 +116,7 @@ def add_derived_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def add_target_encoding(df_train, df_val, col, target):
+    """Aplica target encoding sobre una columna usando la media del target por grupo calculada en train."""
     means = df_train.groupby(col)[target].mean()
     global_mean = df_train[target].mean()
     df_train[f"{col}_target_enc"] = df_train[col].map(means)
@@ -120,13 +125,15 @@ def add_target_encoding(df_train, df_val, col, target):
 
 
 def get_features(df):
+    """Devuelve la lista de columnas que se usan como features, excluyendo el target y columnas no relevantes."""
     return [c for c in df.columns if c not in EXCLUDE_COLS and c != TARGET]
 
 
-# ── Modelo MLP ────────────────────────────────────────────────────────────────
+# Modelo MLP
 
 class MLP(nn.Module):
     def __init__(self, input_dim: int, hidden_layers: list[int], dropout: float):
+        """Construye las capas de la red segun la arquitectura indicada."""
         super().__init__()
         layers = []
         prev = input_dim
@@ -143,7 +150,7 @@ class MLP(nn.Module):
         return self.net(x).squeeze(-1)
 
 
-# ── Precargar datos ───────────────────────────────────────────────────────────
+# Precargar datos
 
 print("Precargando datos (se hace una sola vez para todos los trials)...")
 df_train_global, df_val_global = load_data()
@@ -171,9 +178,10 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Device: {device}\n")
 
 
-# ── Funcion objetivo de Optuna ────────────────────────────────────────────────
+# Funcion objetivo de Optuna
 
 def objective(trial: optuna.Trial) -> float:
+    """Entrena un MLP con los hiperparametros propuestos por Optuna y devuelve el MAE en validacion."""
     torch.manual_seed(SEED)
     np.random.seed(SEED)
 
@@ -238,30 +246,33 @@ def objective(trial: optuna.Trial) -> float:
     rmse = np.sqrt(mean_squared_error(y_val_np, y_pred))
     r2   = r2_score(y_val_np, y_pred)
 
-    wandb.init(
-        project=WANDB_PROJECT,
-        name=f"optuna-mlp-end-trial{trial.number}",
-        group="prediccion-retrasos-end",
-        config={
-            "n_layers": n_layers, "hidden_layers": hidden_layers,
-            "dropout": dropout, "learning_rate": learning_rate,
-            "weight_decay": weight_decay, "batch_size": batch_size,
-            "trial": trial.number,
-        },
-        reinit=True,
-    )
-    wandb.log({
-        "val_mae_s":  round(mae, 2),
-        "val_mae_min": round(mae / 60, 2),
-        "val_rmse_s": round(rmse, 2),
-        "val_r2":     round(r2, 4),
-    })
-    wandb.finish()
+    try:
+        wandb.init(
+            project=WANDB_PROJECT,
+            name=f"optuna-mlp-end-trial{trial.number + TRIAL_OFFSET}",
+            group="prediccion-retrasos-end",
+            config={
+                "n_layers": n_layers, "hidden_layers": hidden_layers,
+                "dropout": dropout, "learning_rate": learning_rate,
+                "weight_decay": weight_decay, "batch_size": batch_size,
+                "trial": trial.number,
+            },
+            reinit="finish_previous",
+        )
+        wandb.log({
+            "val_mae_s":  round(mae, 2),
+            "val_mae_min": round(mae / 60, 2),
+            "val_rmse_s": round(rmse, 2),
+            "val_r2":     round(r2, 4),
+        })
+        wandb.finish()
+    except Exception as e:
+        print(f"[wandb] Trial {trial.number}: logging failed ({e}), continuing without W&B.")
 
     return mae
 
 
-# ── Lanzar estudio Optuna ─────────────────────────────────────────────────────
+# Lanzar estudio Optuna
 
 if __name__ == "__main__":
     study = optuna.create_study(

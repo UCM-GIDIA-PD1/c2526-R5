@@ -28,7 +28,7 @@ from sklearn.metrics import (
 from src.common.minio_client import download_df_parquet
 warnings.filterwarnings("ignore")
 
-# ── Configuración Igual que en el original ───────────────────────────────────
+# Configuracion
 
 ACCESS_KEY = os.environ.get("MINIO_ACCESS_KEY", "")
 SECRET_KEY = os.environ.get("MINIO_SECRET_KEY", "")
@@ -69,6 +69,7 @@ N_TRIALS = 30 # Número de combinaciones automáticas que probará antes de dete
 
 
 def load_months(months: range) -> pd.DataFrame:
+    """Descarga y filtra los datos de entrenamiento y validacion desde MinIO."""
     dfs = []
     for month in months:
         path = DATA_TEMPLATE.format(year=YEAR, month=month)
@@ -87,6 +88,7 @@ def load_months(months: range) -> pd.DataFrame:
 
 
 def add_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Añade variables derivadas del retraso y de las alertas para enriquecer el modelo."""
     df = df.copy()
     df["delay_change"]      = df["delay_seconds"] - df["lagged_delay_1"]
     df["delay_change_prev"] = df["lagged_delay_1"] - df["lagged_delay_2"]
@@ -101,6 +103,7 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def encode_categoricals(df_train, df_val, df_test):
+    """Convierte las columnas categoricas a enteros usando el vocabulario del conjunto de entrenamiento."""
     for col in CAT_FEATURES:
         if col not in df_train.columns:
             continue
@@ -112,10 +115,12 @@ def encode_categoricals(df_train, df_val, df_test):
 
 
 def get_features(df: pd.DataFrame) -> list:
+    """Devuelve la lista de columnas que se usan como features, excluyendo el target y columnas no relevantes."""
     return [c for c in df.columns if c not in EXCLUDE_COLS and c != TARGET]
 
 
 def compute_metrics(y_true, y_prob, y_pred, prefix="") -> dict:
+    """Calcula las metricas principales a partir de las predicciones y los valores reales."""
     return {
         f"{prefix}roc_auc":   round(roc_auc_score(y_true, y_prob), 4),
         f"{prefix}pr_auc":    round(average_precision_score(y_true, y_prob), 4),
@@ -126,10 +131,10 @@ def compute_metrics(y_true, y_prob, y_pred, prefix="") -> dict:
     }
 
 
-# ── Parte de Optuna ────────────────────────────────────────────────────────────
+# Optuna
 
 def load_and_prepare_data():
-    """Carga los datos una única vez en memoria para acelerar todos los intentos de Optuna."""
+    """Carga y prepara todos los datos en memoria para reutilizarlos en todos los trials."""
     print(f"\nCargando datos (meses {list(MONTHS)})...")
     df = load_months(MONTHS)
     print(f"  Total: {len(df):,} filas\n")
@@ -166,10 +171,7 @@ def load_and_prepare_data():
 
 
 def objective(trial, X_train, y_train, X_val, y_val, X_test, y_test, feats):
-    """
-    Función de evaluación de Optuna.
-    En cada iteración, elige al azar (Bayes) unos parámetros, entrena, predice y lo envía a Wandb.
-    """
+    """Evalua un conjunto de hiperparametros entrenando un LightGBM y registra las metricas en W&B."""
     # 1. Optuna elige los hiperparámetros
     params = {
         "objective":         "binary",
@@ -252,6 +254,7 @@ def objective(trial, X_train, y_train, X_val, y_val, X_test, y_test, feats):
 
 
 def run_optuna_study():
+    """Lanza el estudio de Optuna y muestra los mejores hiperparametros encontrados."""
     X_train, y_train, X_val, y_val, X_test, y_test, feats = load_and_prepare_data()
     
     # direction="maximize" para obtener luego el máximo AUC posible

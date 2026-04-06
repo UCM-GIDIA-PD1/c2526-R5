@@ -23,6 +23,7 @@ from sklearn.metrics import f1_score, precision_score, recall_score
 from src.common.minio_client import download_df_parquet
 
 def procesar(df):
+    """Añade variables temporales y convierte columnas categoricas para preprocesar el dataframe."""
     df['hora'] = df['merge_time'].dt.hour
     df['minuto'] = df['merge_time'].dt.minute
     df['dia_semana'] = df['merge_time'].dt.dayofweek # Lunes=0, Domingo=6
@@ -36,6 +37,7 @@ def procesar(df):
     return df
 
 def cargar_y_preparar_datos():
+    """Carga los datos desde MinIO, aplica el preprocesamiento y devuelve los conjuntos de train y test."""
     INPUT_PATH = 'grupo5/aggregations/DataFrameGroupedByMin=60.parquet'
     ACCESS_KEY = os.getenv('MINIO_ACCESS_KEY')
     SECRET_KEY = os.getenv('MINIO_SECRET_KEY')
@@ -96,6 +98,7 @@ def cargar_y_preparar_datos():
     return train_test_split(X, y, test_size=0.2, shuffle=False)
 
 def objective(trial, X_train, X_test, y_train, y_test, labels):
+    """Evalua un conjunto de hiperparametros entrenando un LightGBM y registra las metricas en W&B."""
     # 1. Definir el espacio de búsqueda (Search Space)
     param = {
         'n_estimators': trial.suggest_int('n_estimators', 50, 300),

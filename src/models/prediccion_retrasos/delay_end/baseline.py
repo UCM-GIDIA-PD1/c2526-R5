@@ -37,6 +37,7 @@ DATA_TEMPLATE = "grupo5/final/year={year}/month={month:02d}/dataset_final.parque
 
 
 def load_months(months: range) -> pd.DataFrame:
+    """Descarga y filtra los datos de entrenamiento y validacion desde MinIO."""
     dfs = []
     for month in months:
         path = DATA_TEMPLATE.format(year=YEAR, month=month)
@@ -53,6 +54,7 @@ def load_months(months: range) -> pd.DataFrame:
 
 
 def compute_metrics(y_true, y_pred, name: str):
+    """Calcula las metricas principales a partir de las predicciones y los valores reales."""
     mae  = mean_absolute_error(y_true, y_pred)
     rmse = np.sqrt(mean_squared_error(y_true, y_pred))
     r2   = r2_score(y_true, y_pred)
@@ -63,6 +65,7 @@ def compute_metrics(y_true, y_pred, name: str):
 
 
 def main():
+    """Funcion principal que orquesta la carga de datos, el entrenamiento y el registro de resultados."""
     print("Cargando train (para calcular media)...")
     df_train = load_months(TRAIN_MONTHS)
     mean_target = df_train[TARGET].mean()

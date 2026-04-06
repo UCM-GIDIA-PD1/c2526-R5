@@ -34,19 +34,20 @@ from src.common.minio_client import download_df_parquet
 
 warnings.filterwarnings("ignore")
 
-# ── Configuracion ─────────────────────────────────────────────────────────────
+# Configuracion
 
 ACCESS_KEY = os.environ["MINIO_ACCESS_KEY"]
 SECRET_KEY = os.environ["MINIO_SECRET_KEY"]
 
-YEAR           = 2025
-TRAIN_MONTHS   = range(1, 10)
-VAL_MONTHS     = range(10, 13)
+TRAIN_YEAR     = 2025
+TRAIN_MONTHS   = range(1, 13)
+TEST_YEAR      = 2026
+TEST_MONTHS    = range(1, 2)
 TARGET         = "target_delay_end"
 DATA_TEMPLATE  = "grupo5/final/year={year}/month={month:02d}/dataset_final.parquet"
 
 WANDB_PROJECT  = "pd1-c2526-team5"
-WANDB_RUN_NAME = "mlp-stop-delay-end"
+WANDB_RUN_NAME = "mlp-delay-end-final-test"
 
 EXCLUDE_COLS = {
     "date", "match_key", "stop_id", "merge_time", "timestamp_start",
@@ -63,14 +64,14 @@ EXCLUDE_COLS = {
 CAT_FEATURES = ["route_id", "direction", "category", "tipo_referente"]
 STOP_ID_COL  = "stop_id"
 
-# ── Hiperparametros MLP ──────────────────────────────────────────────────────
+# Hiperparametros MLP
 
 MLP_CONFIG = {
-    "hidden_layers":  [256, 128, 64],
-    "dropout":        0.3,
-    "learning_rate":  1e-3,
-    "weight_decay":   1e-4,
-    "batch_size":     4096,
+    "hidden_layers":  [512, 128],
+    "dropout":        0.31707843326329943,
+    "learning_rate":  0.00019135880487692312,
+    "weight_decay":   0.0002550298070162893,
+    "batch_size":     2048,
     "max_epochs":     200,
     "patience":       15,
     "seed":           42,
@@ -78,12 +79,13 @@ MLP_CONFIG = {
 
 SAMPLE_FRAC = 1.0
 
-# ── Helpers (mismos que LGBM) ─────────────────────────────────────────────────
+# Helpers
 
-def load_months(months: range) -> pd.DataFrame:
+def load_months(months: range, year: int) -> pd.DataFrame:
+    """Descarga y filtra los datos de entrenamiento y validacion desde MinIO."""
     dfs = []
     for month in months:
-        path = DATA_TEMPLATE.format(year=YEAR, month=month)
+        path = DATA_TEMPLATE.format(year=year, month=month)
         try:
             df = download_df_parquet(ACCESS_KEY, SECRET_KEY, path)
             total = len(df)
@@ -103,17 +105,19 @@ def load_months(months: range) -> pd.DataFrame:
     return pd.concat(dfs, ignore_index=True)
 
 
-def encode_categoricals(df_train, df_val):
+def encode_categoricals(df_train, df_test):
+    """Convierte las columnas categoricas a enteros usando el vocabulario del conjunto de entrenamiento."""
     for col in CAT_FEATURES:
         if col not in df_train.columns:
             continue
         vocab = {v: i for i, v in enumerate(df_train[col].astype(str).unique())}
         df_train[col] = df_train[col].astype(str).map(vocab).astype(int)
-        df_val[col]   = df_val[col].astype(str).map(vocab).fillna(-1).astype(int)
-    return df_train, df_val
+        df_test[col]  = df_test[col].astype(str).map(vocab).fillna(-1).astype(int)
+    return df_train, df_test
 
 
 def add_derived_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Calcula variables derivadas del retraso como velocidad, aceleracion e interacciones."""
     if "lagged_delay_1" in df.columns and "delay_seconds" in df.columns:
         df["delay_velocity"] = df["delay_seconds"] - df["lagged_delay_1"]
     if "lagged_delay_1" in df.columns and "lagged_delay_2" in df.columns:
@@ -128,19 +132,22 @@ def add_derived_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def add_target_encoding(df_train, df_val, col, target):
+def add_target_encoding(df_train, df_test, col, target):
+    """Aplica target encoding sobre una columna usando la media del target por grupo calculada en train."""
     means = df_train.groupby(col)[target].mean()
     global_mean = df_train[target].mean()
     df_train[f"{col}_target_enc"] = df_train[col].map(means)
-    df_val[f"{col}_target_enc"]   = df_val[col].map(means).fillna(global_mean)
-    return df_train, df_val
+    df_test[f"{col}_target_enc"]  = df_test[col].map(means).fillna(global_mean)
+    return df_train, df_test
 
 
 def get_features(df):
+    """Devuelve la lista de columnas que se usan como features, excluyendo el target y columnas no relevantes."""
     return [c for c in df.columns if c not in EXCLUDE_COLS and c != TARGET]
 
 
 def compute_metrics(y_true, y_pred, prefix="") -> dict:
+    """Calcula las metricas principales a partir de las predicciones y los valores reales."""
     mae     = mean_absolute_error(y_true, y_pred)
     rmse    = np.sqrt(mean_squared_error(y_true, y_pred))
     r2      = r2_score(y_true, y_pred)
@@ -153,10 +160,11 @@ def compute_metrics(y_true, y_pred, prefix="") -> dict:
     }
 
 
-# ── Modelo MLP ────────────────────────────────────────────────────────────────
+# Modelo MLP
 
 class MLP(nn.Module):
     def __init__(self, input_dim: int, hidden_layers: list[int], dropout: float):
+        """Construye las capas de la red segun la arquitectura indicada."""
         super().__init__()
         layers = []
         prev = input_dim
@@ -173,57 +181,55 @@ class MLP(nn.Module):
         return self.net(x).squeeze(-1)
 
 
-# ── Entrenamiento ─────────────────────────────────────────────────────────────
+# Entrenamiento
 
 def main():
+    """Funcion principal que orquesta la carga de datos, el entrenamiento y el registro de resultados."""
     torch.manual_seed(MLP_CONFIG["seed"])
     np.random.seed(MLP_CONFIG["seed"])
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}\n")
 
     # --- Datos ---
-    print(f"Cargando datos de entrenamiento (meses {list(TRAIN_MONTHS)})...")
-    df_train = load_months(TRAIN_MONTHS)
+    print(f"Cargando datos de entrenamiento (año {TRAIN_YEAR}, meses {list(TRAIN_MONTHS)})...")
+    df_train = load_months(TRAIN_MONTHS, TRAIN_YEAR)
     print(f"  Total: {len(df_train):,} filas\n")
 
-    print(f"Cargando datos de validacion (meses {list(VAL_MONTHS)})...")
-    df_val = load_months(VAL_MONTHS)
-    print(f"  Total: {len(df_val):,} filas\n")
+    print(f"Cargando datos de test (año {TEST_YEAR}, meses {list(TEST_MONTHS)})...")
+    df_test = load_months(TEST_MONTHS, TEST_YEAR)
+    print(f"  Total: {len(df_test):,} filas\n")
 
-    df_train, df_val = encode_categoricals(df_train, df_val)
-    df_train, df_val = add_target_encoding(df_train, df_val, STOP_ID_COL, TARGET)
+    df_train, df_test = encode_categoricals(df_train, df_test)
+    df_train, df_test = add_target_encoding(df_train, df_test, STOP_ID_COL, TARGET)
     df_train = add_derived_features(df_train)
-    df_val   = add_derived_features(df_val)
-    print(f"Tras filtrado + FE  --  train: {len(df_train):,}  |  val: {len(df_val):,}\n")
+    df_test  = add_derived_features(df_test)
+    print(f"Tras filtrado + FE  --  train: {len(df_train):,}  |  test: {len(df_test):,}\n")
 
     feats = get_features(df_train)
     print(f"Features usadas ({len(feats)}): {feats}\n")
 
     X_train_np = df_train[feats].values.astype(np.float32)
     y_train_np = df_train[TARGET].values.astype(np.float32)
-    X_val_np   = df_val[feats].values.astype(np.float32)
-    y_val_np   = df_val[TARGET].values.astype(np.float32)
+    X_test_np  = df_test[feats].values.astype(np.float32)
+    y_test_np  = df_test[TARGET].values.astype(np.float32)
 
-    # Reemplazar NaN por 0 (la red no tolera NaN)
     X_train_np = np.nan_to_num(X_train_np, nan=0.0)
-    X_val_np   = np.nan_to_num(X_val_np,   nan=0.0)
+    X_test_np  = np.nan_to_num(X_test_np,  nan=0.0)
 
-    # StandardScaler
     scaler = StandardScaler()
     X_train_np = scaler.fit_transform(X_train_np)
-    X_val_np   = scaler.transform(X_val_np)
+    X_test_np  = scaler.transform(X_test_np)
 
-    # Tensores y DataLoaders
     train_ds = TensorDataset(
         torch.from_numpy(X_train_np),
         torch.from_numpy(y_train_np),
     )
-    val_ds = TensorDataset(
-        torch.from_numpy(X_val_np),
-        torch.from_numpy(y_val_np),
+    test_ds = TensorDataset(
+        torch.from_numpy(X_test_np),
+        torch.from_numpy(y_test_np),
     )
     train_loader = DataLoader(train_ds, batch_size=MLP_CONFIG["batch_size"], shuffle=True)
-    val_loader   = DataLoader(val_ds,   batch_size=MLP_CONFIG["batch_size"], shuffle=False)
+    test_loader  = DataLoader(test_ds,  batch_size=MLP_CONFIG["batch_size"], shuffle=False)
 
     # --- Modelo ---
     model = MLP(
@@ -251,21 +257,22 @@ def main():
         config={
             **MLP_CONFIG,
             "target":       TARGET,
+            "train_year":   TRAIN_YEAR,
             "train_months": list(TRAIN_MONTHS),
-            "val_months":   list(VAL_MONTHS),
+            "test_year":    TEST_YEAR,
+            "test_months":  list(TEST_MONTHS),
             "n_features":   len(feats),
             "train_rows":   len(df_train),
-            "val_rows":     len(df_val),
+            "test_rows":    len(df_test),
             "device":       str(device),
         },
     )
 
     # --- Training loop ---
-    best_val_mae = float("inf")
+    best_test_mae = float("inf")
     patience_counter = 0
 
     for epoch in range(1, MLP_CONFIG["max_epochs"] + 1):
-        # Train
         model.train()
         train_losses = []
         for X_batch, y_batch in train_loader:
@@ -279,33 +286,31 @@ def main():
 
         train_mae = sum(train_losses) / len(train_ds)
 
-        # Val
         model.eval()
-        val_losses = []
+        test_losses = []
         with torch.no_grad():
-            for X_batch, y_batch in val_loader:
+            for X_batch, y_batch in test_loader:
                 X_batch, y_batch = X_batch.to(device), y_batch.to(device)
                 pred = model(X_batch)
                 loss = criterion(pred, y_batch)
-                val_losses.append(loss.item() * len(X_batch))
+                test_losses.append(loss.item() * len(X_batch))
 
-        val_mae = sum(val_losses) / len(val_ds)
-        scheduler.step(val_mae)
+        test_mae = sum(test_losses) / len(test_ds)
+        scheduler.step(test_mae)
 
         if epoch % 5 == 0 or epoch == 1:
-            print(f"  Epoch {epoch:3d}  train_mae={train_mae:.2f}s  val_mae={val_mae:.2f}s  lr={optimizer.param_groups[0]['lr']:.1e}")
+            print(f"  Epoch {epoch:3d}  train_mae={train_mae:.2f}s  test_mae={test_mae:.2f}s  lr={optimizer.param_groups[0]['lr']:.1e}")
 
-        wandb.log({"epoch": epoch, "train_mae_s": train_mae, "val_mae_s": val_mae, "lr": optimizer.param_groups[0]["lr"]})
+        wandb.log({"epoch": epoch, "train_mae_s": train_mae, "test_mae_s": test_mae, "lr": optimizer.param_groups[0]["lr"]})
 
-        # Early stopping
-        if val_mae < best_val_mae:
-            best_val_mae = val_mae
+        if test_mae < best_test_mae:
+            best_test_mae = test_mae
             patience_counter = 0
             best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
         else:
             patience_counter += 1
             if patience_counter >= MLP_CONFIG["patience"]:
-                print(f"\n  Early stopping en epoch {epoch}  (best val_mae={best_val_mae:.2f}s)")
+                print(f"\n  Early stopping en epoch {epoch}  (best test_mae={best_test_mae:.2f}s)")
                 break
 
     # --- Metricas finales con mejor modelo ---
@@ -313,17 +318,17 @@ def main():
     model.eval()
     with torch.no_grad():
         y_pred_train = model(torch.from_numpy(X_train_np).to(device)).cpu().numpy()
-        y_pred_val   = model(torch.from_numpy(X_val_np).to(device)).cpu().numpy()
+        y_pred_test  = model(torch.from_numpy(X_test_np).to(device)).cpu().numpy()
 
     metrics_train = compute_metrics(y_train_np, y_pred_train, prefix="train_")
-    metrics_val   = compute_metrics(y_val_np,   y_pred_val,   prefix="val_")
+    metrics_test  = compute_metrics(y_test_np,  y_pred_test,  prefix="test_")
 
     print("\nMetricas train:"); [print(f"  {k}: {v}") for k, v in metrics_train.items()]
-    print("Metricas val:");   [print(f"  {k}: {v}") for k, v in metrics_val.items()]
+    print("Metricas test:");   [print(f"  {k}: {v}") for k, v in metrics_test.items()]
 
-    wandb.log({**metrics_train, **metrics_val})
+    wandb.log({**metrics_train, **metrics_test})
     wandb.finish()
-    print("\nEntrenamiento completado.")
+    print("\nEvaluacion completada.")
 
 
 if __name__ == "__main__":

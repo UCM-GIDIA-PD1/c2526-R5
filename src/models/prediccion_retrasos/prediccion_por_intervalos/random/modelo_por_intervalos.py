@@ -38,7 +38,7 @@ from src.common.minio_client import download_df_parquet
 
 
 def procesar(df):
-
+    """Añade variables temporales y convierte columnas categoricas para preprocesar el dataframe."""
     df['hora'] = df['merge_time'].dt.hour
     df['minuto'] = df['merge_time'].dt.minute
     df['dia_semana'] = df['merge_time'].dt.dayofweek # Lunes=0, Domingo=6
