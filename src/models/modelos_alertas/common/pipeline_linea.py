@@ -53,8 +53,8 @@ from sklearn.metrics import (
     f1_score, recall_score, precision_score,
 )
 
-TARGET     = 'alert_in_next_30m'
-TARGET_RAW = 'alert_in_next_30m_max'
+TARGET     = 'alert_in_next_15m'
+TARGET_RAW = 'alert_in_next_15m_max'
 
 FEATURES_SIN = [
     'delay_mean_linea', 'delay_max_linea', 'delay_std_linea', 'delay_acceleration_linea',
@@ -74,7 +74,7 @@ def filtro_comportamiento_alterado(df):
     """Elimina paradas que no tienen alerta en 15 minutos 
     y sí tienen en 30 minutos y por tanto alteran la línea"""
 
-    mask_positivos = df[TARGET] == 1
+    mask_positivos = df[TARGET_RAW] == 1
     mask_negativos_limpios = (
         df['alert_in_next_30m_max'] == 0            
     )
@@ -83,8 +83,8 @@ def filtro_comportamiento_alterado(df):
     df = df.reset_index(drop=True)
 
     print(f"Dataset tras filtrar negativos ambiguos: {len(df):,} filas")
-    print(f"  Positivos: {df[TARGET].sum():,} ({df[TARGET].mean()*100:.1f}%)")
-    print(f"  Negativos: {(df[TARGET]==0).sum():,} ({(df[TARGET]==0).mean()*100:.1f}%)")
+    print(f"  Positivos: {df[TARGET_RAW].sum():,} ({df[TARGET_RAW].mean()*100:.1f}%)")
+    print(f"  Negativos: {(df[TARGET_RAW]==0).sum():,} ({(df[TARGET_RAW]==0).mean()*100:.1f}%)")
 
     return df
 

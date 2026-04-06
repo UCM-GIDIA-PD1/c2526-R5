@@ -1,17 +1,38 @@
+"""
+Entrena un XGBoost para detección temprana de alertas MTA
+trabajando a nivel de línea (route_id + direction + ventana 30min).
+Primero se carga el dataset raw de 21 M filas parada x 30 mins. Después se agrega
+a nivel de línea, lo que supone una reducción de filas a ~800k aprox.
+Posteriormente, se lleva a cabo un encoding ordinal de route_id y direction y un
+split temporal 70/15/15 por fechas.
+A continuación, se realiza la búsqueda de hiperparámetros con Optuna (30 trials),
+optimizando PR-AUC en validación con early stopping.
+Finalmente, se entrena el modelo final con los mejores hiperparámetros y se
+registran en W&B las métricas, curvas PR, matriz de confusión e importancia
+de features.
+ 
+Target:  alert_in_next_30m  (1 si hay alerta MTA en los próximos 30 min)
+Métrica: PR-AUC  (clases desbalanceadas)
+ 
+Uso:
+  python -m src.models.modelos_alertas.Optuna.XGBoost_alertas
+ 
+"""
+
 import os
-import gc
-import sys
 import pandas as pd
 import numpy as np
 import wandb
-from sklearn.preprocessing import OrdinalEncoder
-from sklearn.dummy import DummyClassifier
 import optuna
 from xgboost import XGBClassifier
-from sklearn.metrics import (average_precision_score, roc_auc_score, f1_score,
-                              recall_score, precision_score, classification_report,
+from sklearn.metrics import (average_precision_score, classification_report,
                               precision_recall_curve)
 from src.common.minio_client import download_df_parquet
+from src.models.modelos_alertas.common.pipeline_linea import (
+    agregar_por_linea, agregar_features_rolling_retraso,
+    split_temporal, TARGET, evaluar_baseline, evaluar_test, filtro_comportamiento_alterado,
+    encoding_categorias, FEATURES_CON,
+)
 
 
 # ── Configuración ──────────────────────────────────────────────────────────────
@@ -23,290 +44,31 @@ PATH = f"grupo5/aggregations/DataFrameGroupedByMin=30.parquet"
 ENTITY = "pd1-c2526-team5"
 PROJECT = "pd1-c2526-team5"
 NAME = "optuna_modelo_agregado_30min_XGBoost"
-
-TARGET = 'alert_in_next_15m_max'
-COLS_RAW = [
-    'route_id', 'direction', 'merge_time',
-    'delay_seconds_mean', 'lagged_delay_1_mean', 
-    'lagged_delay_2_mean', 'delay_3_before',
-    'actual_headway_seconds_mean', 'is_unscheduled_max',
-    'num_updates_sum', 'match_key_nunique',
-    'hour_sin_first', 'hour_cos_first', 'dow_first', 'is_weekend_max',
-    'seconds_since_last_alert_mean',
-    TARGET,
-]
+TRIALS = 30
 
 
-
-# ── Cargar datos una sola vez ──────────────────────────────────────────────────
-
-def filtro_comportamiento_alterado(df):
-    """Elimina paradas que no tienen alerta en 15 minutos 
-    y sí tienen en 30 minutos y por tanto alteran la línea"""
-
-    mask_positivos = df[TARGET] == 1
-    mask_negativos_limpios = (
-        df['alert_in_next_30m_max'] == 0            
-    )
-
-    df = df[mask_positivos | mask_negativos_limpios]
-    df = df.reset_index(drop=True)
-
-    print(f"Dataset tras filtrar negativos ambiguos: {len(df):,} filas")
-    print(f"  Positivos: {df[TARGET].sum():,} ({df[TARGET].mean()*100:.1f}%)")
-    print(f"  Negativos: {(df[TARGET]==0).sum():,} ({(df[TARGET]==0).mean()*100:.1f}%)")
-
-    return df
-
-
-def agregar_por_linea(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
-    """Re-agrega el dataset de nivel parada a nivel línea (route_id + direction + 30min).
-    Genera features que capturan el estado global de la línea."""
- 
-    cat_cols = [c for c in df.columns if c.startswith('category_')]
-    print(f"Categorías de alerta encontradas: {cat_cols}")
- 
-    cols = [c for c in COLS_RAW + cat_cols if c in df.columns]
-    df_work = df[cols].copy()
-    df_work['merge_time'] = pd.to_datetime(df_work['merge_time'])
-    df_work['parada_retrasada'] = (df_work['delay_seconds_mean'] > 60).astype(int)
- 
-    agg_dict = {
-        'delay_seconds_mean':            ['mean', 'max', 'std'],
-        'parada_retrasada':              ['sum', 'count'],
-        'lagged_delay_1_mean':           'mean',
-        'lagged_delay_2_mean':           'mean',
-        'delay_3_before':                'mean',
-        'actual_headway_seconds_mean':   ['mean', 'std'],
-        'is_unscheduled_max':            'max',
-        'num_updates_sum':               'sum',
-        'match_key_nunique':             'sum',
-        'hour_sin_first':                'first',
-        'hour_cos_first':                'first',
-        'dow_first':                     'first',
-        'is_weekend_max':                'max',
-        'seconds_since_last_alert_mean': 'min',  
-        TARGET:                          'max',
-    }
-    for col in cat_cols:
-        agg_dict[col] = 'max'  
- 
-    print("Agregando por línea...")
-    df_linea = df_work.groupby(
-        ['route_id', 'direction', pd.Grouper(key='merge_time', freq='30min')],
-        observed=True
-    ).agg(agg_dict).reset_index()
- 
-    # Aplanar columnas multinivel generadas por las agregaciones dobles
-    df_linea.columns = [
-        '_'.join(filter(None, col)) if isinstance(col, tuple) else col
-        for col in df_linea.columns
-    ]
- 
-    df_linea = df_linea.rename(columns={
-        'delay_seconds_mean_mean':           'delay_mean_linea',
-        'delay_seconds_mean_max':            'delay_max_linea',
-        'delay_seconds_mean_std':            'delay_std_linea',
-        'parada_retrasada_sum':              'paradas_retrasadas',
-        'parada_retrasada_count':            'total_paradas',
-        'lagged_delay_1_mean_mean':          'lag1_mean_linea',
-        'lagged_delay_2_mean_mean':          'lag2_mean_linea',
-        'delay_3_before_mean':               'delay_3_before_mean',
-        'actual_headway_seconds_mean_mean':  'headway_mean_linea',
-        'actual_headway_seconds_mean_std':   'headway_std_linea',
-        'is_unscheduled_max_max':            'is_unscheduled',
-        'num_updates_sum_sum':               'num_updates',
-        'match_key_nunique_sum':             'match_key_nunique',
-        'hour_sin_first_first':              'hour_sin',
-        'hour_cos_first_first':              'hour_cos',
-        'dow_first_first':                   'dow',
-        'is_weekend_max_max':                'is_weekend',
-        'seconds_since_last_alert_mean_min': 'seg_desde_ultima_alerta_linea',
-        f'{TARGET}_max':                     TARGET,
-    })
- 
-    # Features derivadas
-    df_linea['pct_paradas_retrasadas']   = (
-        df_linea['paradas_retrasadas'] / df_linea['total_paradas'].clip(lower=1)
-    )
-    df_linea['delay_acceleration_linea'] = (
-        df_linea['delay_mean_linea'] - df_linea['lag1_mean_linea']
-    )
-    df_linea['headway_cv'] = (
-        df_linea['headway_std_linea'] / df_linea['headway_mean_linea'].clip(lower=1)
-    )
-    df_linea['colapso_linea'] = (
-        (df_linea['pct_paradas_retrasadas'] > 0.5).astype(int)
-    )
-    df_linea['delay_x_aceleracion'] = (
-        df_linea['delay_mean_linea'] * df_linea['delay_acceleration_linea'].clip(lower=0)
-    )
- 
-    del df_work
-    gc.collect()
-
-    df_linea = df_linea.dropna(subset=[TARGET])
-    df_linea[TARGET] = df_linea[TARGET].astype(int)
- 
-    print(f"Dataset por línea: {len(df_linea):,} filas x {df_linea.shape[1]} columnas")
-    print(f"Reducción: {len(df):,} → {len(df_linea):,} filas")
-    print(f"Positivos: {df_linea[TARGET].mean()*100:.1f}%")
- 
-    return df_linea, cat_cols
-
-
-def agregar_features_rolling_retraso(df_linea: pd.DataFrame) -> pd.DataFrame:
-    df_linea = df_linea.sort_values(['route_id', 'direction', 'merge_time'])
-    grp = df_linea.groupby(['route_id', 'direction'])
-
-    # Media móvil del retraso en las últimas 4 ventanas
-    df_linea['delay_rolling4_mean'] = (
-        grp['delay_mean_linea']
-        .transform(lambda x: x.shift(1).rolling(4, min_periods=1).mean())
-    )
-
-    # Máximo retraso en las últimas 4 ventanas
-    df_linea['delay_rolling4_max'] = (
-        grp['delay_max_linea']
-        .transform(lambda x: x.shift(1).rolling(4, min_periods=1).max())
-    )
-
-    # Varianza del headway reciente 
-    df_linea['headway_rolling4_std'] = (
-        grp['headway_mean_linea']
-        .transform(lambda x: x.shift(1).rolling(4, min_periods=1).std())
-        .fillna(0)
-    )
-
-    return df_linea
-
- 
-def get_features(cat_cols: list[str], df: pd.DataFrame) -> list[str]:
-    """Features a nivel de línea"""
-    features = [
-        'headway_cv', 'colapso_linea', 'delay_x_aceleracion',
-        # Retraso global de la línea
-        'delay_mean_linea', 'delay_max_linea', 'delay_std_linea',
-        # Proporción de paradas afectadas
-        'paradas_retrasadas', 'pct_paradas_retrasadas',
-        # Evolución temporal del retraso
-        'lag1_mean_linea', 'lag2_mean_linea', 'delay_3_before_mean',
-        # Tendencia: ¿el retraso está empeorando?
-        'delay_acceleration_linea', 'delay_rolling4_mean', 'delay_rolling4_max', 'headway_rolling4_std',
-        # Irregularidad del servicio
-        'headway_mean_linea', 'headway_std_linea',
-        # Actividad operativa
-        'is_unscheduled', 'num_updates', 'match_key_nunique',
-        # Temporales
-        'hour_sin', 'hour_cos', 'dow', 'is_weekend',
-        # Identidad de la línea
-        'route_id', 'direction',
-        # Historial de alertas a nivel de línea
-        'seg_desde_ultima_alerta_linea',
-    ] + cat_cols
-    return [f for f in features if f in df.columns]
-
-
-def encoding_categorias(X_train, X_val, X_test):
-    cols_ordinal_enc = ['route_id', 'direction']   
-
-    enc = OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1)
-    X_train[cols_ordinal_enc] = enc.fit_transform(X_train[cols_ordinal_enc])
-    X_val[cols_ordinal_enc]   = enc.transform(X_val[cols_ordinal_enc])
-    X_test[cols_ordinal_enc]  = enc.transform(X_test[cols_ordinal_enc])
-
-    print("✓ Encoding completado")
-    return X_train, X_val, X_test
-
-
-def evaluar_baseline(X_train, y_train, X_test, y_test):
-    """Entrena un clasificador aleatorio estratificado y devuelve sus métricas."""
-    print("\nEvaluando baseline estratificado...")
-
-    baseline = DummyClassifier(strategy="stratified", random_state=42)
-    baseline.fit(X_train, y_train)
-
-    y_prob_base  = baseline.predict_proba(X_test)[:, 1]
-    y_pred_base  = baseline.predict(X_test)
-
-    metricas = {
-        "baseline_pr_auc":   average_precision_score(y_test, y_prob_base),
-        "baseline_roc_auc":  roc_auc_score(y_test, y_prob_base),
-        "baseline_f1":       f1_score(y_test, y_pred_base, zero_division=0),
-        "baseline_recall":   recall_score(y_test, y_pred_base, zero_division=0),
-        "baseline_precision":precision_score(y_test, y_pred_base, zero_division=0),
-    }
-
-    print(f"  PR-AUC   baseline: {metricas['baseline_pr_auc']:.4f}  "
-          f"(≈ prevalencia positivos: {y_test.mean():.4f})")
-    print(f"  ROC-AUC  baseline: {metricas['baseline_roc_auc']:.4f}")
-    print(f"  F1       baseline: {metricas['baseline_f1']:.4f}")
-
-    return metricas, y_prob_base
 
 def main():
 
     print(f"\nCargando dataset...")
-    df = download_df_parquet(ACCESS_KEY, SECRET_KEY, PATH)
+    df_raw = download_df_parquet(ACCESS_KEY, SECRET_KEY, PATH)
     print("✓ Dataset cargado con exito")
 
-    # Eliminar filas sin target
-    df = df.dropna(subset=[TARGET])
-    df[TARGET] = df[TARGET].astype(int)
-    df = filtro_comportamiento_alterado(df)
+    df_raw = filtro_comportamiento_alterado(df_raw)
 
     # ── Re-agregación por línea ────────────────────────────────────────────────
     print("\nRe-agregando a nivel de línea...")
-    df, cat_cols = agregar_por_linea(df)
-    df = agregar_features_rolling_retraso(df)
+    df_linea = agregar_por_linea(df_raw)
+    df_linea = agregar_features_rolling_retraso(df_linea)
 
     # ── Features ──────────────────────────────────────────────────────────────
-    FEATURES = get_features(cat_cols, df)
- 
-    # Imputar NaN con mediana
-    for col in FEATURES:
-        if df[col].isna().any():
-            df[col] = df[col].fillna(df[col].median())
+    feats = [f for f in FEATURES_CON if f in df_linea.columns]
 
-    df_sorted = df.sort_values('merge_time')
+    train, val, test = split_temporal(df_linea)
 
-    print(f"Features: {len(FEATURES)}")
-    print(f"Filas:    {len(df_sorted):,}")
-    print(f"\nDistribución del target:")
-    print(df_sorted[TARGET].value_counts(normalize=True).round(3))
-
-
-    #División de los datos en Entrenamiento-Validación-Test
-    dias = df_sorted['merge_time'].dt.date.unique()
-    dias_ordenados = sorted(dias)
-
-    total_dias = len(dias_ordenados)
-    corte_70   = dias_ordenados[int(total_dias * 0.70)]
-    corte_85   = dias_ordenados[int(total_dias * 0.85)]
-
-    print(f"Total días: {total_dias}")
-    print(f"Primer día: {dias_ordenados[0]}")
-    print(f"Último día: {dias_ordenados[-1]}")
-    print(f"\nCorte train (70%): {corte_70}")
-    print(f"Corte val   (85%): {corte_85}")
-
-
-    train = df_sorted[df_sorted['merge_time'].dt.date <  corte_70]
-    val   = df_sorted[(df_sorted['merge_time'].dt.date >= corte_70) &
-            (df_sorted['merge_time'].dt.date <  corte_85)]
-    test  = df_sorted[df_sorted['merge_time'].dt.date >= corte_85]
-
-    X_train, y_train = train[FEATURES], train[TARGET]
-    X_val,   y_val   = val[FEATURES],   val[TARGET]
-    X_test,  y_test  = test[FEATURES],  test[TARGET]
-
-    n = len(df)
-    print(f"Train: {len(train):,} ({len(train)/n*100:.0f}%)  "
-        f"{train['merge_time'].min().date()} → {train['merge_time'].max().date()}")
-    print(f"Val:   {len(val):,} ({len(val)/n*100:.0f}%)  "
-        f"{val['merge_time'].min().date()} → {val['merge_time'].max().date()}")
-    print(f"Test:  {len(test):,} ({len(test)/n*100:.0f}%)  "
-        f"{test['merge_time'].min().date()} → {test['merge_time'].max().date()}")
+    X_train, y_train = train[feats], train[TARGET]
+    X_val,   y_val   = val[feats],   val[TARGET]
+    X_test,  y_test  = test[feats],  test[TARGET]
 
 
     X_train, X_val, X_test = encoding_categorias(X_train, X_val, X_test)
@@ -319,6 +81,8 @@ def main():
     # Ratio de desbalance para scale_pos_weight
     ratio = (y_train == 0).sum() / (y_train == 1).sum()
     print(f"Ratio desbalance: {ratio:.1f}:1")
+
+    print(f"\n-- Optuna {TRIALS} trials --")
 
     def objective(trial):
         params = {
@@ -346,7 +110,7 @@ def main():
 
     print("\nIniciando búsqueda de hiperparámetros...")
     study = optuna.create_study(direction='maximize')
-    study.optimize(objective, n_trials=30, show_progress_bar=True)
+    study.optimize(objective, n_trials=TRIALS, show_progress_bar=True)
     print(study.best_params)
 
     # ── Entrenamiento del modelo final ─────────────────────────────────────────
@@ -374,16 +138,12 @@ def main():
 
     # ── Evaluación del modelo final ─────────────────────────────────────────
 
-    y_prob = modelo_agregado.predict_proba(X_test)[:, 1]
+    metricas, y_prob, y_pred = evaluar_test(modelo_agregado, X_test, y_test)
 
-    # Threshold óptimo por F1
-    thresholds = np.arange(0.05, 0.95, 0.01)
-    f1_scores  = [f1_score(y_test, (y_prob >= t).astype(int),
-                            zero_division=0) for t in thresholds]
-    threshold_opt = thresholds[np.argmax(f1_scores)]
-    y_pred = (y_prob >= threshold_opt).astype(int)
+    print(f"PR-AUC test: {metricas['pr_auc_test']:.4f}")
+    print(f"F1 test:     {metricas['f1_test']:.4f}")
+    print(f"Threshold:   {metricas['threshold_opt']:.2f}")
 
-    print(f"\nThreshold óptimo: {threshold_opt:.2f}")
     print(classification_report(y_test, y_pred, zero_division=0))
 
     # Curvas PR
@@ -392,20 +152,14 @@ def main():
 
     #Importancia Features
     importancias = pd.DataFrame({
-        "feature":    FEATURES,
+        "feature":    feats,
         "importance": modelo_agregado.feature_importances_
     }).sort_values("importance", ascending=False)
 
     wandb.log({
         **metricas_baseline,
-
-        "auc_roc":   roc_auc_score(y_test, y_prob),
-        "pr_auc":    average_precision_score(y_test, y_prob),
-        "f1":        f1_score(y_test, y_pred, zero_division=0),
-        "recall":    recall_score(y_test, y_pred, zero_division=0),
-        "precision": precision_score(y_test, y_pred, zero_division=0),
-        "threshold_opt": float(threshold_opt),
-
+        **metricas,
+        
         # Curva PR - Baseline
         "curva_pr_baseline": wandb.plot.line_series(
             xs=recall_base.tolist(),
