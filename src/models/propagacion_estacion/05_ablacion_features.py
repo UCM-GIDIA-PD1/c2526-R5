@@ -27,7 +27,7 @@ Guarda: artefactos/ablacion.pt
 
 Uso
 ---
-    uv run python src/models/prediccion_propagacion/05_ablacion_features.py
+    uv run python src/models/propagacion_estacion/05_ablacion_features.py
 """
 import gc
 import time

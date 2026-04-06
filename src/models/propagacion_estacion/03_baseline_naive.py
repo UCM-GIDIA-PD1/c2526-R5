@@ -9,7 +9,7 @@ Imprime: MAE real (segundos) por horizonte y MAE medio.
 
 Uso
 ---
-    uv run python src/models/prediccion_propagacion/03_baseline_naive.py
+    uv run python src/models/propagacion_estacion/03_baseline_naive.py
 """
 from pathlib import Path
 
