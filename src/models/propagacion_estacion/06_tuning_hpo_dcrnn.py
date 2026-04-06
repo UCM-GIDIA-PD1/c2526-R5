@@ -34,7 +34,7 @@ Guarda: artefactos/hpo.pt
 
 Uso
 ---
-    uv run python src/models/prediccion_propagacion/06_tuning_hpo.py
+    uv run python src/models/propagacion_estacion/06_tuning_hpo_dcrnn.py
 """
 import gc
 import random as _rnd
