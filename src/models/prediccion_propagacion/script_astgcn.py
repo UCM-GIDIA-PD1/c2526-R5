@@ -28,10 +28,8 @@ from src.common.minio_client import download_df_parquet
 print("Importación realizada con éxito desde:", ROOT)
 
 # Descargar dataset
-#access_key = os.getenv("MINIO_ACCESS_KEY")
-#secret_key = os.getenv("MINIO_SECRET_KEY")
-access_key = "e8T60glxkUKjHHEhcNwR"
-secret_key = "VeV7cbs96fDRyh3c0aw6lFKZxENmPvhoZeooNXhb"
+access_key = os.getenv("MINIO_ACCESS_KEY")
+secret_key = os.getenv("MINIO_SECRET_KEY")
 
 ruta_archivo = "grupo5/final/year=2025/month=01/dataset_final.parquet"
 df_final = download_df_parquet(access_key, secret_key, ruta_archivo)
