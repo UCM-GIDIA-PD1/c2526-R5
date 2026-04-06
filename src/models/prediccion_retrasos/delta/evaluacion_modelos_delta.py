@@ -227,7 +227,7 @@ BEST_LGBM_PARAMS   = _lgbm_cfg["params"]
 BEST_LGBM_BOOST_ROUND = _lgbm_cfg["num_boost_round"]
 BEST_LGBM_EARLY_STOP  = _lgbm_cfg["early_stopping"]
 
-#no los configuro ya que no he tenido ningún caso en el que random forest haya sido mejor
+# No los configuro ya que no he tenido ningún caso en el que random forest haya sido mejor
 BEST_RF_PARAMS = {
     "n_estimators":     200,
     "max_depth":        15,
@@ -328,7 +328,7 @@ def evaluate_by_segment(df_test: pd.DataFrame, y_prob: np.ndarray, threshold: fl
     df_seg["y_pred"]  = (y_prob >= threshold).astype(int)
     df_seg["y_true"]  = df_seg[TARGET].values
 
-    # Segmento 1: has_alert (0 = sin incidencia, 1 = con incidencia)
+    # Segmento 1: has_alert
     rows = []
     for val in [0, 1]:
         mask = df_seg["has_alert"] == val
@@ -368,7 +368,7 @@ def evaluate_by_segment(df_test: pd.DataFrame, y_prob: np.ndarray, threshold: fl
                 "recall":       round(recall_score(sub["y_true"], sub["y_pred"], zero_division=0), 4),
             })
 
-    # Segmento 3: delay_bucket (nivel de retraso actual)
+    # Segmento 3: delay_bucket
     if "delay_seconds" in df_seg.columns:
         bins   = [-np.inf, 0, 60, 300, np.inf]
         labels = ["sin retraso", "leve (<1min)", "moderado (1-5min)", "severo (>5min)"]
@@ -508,7 +508,7 @@ def evaluar_lgbm(df_train, df_val, df_test, feats):
 
     return metrics, y_prob_test, y_pred_test, y_test, importance, seg_df, threshold
 
-
+# Esto no serviría actualmente pero por si acaso lo dejo para un futuro
 def evaluar_rf(df_train, df_val, df_test, feats):
     """
     Reentrena RandomForest con train+val usando los mejores hiperparámetros de Optuna
