@@ -10,7 +10,7 @@ que esta tiene en nuestros modelos.
 Cada trial = 1 run en W&B. Los modelos finales loguean ademas
 PR curve, feature importance y confusion matrix.
 
-Target:  alert_in_next_30m  (1 si hay alerta MTA en los proximos 30 min)
+Target:  alert_in_next_15m  (1 si hay alerta MTA en los proximos 15 min)
 Metrica: PR-AUC  (clases desbalanceadas, ~18% positivos)
 
 

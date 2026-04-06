@@ -12,7 +12,7 @@ Flujo:
      Numericas escaladas con StandardScaler. Todo dentro de sklearn Pipeline.
 -Modelo final reentrenado en train+val con los mejores params.
 
-Target:  alert_in_next_30m  (1 si hay alerta MTA en los proximos 30 min)
+Target:  alert_in_next_15m  (1 si hay alerta MTA en los proximos 15 min)
 Metrica: PR-AUC  (clases desbalanceadas, ~18% positivos)
 """
 

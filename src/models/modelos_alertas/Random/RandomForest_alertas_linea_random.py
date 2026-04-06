@@ -10,7 +10,7 @@ que esta tiene en nuestros modelos.
 Cada trial = 1 run en W&B. Los modelos finales loguean ademas
 PR curve, feature importance y confusion matrix.
 
-Target:  alert_in_next_30m  (1 si hay alerta MTA en los proximos 30 min)
+Target:  alert_in_next_15m  (1 si hay alerta MTA en los proximos 15 min)
 Metrica: PR-AUC  (clases desbalanceadas, ~18% positivos)
 
 
@@ -137,7 +137,7 @@ def main():
 
     run = wandb.init(
         entity=ENTITY, project=PROJECT,
-        name="rf_linea_random_baseline",
+        name="rf_linea_random_15m_baseline",
         config={"model": "baseline_estratificado", "nivel": "linea"},
         tags=["linea", "random_forest", "random_search", "baseline"],
     )
@@ -178,20 +178,6 @@ def main():
         pr_auc_val = average_precision_score(y_val, y_prob_val)
         f1_val     = f1_score(y_val, (y_prob_val >= 0.5).astype(int), zero_division=0)
 
-        run = wandb.init(
-            entity=ENTITY, project=PROJECT,
-            name=f"rf_linea_random_{i+1:02d}",
-            config={**params_completos, "nivel": "linea", "estrategia": "random_search",
-                    "con_seg_alerta": True, "iter": i + 1},
-            tags=["linea", "random_forest", "random_search"],
-        )
-        wandb.log({
-            "pr_auc_val":  pr_auc_val,
-            "f1_val":      f1_val,
-            "roc_auc_val": roc_auc_score(y_val, y_prob_val),
-        })
-        run.finish()
-
         print(f"  [{i+1:02d}/{N_ITER}] PR-AUC val: {pr_auc_val:.4f} | F1 val: {f1_val:.4f}")
 
         if pr_auc_val > mejor_pr_auc:
@@ -216,7 +202,7 @@ def main():
     print(f"Threshold:   {metricas_con['threshold_opt']:.2f}")
 
     log_final_wandb(
-        run_name="rf_linea_random_FINAL_con_seg",
+        run_name="rf_linea_random_15m_FINAL_con_seg",
         config={**mejores_params, "nivel": "linea", "con_seg_alerta": True},
         metricas=metricas_con,
         y_test=y_test, y_prob=y_prob_con, y_pred=y_pred_con,
@@ -240,7 +226,7 @@ def main():
     print(f"Threshold:   {metricas_sin['threshold_opt']:.2f}")
 
     log_final_wandb(
-        run_name="rf_linea_random_FINAL_sin_seg",
+        run_name="rf_linea_random_15m_FINAL_sin_seg",
         config={**mejores_params, "nivel": "linea", "con_seg_alerta": False},
         metricas=metricas_sin,
         y_test=y_test, y_prob=y_prob_sin, y_pred=y_pred_sin,
