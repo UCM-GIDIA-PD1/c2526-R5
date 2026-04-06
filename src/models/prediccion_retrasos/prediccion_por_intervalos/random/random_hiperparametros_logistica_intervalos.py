@@ -1,8 +1,8 @@
 """
-Optimización de Hiperparámetros LGBM — Predicción de retraso por intervalos
+Búsqueda Aleatoria de Hiperparámetros Logistic Regression — Predicción de retraso por intervalos
 
 Uso:
-    uv run python src/models/prediccion_retrasos/prediccion_por_intervalos/optuna/optimizacion_hiperparametros.py
+    uv run python src/models/prediccion_retrasos/random/random_hiperparametros_logistica_intervalos.py
 
 Variables de entorno necesarias:
     MINIO_ACCESS_KEY
@@ -13,17 +13,16 @@ Variables de entorno necesarias:
 import pandas as pd
 import numpy as np
 import os
-import optuna
 import wandb
-from optuna.integration.wandb import WeightsAndBiasesCallback
-from sklearn.model_selection import train_test_split
-from lightgbm import LGBMClassifier
+import scipy.stats as stats
+from sklearn.model_selection import train_test_split, ParameterSampler
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import f1_score, precision_score, recall_score
 
 from src.common.minio_client import download_df_parquet
 
 def procesar(df):
-    """Añade variables temporales y convierte columnas categoricas para preprocesar el dataframe."""
     df['hora'] = df['merge_time'].dt.hour
     df['minuto'] = df['merge_time'].dt.minute
     df['dia_semana'] = df['merge_time'].dt.dayofweek # Lunes=0, Domingo=6
@@ -37,7 +36,6 @@ def procesar(df):
     return df
 
 def cargar_y_preparar_datos():
-    """Carga los datos desde MinIO, aplica el preprocesamiento y devuelve los conjuntos de train y test."""
     INPUT_PATH = 'grupo5/aggregations/DataFrameGroupedByMin=60.parquet'
     ACCESS_KEY = os.getenv('MINIO_ACCESS_KEY')
     SECRET_KEY = os.getenv('MINIO_SECRET_KEY')
@@ -45,6 +43,7 @@ def cargar_y_preparar_datos():
     print('Cargando datos desde MinIO...')
     df = download_df_parquet(ACCESS_KEY, SECRET_KEY, INPUT_PATH)
     
+    # Definir intervalos
     bins = [-np.inf, -60, 60, 180, 300, 450, np.inf]
     labels = [
         'Adelantado (>1 min)', 'Puntual (-1 a 1 min)', 
@@ -81,52 +80,39 @@ def cargar_y_preparar_datos():
     y = y.dropna() 
     X = X.loc[y.index] 
 
-    X = X.fillna(0)
-    y = y.dropna() 
-    X = X.loc[y.index] 
-
     if len(X) > 1000000:
         X = X.tail(1000000)
         y = y.tail(1000000)
+        
     X_temp, X_test, y_temp, y_test = train_test_split(X, y, test_size=0.15, shuffle=False)
-    
     X_train, X_val, y_train, y_val = train_test_split(X_temp, y_temp, test_size=0.1764, shuffle=False)
 
-    return X_train, X_val, y_train, y_val
+    print("Escalando características con StandardScaler...")
+    scaler = StandardScaler()
+    X_train_scaled = pd.DataFrame(scaler.fit_transform(X_train), columns=X_train.columns, index=X_train.index)
+    X_val_scaled = pd.DataFrame(scaler.transform(X_val), columns=X_val.columns, index=X_val.index)
+
+    return X_train_scaled, X_val_scaled, y_train, y_val
 
 
-def objective(trial, X_train, X_val, y_train, y_val, labels):
-    param = {
-        'n_estimators': trial.suggest_int('n_estimators', 50, 300),
-        'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.2, log=True),
-        'num_leaves': trial.suggest_int('num_leaves', 20, 150),
-        'max_depth': trial.suggest_int('max_depth', 3, 15),
-        'min_child_samples': trial.suggest_int('min_child_samples', 10, 100),
-        'subsample': trial.suggest_float('subsample', 0.6, 1.0),
-        'colsample_bytree': trial.suggest_float('colsample_bytree', 0.6, 1.0),
-        'class_weight': trial.suggest_categorical('class_weight', ['balanced', None]),
-        'random_state': 42,
-        'n_jobs': -1,
-        'verbose': -1
-    }
+def evaluar_configuracion(trial_number, param, X_train, X_val, y_train, y_val, labels):
+    # Ajustar l1_ratio dependiendo del penalty
+    if param['penalty'] != 'elasticnet':
+        param['l1_ratio'] = None
 
     # ==========================================
-    # INICIAR W&B PARA ESTE INTENTO ESPECÍFICO
+    # INICIA W&B PARA ESTE INTENTO ESPECÍFICO
     # ==========================================
     run = wandb.init(
         project="pd1-c2526-team5",
-        group="optuna-lgbm-tuning-intervalos-group60min-obj-target10m", 
-        name=f"trial_{trial.number}", 
+        group="randomsearch-logreg-tuning-intervalos-group60min-obj-target10m", 
+        name=f"trial_{trial_number}", 
         config=param, 
         reinit=True 
     )
 
-
-    modelo = LGBMClassifier(**param)
-    modelo.fit(
-        X_train, y_train,
-        eval_set=[(X_val, y_val)],
-    )
+    modelo = LogisticRegression(**param)
+    modelo.fit(X_train, y_train)
     
     y_pred = modelo.predict(X_val)
     y_probas = modelo.predict_proba(X_val)
@@ -147,7 +133,7 @@ def objective(trial, X_train, X_val, y_train, y_val, labels):
         y_train, y_val, 
         y_pred, y_probas, 
         labels=labels,
-        model_name=f"LGBM_Trial_{trial.number}",
+        model_name=f"LogReg_Trial_{trial_number}",
         feature_names=X_train.columns.tolist()
     )
 
@@ -164,16 +150,50 @@ if __name__ == "__main__":
         'Retraso grave (5-7.5 min)', 'Retraso muy grave (>7.5 min)'
     ]
 
-    study = optuna.create_study(direction='maximize', study_name="lgbm_retrasos_tuning")
+    # 1. Definir el espacio de búsqueda (Distribuciones)
+    param_distributions = {
+        'C': stats.loguniform(1e-4, 1e2),
+        'penalty': ['l1', 'l2', 'elasticnet'],
+        'class_weight': ['balanced', None],
+        'l1_ratio': stats.uniform(0.0, 1.0), # Solo se usará si cae en 'elasticnet'
+        'solver': ['saga'], 
+        'max_iter': [500],  
+        'random_state': [42],
+        'n_jobs': [-1]
+    }
+
+    n_trials = 30
+    rng = np.random.RandomState(42)
+    random_params = list(ParameterSampler(param_distributions, n_iter=n_trials, random_state=rng))
+
+    print("Iniciando la búsqueda aleatoria de hiperparámetros...")
     
-    print("Iniciando la búsqueda de hiperparámetros...")
-    study.optimize(
-        lambda trial: objective(trial, X_train, X_val, y_train, y_val, labels), 
-        n_trials=30
-    )
+    best_f1 = 0.0
+    best_params = None
+
+    for i, params_actuales in enumerate(random_params):
+        print(f"\n--- Iniciando Trial {i} ---")
+        
+        f1_actual = evaluar_configuracion(
+            trial_number=i, 
+            param=params_actuales.copy(), 
+            X_train=X_train, 
+            X_val=X_val, 
+            y_train=y_train, 
+            y_val=y_val, 
+            labels=labels
+        )
+        
+        print(f"F1-Score del Trial {i}: {f1_actual}")
+        
+        if f1_actual > best_f1:
+            best_f1 = f1_actual
+            best_params = params_actuales.copy()
+            if best_params['penalty'] != 'elasticnet':
+                best_params['l1_ratio'] = None
 
     print("\n--- ¡Búsqueda completada! ---")
-    print(f"Mejor F1-Score general: {study.best_value}")
+    print(f"Mejor F1-Score general: {best_f1}")
     print("Mejores hiperparámetros encontrados:")
-    for key, value in study.best_params.items():
+    for key, value in best_params.items():
         print(f"    {key}: {value}")
