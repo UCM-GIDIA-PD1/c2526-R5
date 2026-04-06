@@ -39,3 +39,4 @@ src/models/prediccion_propagacion/artefactos/
 
 # Claude
 .claude/
+CLAUDE.md

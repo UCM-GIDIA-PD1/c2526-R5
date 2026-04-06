@@ -40,6 +40,7 @@ def process_and_store_gtfs_range(start: str, end: str) -> None:
         target_date_str = single_date.strftime("%Y-%m-%d")
         print(f"Procesando día: {target_date_str}")
 
+        local_parquet_path = None
         try:
             # Procesa los datos static y realtime del día y devuelve ruta del Parquet final
             local_parquet_path = process_mta_date(target_date_str)
