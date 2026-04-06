@@ -1,8 +1,8 @@
 """
-Optimización de Hiperparámetros LGBM — Predicción de retraso por intervalos
+Optimización de Hiperparámetros Logistic Regression — Predicción de retraso por intervalos
 
 Uso:
-    uv run python src/models/prediccion_retrasos/prediccion_por_intervalos/optuna/optimizacion_hiperparametros.py
+    uv run python src/models/prediccion_retrasos/prediccion_por_intervalos/optuna/optuna_regresion_logistica_intervalos.py
 
 Variables de entorno necesarias:
     MINIO_ACCESS_KEY
@@ -15,9 +15,9 @@ import numpy as np
 import os
 import optuna
 import wandb
-from optuna.integration.wandb import WeightsAndBiasesCallback
 from sklearn.model_selection import train_test_split
-from lightgbm import LGBMClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import f1_score, precision_score, recall_score
 
 from src.common.minio_client import download_df_parquet
@@ -42,7 +42,7 @@ def cargar_y_preparar_datos():
 
     print('Cargando datos desde MinIO...')
     df = download_df_parquet(ACCESS_KEY, SECRET_KEY, INPUT_PATH)
-    
+
     bins = [-np.inf, -60, 60, 180, 300, 450, np.inf]
     labels = [
         'Adelantado (>1 min)', 'Puntual (-1 a 1 min)', 
@@ -79,52 +79,56 @@ def cargar_y_preparar_datos():
     y = y.dropna() 
     X = X.loc[y.index] 
 
-    X = X.fillna(0)
-    y = y.dropna() 
-    X = X.loc[y.index] 
-
     if len(X) > 1000000:
         X = X.tail(1000000)
         y = y.tail(1000000)
+        
     X_temp, X_test, y_temp, y_test = train_test_split(X, y, test_size=0.15, shuffle=False)
-    
     X_train, X_val, y_train, y_val = train_test_split(X_temp, y_temp, test_size=0.1764, shuffle=False)
 
-    return X_train, X_val, y_train, y_val
+    # IMPORTANTE: Escalado de datos para Regresión Logística
+    print("Escalando características con StandardScaler...")
+    scaler = StandardScaler()
+
+    X_train_scaled = pd.DataFrame(scaler.fit_transform(X_train), columns=X_train.columns, index=X_train.index)
+    X_val_scaled = pd.DataFrame(scaler.transform(X_val), columns=X_val.columns, index=X_val.index)
+
+    return X_train_scaled, X_val_scaled, y_train, y_val
 
 
 def objective(trial, X_train, X_val, y_train, y_val, labels):
+    penalty = trial.suggest_categorical('penalty', ['l1', 'l2', 'elasticnet'])
+    
     param = {
-        'n_estimators': trial.suggest_int('n_estimators', 50, 300),
-        'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.2, log=True),
-        'num_leaves': trial.suggest_int('num_leaves', 20, 150),
-        'max_depth': trial.suggest_int('max_depth', 3, 15),
-        'min_child_samples': trial.suggest_int('min_child_samples', 10, 100),
-        'subsample': trial.suggest_float('subsample', 0.6, 1.0),
-        'colsample_bytree': trial.suggest_float('colsample_bytree', 0.6, 1.0),
+        'C': trial.suggest_float('C', 1e-4, 1e2, log=True),
+        'penalty': penalty,
+        'solver': 'saga', # 'saga' es la mejor opción para datasets grandes y soporta l1, l2 y elasticnet
         'class_weight': trial.suggest_categorical('class_weight', ['balanced', None]),
+        'max_iter': 500,  
         'random_state': 42,
-        'n_jobs': -1,
-        'verbose': -1
+        'n_jobs': -1
     }
+
+    # Si elegimos elasticnet, necesitamos definir el l1_ratio
+    if penalty == 'elasticnet':
+        param['l1_ratio'] = trial.suggest_float('l1_ratio', 0.0, 1.0)
+    else:
+        param['l1_ratio'] = None
 
     # ==========================================
     # INICIAR W&B PARA ESTE INTENTO ESPECÍFICO
     # ==========================================
     run = wandb.init(
         project="pd1-c2526-team5",
-        group="optuna-lgbm-tuning-intervalos-group60min-obj-target10m", 
+        group="optuna-logreg-tuning-intervalos-group60min-obj-target10m", 
         name=f"trial_{trial.number}", 
         config=param, 
         reinit=True 
     )
 
-
-    modelo = LGBMClassifier(**param)
-    modelo.fit(
-        X_train, y_train,
-        eval_set=[(X_val, y_val)],
-    )
+    modelo = LogisticRegression(**param)
+    
+    modelo.fit(X_train, y_train)
     
     y_pred = modelo.predict(X_val)
     y_probas = modelo.predict_proba(X_val)
@@ -145,7 +149,7 @@ def objective(trial, X_train, X_val, y_train, y_val, labels):
         y_train, y_val, 
         y_pred, y_probas, 
         labels=labels,
-        model_name=f"LGBM_Trial_{trial.number}",
+        model_name=f"LogReg_Trial_{trial.number}",
         feature_names=X_train.columns.tolist()
     )
 
@@ -162,7 +166,7 @@ if __name__ == "__main__":
         'Retraso grave (5-7.5 min)', 'Retraso muy grave (>7.5 min)'
     ]
 
-    study = optuna.create_study(direction='maximize', study_name="lgbm_retrasos_tuning")
+    study = optuna.create_study(direction='maximize', study_name="logreg_retrasos_tuning")
     
     print("Iniciando la búsqueda de hiperparámetros...")
     study.optimize(

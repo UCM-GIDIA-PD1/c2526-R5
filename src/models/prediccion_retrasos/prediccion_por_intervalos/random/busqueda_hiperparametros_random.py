@@ -1,8 +1,8 @@
 """
-Optimización de Hiperparámetros LGBM — Predicción de retraso por intervalos
+Optimización de Hiperparámetros LGBM (Random Search) — Predicción de retraso por intervalos
 
 Uso:
-    uv run python src/models/prediccion_retrasos/prediccion_por_intervalos/optuna/optimizacion_hiperparametros.py
+    uv run python src/models/prediccion_retrasos/prediccion_por_intervalos/random/busqueda_hiperparametros_random.py
 
 Variables de entorno necesarias:
     MINIO_ACCESS_KEY
@@ -13,10 +13,9 @@ Variables de entorno necesarias:
 import pandas as pd
 import numpy as np
 import os
-import optuna
 import wandb
-from optuna.integration.wandb import WeightsAndBiasesCallback
-from sklearn.model_selection import train_test_split
+import scipy.stats as stats
+from sklearn.model_selection import train_test_split, ParameterSampler
 from lightgbm import LGBMClassifier
 from sklearn.metrics import f1_score, precision_score, recall_score
 
@@ -43,6 +42,7 @@ def cargar_y_preparar_datos():
     print('Cargando datos desde MinIO...')
     df = download_df_parquet(ACCESS_KEY, SECRET_KEY, INPUT_PATH)
     
+    # Definir intervalos
     bins = [-np.inf, -60, 60, 180, 300, 450, np.inf]
     labels = [
         'Adelantado (>1 min)', 'Puntual (-1 a 1 min)', 
@@ -79,53 +79,39 @@ def cargar_y_preparar_datos():
     y = y.dropna() 
     X = X.loc[y.index] 
 
-    X = X.fillna(0)
-    y = y.dropna() 
-    X = X.loc[y.index] 
-
+    
     if len(X) > 1000000:
         X = X.tail(1000000)
         y = y.tail(1000000)
+
     X_temp, X_test, y_temp, y_test = train_test_split(X, y, test_size=0.15, shuffle=False)
     
     X_train, X_val, y_train, y_val = train_test_split(X_temp, y_temp, test_size=0.1764, shuffle=False)
 
     return X_train, X_val, y_train, y_val
 
+def evaluate_random_combination(trial_number, param_dict, X_train, X_val, y_train, y_val, labels):
+    """
+    Función que entrena el modelo con una combinación específica y loguea en W&B.
+    """
+    param_dict['random_state'] = 42
+    param_dict['n_jobs'] = -1
+    param_dict['verbose'] = -1
 
-def objective(trial, X_train, X_val, y_train, y_val, labels):
-    param = {
-        'n_estimators': trial.suggest_int('n_estimators', 50, 300),
-        'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.2, log=True),
-        'num_leaves': trial.suggest_int('num_leaves', 20, 150),
-        'max_depth': trial.suggest_int('max_depth', 3, 15),
-        'min_child_samples': trial.suggest_int('min_child_samples', 10, 100),
-        'subsample': trial.suggest_float('subsample', 0.6, 1.0),
-        'colsample_bytree': trial.suggest_float('colsample_bytree', 0.6, 1.0),
-        'class_weight': trial.suggest_categorical('class_weight', ['balanced', None]),
-        'random_state': 42,
-        'n_jobs': -1,
-        'verbose': -1
-    }
-
-    # ==========================================
-    # INICIAR W&B PARA ESTE INTENTO ESPECÍFICO
-    # ==========================================
     run = wandb.init(
         project="pd1-c2526-team5",
         group="optuna-lgbm-tuning-intervalos-group60min-obj-target10m", 
-        name=f"trial_{trial.number}", 
-        config=param, 
+        name=f"random_trial_{trial_number}", 
+        config=param_dict, 
         reinit=True 
     )
 
-
-    modelo = LGBMClassifier(**param)
+    modelo = LGBMClassifier(**param_dict)
     modelo.fit(
         X_train, y_train,
-        eval_set=[(X_val, y_val)],
+        eval_set=[(X_val, y_val)]
     )
-    
+
     y_pred = modelo.predict(X_val)
     y_probas = modelo.predict_proba(X_val)
     
@@ -145,7 +131,7 @@ def objective(trial, X_train, X_val, y_train, y_val, labels):
         y_train, y_val, 
         y_pred, y_probas, 
         labels=labels,
-        model_name=f"LGBM_Trial_{trial.number}",
+        model_name=f"LGBM_Random_Trial_{trial_number}",
         feature_names=X_train.columns.tolist()
     )
 
@@ -162,16 +148,59 @@ if __name__ == "__main__":
         'Retraso grave (5-7.5 min)', 'Retraso muy grave (>7.5 min)'
     ]
 
-    study = optuna.create_study(direction='maximize', study_name="lgbm_retrasos_tuning")
-    
-    print("Iniciando la búsqueda de hiperparámetros...")
-    study.optimize(
-        lambda trial: objective(trial, X_train, X_val, y_train, y_val, labels), 
-        n_trials=30
-    )
+    param_distributions = {
+        'n_estimators': stats.randint(50, 301),                  # Valores entre 50 y 300
+        'learning_rate': stats.uniform(0.01, 0.19),              # Valores entre 0.01 y 0.20
+        'num_leaves': stats.randint(20, 151),                    # Valores entre 20 y 150
+        'max_depth': stats.randint(3, 16),                       # Valores entre 3 y 15
+        'min_child_samples': stats.randint(10, 101),             # Valores entre 10 y 100
+        'subsample': stats.uniform(0.6, 0.4),                    # Valores entre 0.6 y 1.0
+        'colsample_bytree': stats.uniform(0.6, 0.4),             # Valores entre 0.6 y 1.0
+        'class_weight': ['balanced', None]
+    }
 
-    print("\n--- ¡Búsqueda completada! ---")
-    print(f"Mejor F1-Score general: {study.best_value}")
+    N_INTENTOS = 30 
+    
+    sampler = ParameterSampler(param_distributions, n_iter=N_INTENTOS, random_state=42)
+    
+    print(f"\nIniciando Random Search con {N_INTENTOS} intentos aleatorios...")
+
+    best_f1 = 0
+    best_params = None
+
+    for i, params in enumerate(sampler):
+        print(f"\n--- Evaluando intento aleatorio {i+1}/{N_INTENTOS} ---")
+        
+        # Opcional: imprimir los parámetros actuales para tener feedback en consola
+        for k, v in params.items():
+            if isinstance(v, float):
+                print(f"  {k}: {v:.4f}")
+            else:
+                print(f"  {k}: {v}")
+                
+        current_f1 = evaluate_random_combination(
+            trial_number=i+1, 
+            param_dict=params, 
+            X_train=X_train, 
+            X_val=X_val, 
+            y_train=y_train, 
+            y_val=y_val, 
+            labels=labels
+        )
+        
+        print(f"-> Resultado F1-Score (Macro): {current_f1:.4f}")
+
+        if current_f1 > best_f1:
+            best_f1 = current_f1
+            best_params = params.copy()
+
+    print("\n=============================================")
+    print("--- ¡Búsqueda Aleatoria completada! ---")
+    print(f"Mejor F1-Score general (Macro): {best_f1:.4f}")
     print("Mejores hiperparámetros encontrados:")
-    for key, value in study.best_params.items():
-        print(f"    {key}: {value}")
+    for key, value in best_params.items():
+        if isinstance(value, float):
+            print(f"    {key}: {value:.4f}")
+        else:
+            print(f"    {key}: {value}")
+    print("=============================================")
