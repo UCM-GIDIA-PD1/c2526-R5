@@ -72,7 +72,6 @@ VARIABLES_ENTRADA = [
     "actual_headway_seconds", "hour_sin", "hour_cos", "dow",
 ]
 VARIABLES_OBJETIVO = [
-    "target_delay_10m", "target_delay_20m", "target_delay_30m",
     "station_delay_10m", "station_delay_20m", "station_delay_30m",
 ]
 
