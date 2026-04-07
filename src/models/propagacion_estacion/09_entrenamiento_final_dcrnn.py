@@ -203,7 +203,6 @@ def main():
         modelo.load_state_dict(best_state)
 
     wandb.log({'best_trainval_loss': best_loss, 'best_epoch': best_epoch, 'train_time_sec': tiempo_total})
-    wandb.finish()
 
     # ── Guardar modelo (sin métricas de test) ─────────────────────────────────
     torch.save(
@@ -225,6 +224,7 @@ def main():
     )
     print(f"Modelo final DCRNN guardado en: {RUTA_MODELO}")
     print("NOTA: la evaluación sobre Test se realiza en 12_evaluacion_modelos.py")
+    wandb.finish()
 
 
 if __name__ == "__main__":
