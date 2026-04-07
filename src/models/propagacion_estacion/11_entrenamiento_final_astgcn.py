@@ -33,6 +33,7 @@ Uso
     uv run python src/models/propagacion_estacion/09_entrenamiento_final_astgcn.py
 """
 import copy
+import gc
 import os
 import random
 import sys
@@ -46,8 +47,6 @@ import torch.nn as nn
 from sklearn.preprocessing import StandardScaler
 from torch.utils.data import DataLoader, Dataset
 
-os.environ["WANDB_MODE"] = "offline"
-os.environ["WANDB_START_METHOD"] = "thread"
 
 import wandb
 
@@ -89,8 +88,8 @@ def set_seed(seed: int = SEED) -> None:
 
 class DatasetASTGCN(Dataset):
     def __init__(self, X, Y, history_len: int):
-        self.X = torch.tensor(X, dtype=torch.float32)
-        self.Y = torch.tensor(Y, dtype=torch.float32)
+        self.X = torch.from_numpy(X) if isinstance(X, np.ndarray) else X
+        self.Y = torch.from_numpy(Y) if isinstance(Y, np.ndarray) else Y
         self.history_len = history_len
 
     def __len__(self):
@@ -109,14 +108,23 @@ def descargar_datos():
         access_key, secret_key,
         "grupo5/final/year=2025/month=01/dataset_final.parquet"
     )
+    cols_necesarias = [
+        'stop_id', 'merge_time',
+        'delay_seconds', 'lagged_delay_1', 'lagged_delay_2', 'is_unscheduled',
+        'temp_extreme', 'n_eventos_afectando', 'route_rolling_delay', 'actual_headway_seconds',
+        'station_delay_10m', 'station_delay_20m', 'station_delay_30m',
+    ]
+    df_final = df_final[[c for c in cols_necesarias if c in df_final.columns]]
     dates = pd.date_range(start="2025-01-01", end="2025-01-31").strftime("%Y-%m-%d").tolist()
+    cols_gtfs = ['trip_uid', 'stop_id', 'scheduled_seconds']
     dfs = []
     for date in dates:
         try:
-            dfs.append(download_df_parquet(
+            df_gtfs = download_df_parquet(
                 access_key, secret_key,
                 f"grupo5/cleaned/gtfs_clean_scheduled/date={date}/gtfs_scheduled_{date}.parquet"
-            ))
+            )
+            dfs.append(df_gtfs[[c for c in cols_gtfs if c in df_gtfs.columns]])
         except Exception:
             print(f"No se pudo descargar GTFS para: {date}")
     if not dfs:
@@ -135,6 +143,7 @@ def construir_grafo(df):
         median_travel_time=("travel_time", "median"),
         trip_count=("trip_uid", "count"),
     ).reset_index()
+    del edges_df
     graph_df = graph_df[graph_df["trip_count"] > 5]
     nodes = sorted(list(set(df["stop_id"].unique()) | set(df["next_stop_id"].dropna().unique())))
     node_to_idx = {stop_id: idx for idx, stop_id in enumerate(nodes)}
@@ -149,6 +158,7 @@ def construir_grafo(df):
         w = np.exp(-(row["median_travel_time"] ** 2) / (sigma ** 2))
         A[i, j] = w
         A[j, i] = w
+    del graph_df
     return node_to_idx, A
 
 
@@ -160,10 +170,10 @@ def crear_tensores(df, mapa_nodos, features, targets, freq=FREQ):
         "delay_seconds": "mean", "lagged_delay_1": "mean", "lagged_delay_2": "mean",
         "is_unscheduled": "sum", "temp_extreme": "max", "n_eventos_afectando": "max",
         "route_rolling_delay": "mean", "actual_headway_seconds": "mean",
-        "target_delay_10m": "mean", "target_delay_20m": "mean", "target_delay_30m": "mean",
         "station_delay_10m": "mean", "station_delay_20m": "mean", "station_delay_30m": "mean",
     }
     df_agr  = df.groupby(["time_bin", "stop_id"]).agg(reglas)
+    del df
     tiempos = pd.date_range(
         start=df_agr.index.get_level_values("time_bin").min(),
         end=df_agr.index.get_level_values("time_bin").max(),
@@ -171,6 +181,7 @@ def crear_tensores(df, mapa_nodos, features, targets, freq=FREQ):
     )
     idx_completo = pd.MultiIndex.from_product([tiempos, nodos_validos], names=["time_bin", "stop_id"])
     df_c = df_agr.reindex(idx_completo).reset_index()
+    del df_agr
     df_c[["delay_seconds", "lagged_delay_1", "lagged_delay_2",
           "is_unscheduled", "route_rolling_delay", "actual_headway_seconds"]] = \
         df_c[["delay_seconds", "lagged_delay_1", "lagged_delay_2",
@@ -214,9 +225,9 @@ def split_y_escalar(X_full, Y_full):
     Y_te_s = sc_Y.transform(Y_te.reshape(-1, C)).reshape(Y_te.shape)
 
     return {
-        'X_train': X_tr_s, 'Y_train': Y_tr_s,
-        'X_val':   X_va_s, 'Y_val':   Y_va_s,
-        'X_test':  X_te_s, 'Y_test':  Y_te_s,
+        'X_train': X_tr_s.astype(np.float32), 'Y_train': Y_tr_s.astype(np.float32),
+        'X_val':   X_va_s.astype(np.float32), 'Y_val':   Y_va_s.astype(np.float32),
+        'X_test':  X_te_s.astype(np.float32), 'Y_test':  Y_te_s.astype(np.float32),
         'scaler_Y': sc_Y,
     }
 
@@ -231,7 +242,11 @@ def main():
 
     df_final, df_gtfs  = descargar_datos()
     node_to_idx, A_raw = construir_grafo(df_gtfs)
+    del df_gtfs
+    gc.collect()
     X_full, Y_full     = crear_tensores(df_final, node_to_idx, VARIABLES_ENTRADA, VARIABLES_OBJETIVO)
+    del df_final
+    gc.collect()
 
     # ── Extraer features de segmentación ANTES del escalado ──────────────────
     T_total    = X_full.shape[0]
@@ -240,6 +255,8 @@ def main():
     temp_extreme_test_raw = X_full[t_test_ini:, :, IDX_TEMP_EXTREME].copy()
 
     splits  = split_y_escalar(X_full, Y_full)
+    del X_full, Y_full
+    gc.collect()
     N_nodes = len(node_to_idx)
 
     # ── Polinomios de Chebyshev ───────────────────────────────────────────────
@@ -247,10 +264,14 @@ def main():
     cheb_polynomials = calcular_polinomios_chebyshev(
         calcular_scaled_laplacian(A_raw), K_cheb
     )
+    del A_raw
+    gc.collect()
 
     # ── Concatenar Train + Val ────────────────────────────────────────────────
     X_trainval = np.concatenate([splits['X_train'], splits['X_val']], axis=0)
     Y_trainval = np.concatenate([splits['Y_train'], splits['Y_val']], axis=0)
+    del splits['X_train'], splits['Y_train'], splits['X_val'], splits['Y_val']
+    gc.collect()
     print(f"Train+Val: {X_trainval.shape[0]} pasos  |  Test: {splits['X_test'].shape[0]} pasos")
 
     hl = best_params['history_len']
@@ -276,7 +297,7 @@ def main():
     optimizer = torch.optim.Adam(model.parameters(), lr=best_params['learning_rate'])
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=4)
 
-    wandb.init(project=WANDB_PROJECT, name='astgcn-final-trainval', mode='offline', config=best_params)
+    wandb.init(project=WANDB_PROJECT, name='astgcn-final-trainval', config=best_params)
 
     best_loss  = float('inf')
     best_epoch = 0
@@ -310,7 +331,6 @@ def main():
 
     train_time = time.time() - t0
     wandb.log({'best_trainval_loss': best_loss, 'best_epoch': best_epoch, 'train_time_sec': train_time})
-    wandb.finish()
 
     # ── Guardar modelo + datos de test (sin evaluación sobre test) ────────────
     torch.save(
@@ -332,6 +352,7 @@ def main():
     )
     print(f"Modelo final ASTGCN guardado en: {RUTA_MODELO}")
     print("NOTA: la evaluación sobre Test se realiza en 12_evaluacion_modelos.py")
+    wandb.finish()
 
 
 if __name__ == '__main__':
