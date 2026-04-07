@@ -23,6 +23,7 @@ from sklearn.metrics import f1_score, precision_score, recall_score
 from src.common.minio_client import download_df_parquet
 
 def procesar(df):
+    """Añade variables temporales y convierte columnas categoricas para preprocesar el dataframe."""
     df['hora'] = df['merge_time'].dt.hour
     df['minuto'] = df['merge_time'].dt.minute
     df['dia_semana'] = df['merge_time'].dt.dayofweek # Lunes=0, Domingo=6
@@ -36,6 +37,7 @@ def procesar(df):
     return df
 
 def cargar_y_preparar_datos():
+    """Carga los datos desde MinIO, aplica el preprocesamiento y devuelve los conjuntos de train y test."""
     INPUT_PATH = 'grupo5/aggregations/DataFrameGroupedByMin=60.parquet'
     ACCESS_KEY = os.getenv('MINIO_ACCESS_KEY')
     SECRET_KEY = os.getenv('MINIO_SECRET_KEY')

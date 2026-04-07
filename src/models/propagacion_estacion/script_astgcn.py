@@ -7,7 +7,8 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 import torch.nn as nn
 import gc
-import torch.nn.functional as F
+#import torch.nn.functional as F
+import torch.nn.functional as F_torch
 
 os.environ["WANDB_MODE"] = "offline"
 os.environ["WANDB_START_METHOD"] = "thread"
@@ -29,7 +30,6 @@ print("Importación realizada con éxito desde:", ROOT)
 # Descargar dataset
 access_key = os.getenv("MINIO_ACCESS_KEY")
 secret_key = os.getenv("MINIO_SECRET_KEY")
-
 
 ruta_archivo = "grupo5/final/year=2025/month=01/dataset_final.parquet"
 df_final = download_df_parquet(access_key, secret_key, ruta_archivo)
@@ -244,22 +244,43 @@ X_test = X_full[limite_corte:]
 Y_train = Y_full[:limite_corte]
 Y_test = Y_full[limite_corte:]
 
+# Separar una parte del train para validación temporal
+limite_val = int(X_train.shape[0] * 0.8)
+
+X_train_final = X_train[:limite_val]
+X_val = X_train[limite_val:]
+
+Y_train_final = Y_train[:limite_val]
+Y_val = Y_train[limite_val:]
+
+print(f"Secuencias train final: {X_train_final.shape[0]}")
+print(f"Secuencias validación: {X_val.shape[0]}")
+print(f"Secuencias test: {X_test.shape[0]}")
+
 print(f"Secuencias de entrenamiento: {X_train.shape[0]}")
 print(f"Secuencias de test: {X_test.shape[0]}")
 
-T_train, N, F_in = X_train.shape
+T_train, N, F = X_train_final.shape
+T_val = X_val.shape[0]
 T_test = X_test.shape[0]
 
 scaler_X = StandardScaler()
-X_train_scaled = scaler_X.fit_transform(X_train.reshape(-1, F_in)).reshape(T_train, N, F_in)
-X_test_scaled = scaler_X.transform(X_test.reshape(-1, F_in)).reshape(T_test, N, F_in)
+X_train_scaled = scaler_X.fit_transform(X_train_final.reshape(-1, F)).reshape(T_train, N, F)
+X_val_scaled = scaler_X.transform(X_val.reshape(-1, F)).reshape(T_val, N, F)
+X_test_scaled = scaler_X.transform(X_test.reshape(-1, F)).reshape(T_test, N, F)
 
-C_out = Y_train.shape[2]
+C = Y_train_final.shape[2]
 scaler_Y = StandardScaler()
-Y_train_scaled = scaler_Y.fit_transform(Y_train.reshape(-1, C_out)).reshape(T_train, N, C_out)
-Y_test_scaled = scaler_Y.transform(Y_test.reshape(-1, C_out)).reshape(T_test, N, C_out)
+Y_train_scaled = scaler_Y.fit_transform(Y_train_final.reshape(-1, C)).reshape(T_train, N, C)
+Y_val_scaled = scaler_Y.transform(Y_val.reshape(-1, C)).reshape(T_val, N, C)
+Y_test_scaled = scaler_Y.transform(Y_test.reshape(-1, C)).reshape(T_test, N, C)
 
 print("Datos escalados correctamente.")
+
+print("STD real de cada target:")
+for nombre, escala in zip(variables_objetivo, scaler_Y.scale_):
+    print(f"{nombre}: {escala:.2f} s")
+
 
 # =========================
 # DATASET
@@ -279,13 +300,16 @@ class DatasetASTGCN(Dataset):
         return ventana_x, objetivo_y
 
 
-history_len = 8
-batch_size = 32
+history_len = 12 # antes 8
+batch_size = 16 # antes 32
+
 
 train_dataset = DatasetASTGCN(X_train_scaled, Y_train_scaled, history_len)
+val_dataset = DatasetASTGCN(X_val_scaled, Y_val_scaled, history_len)
 test_dataset = DatasetASTGCN(X_test_scaled, Y_test_scaled, history_len)
 
 train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
 print(f"Lotes de entrenamiento (batches): {len(train_loader)}")
@@ -402,7 +426,7 @@ class ChebConvWithSpatialAttention(nn.Module):
 
             outputs.append(output_t.unsqueeze(1))
 
-        return F.relu(torch.cat(outputs, dim=1))  # (B, T, N, out_channels)
+        return F_torch.relu(torch.cat(outputs, dim=1))  # (B, T, N, out_channels)
 
 
 class ASTGCNBlock(nn.Module):
@@ -439,7 +463,7 @@ class ASTGCNBlock(nn.Module):
         x_tc = self.time_conv(x_gc_perm)                  # (B, C, T, N)
 
         residual = self.residual_conv(x.permute(0, 3, 1, 2))
-        x_out = F.relu(x_tc + residual)                   # (B, C, T, N)
+        x_out = F_torch.relu(x_tc + residual)                   # (B, C, T, N)
 
         x_out = x_out.permute(0, 2, 3, 1)                 # (B, T, N, C)
         x_out = self.layer_norm(x_out)
@@ -483,6 +507,9 @@ class ASTGCN_Metro(nn.Module):
             kernel_size=(1, hidden_channels),
         )
 
+
+        self.dropout = nn.Dropout(p=0.2) #nuevo
+
         self.fc = nn.Linear(num_nodes, num_nodes * num_targets)
         self.num_nodes = num_nodes
         self.num_targets = num_targets
@@ -490,7 +517,10 @@ class ASTGCN_Metro(nn.Module):
     def forward(self, x):
         # x: (B, T, N, F)
         x = self.block1(x)
+        x = self.dropout(x) #nuevo
+
         x = self.block2(x)
+        x = self.dropout(x) #nuevo
 
         # (B, T, N, C) -> usar el tiempo como canales, igual que en implementaciones ASTGCN
         x = x.permute(0, 1, 2, 3)   # (B, T, N, C)
@@ -530,83 +560,102 @@ import torch.optim as optim
 import time
 
 epocas = 50
-tasa_aprendizaje = 0.001
-criterio = nn.MSELoss()
+tasa_aprendizaje = 0.0005 #antes 0.001
+criterio = nn.SmoothL1Loss(beta=0.5) #antes: nn.MSELoss() 
 optimizador = optim.Adam(modelo.parameters(), lr=tasa_aprendizaje)
 
 wandb.init(project="pd1-c2526-team5", name="test-astgcn-1", mode="offline")
+scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+    optimizador, mode='min', factor=0.5, patience=5
+)
 
-print("Iniciando el entrenamiento de ASTGCN...")
+mejor_val_loss = float('inf')
+
+print("Iniciando entrenamiento...")
 
 for epoca in range(epocas):
     inicio_epoca = time.time()
 
+    # ---------------- TRAIN ----------------
     modelo.train()
     loss_entrenamiento_total = 0.0
+    mae_entrenamiento_total = 0.0
+    mse_entrenamiento_total = 0.0
 
     for lotes_x, lotes_y in train_loader:
         lotes_x = lotes_x.to(device)
         lotes_y = lotes_y.to(device)
 
         optimizador.zero_grad()
-
         predicciones = modelo(lotes_x)
 
         loss = criterio(predicciones, lotes_y)
-        loss_entrenamiento_total += loss.item() * lotes_x.size(0)
-
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(modelo.parameters(), max_norm=1.0)
+
         optimizador.step()
 
-    loss_medio = loss_entrenamiento_total / len(train_dataset)
-    tiempo_epoca = time.time() - inicio_epoca
+        loss_entrenamiento_total += loss.item() * lotes_x.size(0)
+        mae_batch = torch.mean(torch.abs(predicciones - lotes_y)).item()
+        mse_batch = torch.mean((predicciones - lotes_y) ** 2).item()
 
-    wandb.log({"loss_medio": loss_medio, "tiempo_epoca": tiempo_epoca}, step=epoca)
+        mae_entrenamiento_total += mae_batch * lotes_x.size(0)
+        mse_entrenamiento_total += mse_batch * lotes_x.size(0)
+
+    train_loss = loss_entrenamiento_total / len(train_dataset)
+    train_mae = mae_entrenamiento_total / len(train_dataset)
+    train_rmse = np.sqrt(mse_entrenamiento_total / len(train_dataset))
+
+    # ---------------- VALIDATION ----------------
+    modelo.eval()
+    loss_validacion_total = 0.0
+    mae_validacion_total = 0.0
+    mse_validacion_total = 0.0
+
+    with torch.no_grad():
+        for lotes_x, lotes_y in val_loader:
+            lotes_x = lotes_x.to(device)
+            lotes_y = lotes_y.to(device)
+
+            predicciones = modelo(lotes_x)
+
+            loss = criterio(predicciones, lotes_y)
+
+            loss_validacion_total += loss.item() * lotes_x.size(0)
+
+            mae_batch = torch.mean(torch.abs(predicciones - lotes_y)).item()
+            mse_batch = torch.mean((predicciones - lotes_y) ** 2).item()
+
+            mae_validacion_total += mae_batch * lotes_x.size(0)
+            mse_validacion_total += mse_batch * lotes_x.size(0)
+
+    val_loss = loss_validacion_total / len(val_dataset)
+    val_mae = mae_validacion_total / len(val_dataset)
+    val_rmse = np.sqrt(mse_validacion_total / len(val_dataset))
+
+    scheduler.step(val_loss)
+
+    tiempo_epoca = time.time() - inicio_epoca
+    lr_actual = optimizador.param_groups[0]["lr"]
+
+    wandb.log({
+        "train_loss": train_loss,
+        "train_mae_scaled": train_mae,
+        "train_rmse_scaled": train_rmse,
+        "val_loss": val_loss,
+        "val_mae_scaled": val_mae,
+        "val_rmse_scaled": val_rmse,
+        "learning_rate": lr_actual,
+        "tiempo_epoca": tiempo_epoca
+    }, step=epoca)
 
     print(
-        f"Época [{epoca+1}/{epocas}] | Loss (MSE Escala): {loss_medio:.4f} | Tiempo: {tiempo_epoca:.1f}s"
+        f"Época [{epoca+1}/{epocas}] | "
+        f"Train Loss: {train_loss:.4f} | Train MAE: {train_mae:.4f} | "
+        f"Val Loss: {val_loss:.4f} | Val MAE: {val_mae:.4f} | "
+        f"LR: {lr_actual:.6f} | Tiempo: {tiempo_epoca:.1f}s"
     )
 
-# =========================
-# EVALUACIÓN
-# =========================
-print("\nExtrayendo predicciones del conjunto de Test...")
-modelo.eval()
-
-lista_predicciones = []
-lista_reales = []
-
-with torch.no_grad():
-    for lotes_x, lotes_y in test_loader:
-        lotes_x = lotes_x.to(device)
-
-        preds = modelo(lotes_x)
-
-        lista_predicciones.append(preds.cpu().numpy())
-        lista_reales.append(lotes_y.numpy())
-
-preds_test_3d = np.concatenate(lista_predicciones, axis=0)
-reales_test_3d = np.concatenate(lista_reales, axis=0)
-
-T_test_pred, N_test, num_objetivos = preds_test_3d.shape
-
-preds_planas = preds_test_3d.reshape(-1, num_objetivos)
-reales_planas = reales_test_3d.reshape(-1, num_objetivos)
-
-preds_segundos = scaler_Y.inverse_transform(preds_planas).reshape(T_test_pred, N_test, num_objetivos)
-reales_segundos = scaler_Y.inverse_transform(reales_planas).reshape(T_test_pred, N_test, num_objetivos)
-
-print("\n" + "=" * 45)
-print("RESULTADOS MAE EN SEGUNDOS REALES (TEST)")
-print("=" * 45)
-
-for i, objetivo in enumerate(variables_objetivo):
-    pred_horizonte = preds_segundos[:, :, i]
-    real_horizonte = reales_segundos[:, :, i]
-
-    mae_segundos = np.mean(np.abs(pred_horizonte - real_horizonte))
-
-    print(f"➜ Horizonte [{objetivo}]: Error promedio de {mae_segundos:.2f} segundos")
-    wandb.log({f"MAE_{objetivo}": mae_segundos})
-
-wandb.finish()
+    if val_loss < mejor_val_loss:
+        mejor_val_loss = val_loss
+        torch.save(modelo.state_dict(), "mejor_modelo_astgcn.pt")

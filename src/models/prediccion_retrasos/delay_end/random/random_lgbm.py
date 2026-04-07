@@ -26,7 +26,7 @@ from src.common.minio_client import download_df_parquet
 
 warnings.filterwarnings("ignore")
 
-# ── Configuración ──────────────────────────────────────────────────────────────
+# Configuracion
 
 ACCESS_KEY = os.environ["MINIO_ACCESS_KEY"]
 SECRET_KEY = os.environ["MINIO_SECRET_KEY"]
@@ -38,8 +38,8 @@ TARGET        = "target_delay_end"
 DATA_TEMPLATE = "grupo5/final/year={year}/month={month:02d}/dataset_final.parquet"
 
 WANDB_PROJECT = "pd1-c2526-team5"
-SAMPLE_FRAC   = 0.5
-NUM_RUNS      = 15
+SAMPLE_FRAC   = 0.3
+NUM_RUNS      = 14
 SEED          = 42
 
 CAT_FEATURES = ["route_id", "direction", "category", "tipo_referente"]
@@ -56,7 +56,7 @@ EXCLUDE_COLS = {
     "delay_minutes", "scheduled_time", "actual_time",
 }
 
-# ── Espacio de búsqueda ────────────────────────────────────────────────────────
+# Espacio de busqueda
 
 PARAM_SPACE = {
     "objective":         ["regression_l1", "huber"],
@@ -74,6 +74,7 @@ PARAM_SPACE = {
 
 
 def sample_params(rng: random.Random) -> dict:
+    """Muestrea aleatoriamente una combinacion de hiperparametros del espacio definido."""
     def draw(v):
         if isinstance(v, list):
             return rng.choice(v)
@@ -103,9 +104,10 @@ def sample_params(rng: random.Random) -> dict:
         params["alpha"] = draw(PARAM_SPACE["huber_alpha"])
     return params
 
-# ── Helpers ────────────────────────────────────────────────────────────────────
+# Helpers
 
 def load_data():
+    """Descarga y filtra los datos de entrenamiento y validacion desde MinIO."""
     def _load(months):
         dfs = []
         for month in months:
@@ -130,6 +132,7 @@ def load_data():
 
 
 def encode_categoricals(df_train, df_val):
+    """Convierte las columnas categoricas a enteros usando el vocabulario del conjunto de entrenamiento."""
     for col in CAT_FEATURES:
         if col not in df_train.columns:
             continue
@@ -140,6 +143,7 @@ def encode_categoricals(df_train, df_val):
 
 
 def add_derived_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Calcula variables derivadas del retraso como velocidad, aceleracion e interacciones."""
     if "lagged_delay_1" in df.columns and "delay_seconds" in df.columns:
         df["delay_velocity"] = df["delay_seconds"] - df["lagged_delay_1"]
     if "lagged_delay_1" in df.columns and "lagged_delay_2" in df.columns:
@@ -155,6 +159,7 @@ def add_derived_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def add_target_encoding(df_train, df_val, col, target):
+    """Aplica target encoding sobre una columna usando la media del target por grupo calculada en train."""
     means = df_train.groupby(col)[target].mean()
     global_mean = df_train[target].mean()
     df_train[f"{col}_target_enc"] = df_train[col].map(means)
@@ -163,9 +168,10 @@ def add_target_encoding(df_train, df_val, col, target):
 
 
 def get_features(df):
+    """Devuelve la lista de columnas que se usan como features, excluyendo el target y columnas no relevantes."""
     return [c for c in df.columns if c not in EXCLUDE_COLS and c != TARGET]
 
-# ── Main ───────────────────────────────────────────────────────────────────────
+# Main
 
 if __name__ == "__main__":
     print("Precargando datos (se hace una sola vez para todos los trials)...")

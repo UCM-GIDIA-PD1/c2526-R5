@@ -1,356 +1,126 @@
+"""
+Entrena una Regresion Logistica para deteccion temprana de alertas MTA
+trabajando a nivel de linea (route_id + direction + ventana 30min).
+
+Flujo general:
+- Carga el dataset raw desde MinIO.
+- Agrega a nivel de linea via agregar_por_linea().
+- Añade features de tendencia rolling via agregar_features_rolling_retraso().
+- Split temporal 70/15/15 por fechas.
+- Busqueda de hiperparametros con Optuna (30 trials) sobre X_train.
+    - route_id y direction se codifican con OneHotEncoder.
+    - Variables numericas escaladas con StandardScaler.
+    - Todo encapsulado en un Pipeline de sklearn.
+- Modelo final reentrenado en train+val con los mejores params.
+
+Target:
+    alert_in_next_15m
+    1 si hay alerta MTA en los proximos 15 min.
+
+Metrica principal:
+    PR-AUC
+    Elegida por el desbalance de clases (~18% positivos).
+
+Uso:
+    python -m src.models.modelos_alertas.Optuna.RegresionLogistica_alertas
+"""
+
 import os
 import gc
-import json
 import numpy as np
 import pandas as pd
 import wandb
 import optuna
+from dotenv import load_dotenv
 
+# Componentes de sklearn para preprocesado, baseline, modelo y metricas
 from sklearn.compose import ColumnTransformer
 from sklearn.dummy import DummyClassifier
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
-    average_precision_score,
-    roc_auc_score,
-    f1_score,
-    recall_score,
-    precision_score,
-    classification_report,
-    precision_recall_curve,
+    average_precision_score, roc_auc_score,
+    f1_score, recall_score, precision_score, precision_recall_curve,
 )
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
+# Utilidades propias del proyecto
 from src.common.minio_client import download_df_parquet
+from src.models.modelos_alertas.common.pipeline_linea import (
+    agregar_por_linea, agregar_features_rolling_retraso,
+    split_temporal, TARGET, FEATURES_CON,
+)
 
+# Carga variables de entorno (por ejemplo, credenciales de MinIO)
+load_dotenv()
 
-# ── Configuración ──────────────────────────────────────────────────────────────
-
+# Credenciales de acceso a MinIO
 ACCESS_KEY = os.environ["MINIO_ACCESS_KEY"]
 SECRET_KEY = os.environ["MINIO_SECRET_KEY"]
 
-PATH = "grupo5/aggregations/DataFrameGroupedByMin=30.parquet"
+# Ruta del parquet de entrada en MinIO
+PATH       = "grupo5/aggregations/DataFrameGroupedByMin=30.parquet"
 
-ENTITY = "pd1-c2526-team5"
-PROJECT = "pd1-c2526-team5"
-NAME = "optuna_modelo_agregado_30min_logreg"
+# Configuracion de Weights & Biases
+ENTITY     = "pd1-c2526-team5"
+PROJECT    = "pd1-c2526-team5"
+NAME       = "logreg_linea_optuna"
 
-TARGET = "alert_in_next_15m_max"
-TARGET_RAW = TARGET
+# Reduce el ruido de logs de Optuna en consola
+optuna.logging.set_verbosity(optuna.logging.WARNING)
 
-COLS_RAW = [
-    "route_id", "direction", "merge_time",
-    "delay_seconds_mean",
-    "lagged_delay_1_mean", "lagged_delay_2_mean", "delay_3_before",
-    "actual_headway_seconds_mean", "is_unscheduled_max",
-    "num_updates_sum", "match_key_nunique",
-    "hour_sin_first", "hour_cos_first", "dow_first", "is_weekend_max",
-    "seconds_since_last_alert_mean",
-    TARGET,
-]
+# Variables categoricas.
+# Se codifican con OneHot porque en modelos lineales suele ser mejor que usar codificacion ordinal.
+CAT_FEATURES = ['route_id', 'direction']
 
 
-# ── Preprocesado de datos ──────────────────────────────────────────────────────
+def build_pipeline(numeric_features, C=1.0, class_weight=None):
+    """
+    Construye un Pipeline completo de sklearn:
+    - Imputacion + escalado para variables numericas
+    - Imputacion + OneHot para variables categoricas
+    - Regresion Logistica como estimador final
 
-def filtro_comportamiento_alterado(df: pd.DataFrame) -> pd.DataFrame:
-    """Elimina negativos ambiguos:
-    sin alerta en 15 min pero con alerta en 30 min."""
-    if "alert_in_next_30m_max" not in df.columns:
-        print("No existe 'alert_in_next_30m_max'; se omite el filtro de negativos ambiguos.")
-        return df.reset_index(drop=True)
+    Parametros
+    ----------
+    numeric_features : list[str]
+        Lista de features numericas.
+    C : float
+        Inversa de la fuerza de regularizacion de la regresion logistica.
+    class_weight : None o str
+        Ponderacion de clases. Puede ser None o "balanced".
 
-    mask_positivos = df[TARGET] == 1
-    mask_negativos_limpios = df["alert_in_next_30m_max"] == 0
+    Returns
+    -------
+    sklearn.pipeline.Pipeline
+        Pipeline listo para entrenar y predecir.
+    """
 
-    df = df[mask_positivos | mask_negativos_limpios].reset_index(drop=True)
-
-    print(f"Dataset tras filtrar negativos ambiguos: {len(df):,} filas")
-    print(f"  Positivos: {df[TARGET].sum():,} ({df[TARGET].mean()*100:.1f}%)")
-    print(f"  Negativos: {(df[TARGET] == 0).sum():,} ({(df[TARGET] == 0).mean()*100:.1f}%)")
-    return df
-
-
-def agregar_por_linea(df_raw: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
-    cols_base = [
-        "route_id", "direction", "merge_time",
-        "delay_seconds_mean",
-        "actual_headway_seconds_mean",
-        "is_unscheduled_max",
-        "num_updates_sum",
-        "match_key_nunique",
-        "hour_sin_first",
-        "hour_cos_first",
-        "dow_first",
-        "is_weekend_max",
-        "seconds_since_last_alert_mean",
-        TARGET_RAW,
-    ]
-
-    # categorías opcionales, por si existen como en el ejemplo del compañero
-    cat_cols = [c for c in df_raw.columns if c.startswith("category_")]
-    print(f"Categorías de alerta encontradas: {cat_cols}")
-
-    if all(c in df_raw.columns for c in ["lagged_delay_1_mean", "lagged_delay_2_mean", "delay_3_before"]):
-        lag_cols = ["lagged_delay_1_mean", "lagged_delay_2_mean", "delay_3_before"]
-        lag_rename = {
-            "lagged_delay_1_mean_mean": "lag1_mean_linea",
-            "lagged_delay_2_mean_mean": "lag2_mean_linea",
-            "delay_3_before_mean": "delay_3_before_mean",
-        }
-    elif all(c in df_raw.columns for c in ["delay_1_before", "delay_2_before", "delay_3_before"]):
-        lag_cols = ["delay_1_before", "delay_2_before", "delay_3_before"]
-        lag_rename = {
-            "delay_1_before_mean": "lag1_mean_linea",
-            "delay_2_before_mean": "lag2_mean_linea",
-            "delay_3_before_mean": "delay_3_before_mean",
-        }
-    else:
-        lag_cols = []
-        lag_rename = {}
-
-    cols_usar = [c for c in cols_base + lag_cols + cat_cols if c in df_raw.columns]
-
-    df = df_raw[cols_usar].copy()
-    df = df[df[TARGET_RAW].notna()].copy()
-
-    df["merge_time"] = pd.to_datetime(df["merge_time"])
-    df[TARGET_RAW] = df[TARGET_RAW].astype(int)
-    df["parada_retrasada"] = (df["delay_seconds_mean"] > 60).astype(int)
-
-    agg_dict = {
-        "delay_seconds_mean": ["mean", "max", "std"],
-        "parada_retrasada": ["sum", "count"],
-        "actual_headway_seconds_mean": ["mean", "std"],
-        "is_unscheduled_max": "max",
-        "num_updates_sum": "sum",
-        "match_key_nunique": "sum",
-        "hour_sin_first": "first",
-        "hour_cos_first": "first",
-        "dow_first": "first",
-        "is_weekend_max": "max",
-        "seconds_since_last_alert_mean": "min",
-        TARGET_RAW: "max",
-    }
-
-    for c in lag_cols:
-        agg_dict[c] = "mean"
-
-    for c in cat_cols:
-        agg_dict[c] = "max"
-
-    print("Agregando por línea...")
-    df_linea = df.groupby(
-        ["route_id", "direction", pd.Grouper(key="merge_time", freq="30min")],
-        observed=True
-    ).agg(agg_dict).reset_index()
-
-    df_linea.columns = [
-        "_".join(filter(None, col)) if isinstance(col, tuple) else col
-        for col in df_linea.columns
-    ]
-
-    rename_dict = {
-        "delay_seconds_mean_mean": "delay_mean_linea",
-        "delay_seconds_mean_max": "delay_max_linea",
-        "delay_seconds_mean_std": "delay_std_linea",
-        "parada_retrasada_sum": "paradas_retrasadas",
-        "parada_retrasada_count": "total_paradas",
-        "actual_headway_seconds_mean_mean": "headway_mean_linea",
-        "actual_headway_seconds_mean_std": "headway_std_linea",
-        "is_unscheduled_max_max": "is_unscheduled",
-        "num_updates_sum_sum": "num_updates",
-        "match_key_nunique_sum": "match_key_nunique",
-        "hour_sin_first_first": "hour_sin",
-        "hour_cos_first_first": "hour_cos",
-        "dow_first_first": "dow",
-        "is_weekend_max_max": "is_weekend",
-        "seconds_since_last_alert_mean_min": "seg_desde_ultima_alerta_linea",
-        f"{TARGET_RAW}_max": TARGET,
-        **lag_rename,
-    }
-
-    df_linea = df_linea.rename(columns=rename_dict)
-    df_linea = df_linea.loc[:, ~df_linea.columns.duplicated()].copy()
-
-    for c in ["lag1_mean_linea", "lag2_mean_linea", "delay_3_before_mean"]:
-        if c not in df_linea.columns:
-            df_linea[c] = 0.0
-
-    fill_zero_cols = [
-        "delay_mean_linea", "delay_max_linea", "delay_std_linea",
-        "lag1_mean_linea", "lag2_mean_linea", "delay_3_before_mean",
-        "headway_mean_linea", "headway_std_linea",
-        "is_unscheduled", "num_updates", "match_key_nunique",
-        "hour_sin", "hour_cos", "dow", "is_weekend",
-        "seg_desde_ultima_alerta_linea",
-    ]
-
-    for col in fill_zero_cols:
-        if col in df_linea.columns:
-            df_linea[col] = pd.to_numeric(df_linea[col], errors="coerce").fillna(0)
-
-    df_linea["paradas_retrasadas"] = df_linea["paradas_retrasadas"].fillna(0)
-    df_linea["total_paradas"] = df_linea["total_paradas"].fillna(0)
-
-    df_linea["pct_paradas_retrasadas"] = (
-        df_linea["paradas_retrasadas"] / df_linea["total_paradas"].clip(lower=1)
-    )
-    df_linea["delay_acceleration_linea"] = (
-        df_linea["delay_mean_linea"] - df_linea["lag1_mean_linea"]
-    )
-    df_linea["headway_cv"] = (
-        df_linea["headway_std_linea"] / df_linea["headway_mean_linea"].clip(lower=1)
-    )
-    df_linea["colapso_linea"] = (
-        (df_linea["pct_paradas_retrasadas"] > 0.5).astype(int)
-    )
-    df_linea["delay_x_aceleracion"] = (
-        df_linea["delay_mean_linea"] * df_linea["delay_acceleration_linea"].clip(lower=0)
-    )
-
-    df_linea["seg_desde_ultima_alerta_linea"] = (
-        df_linea["seg_desde_ultima_alerta_linea"].fillna(999999)
-    )
-
-    df_linea = df_linea.dropna(subset=[TARGET]).copy()
-    df_linea[TARGET] = df_linea[TARGET].astype(int)
-
-    del df
-    gc.collect()
-
-    print(f"Dataset línea: {df_linea.shape[0]:,} filas x {df_linea.shape[1]} columnas")
-    print(f"Positivos: {df_linea[TARGET].mean()*100:.1f}%")
-
-    return df_linea, cat_cols
-
-
-def agregar_features_rolling_retraso(df_linea: pd.DataFrame) -> pd.DataFrame:
-    df_linea = df_linea.sort_values(["route_id", "direction", "merge_time"]).copy()
-    grp = df_linea.groupby(["route_id", "direction"])
-
-    df_linea["delay_rolling4_mean"] = (
-        grp["delay_mean_linea"]
-        .transform(lambda x: x.shift(1).rolling(4, min_periods=1).mean())
-        .fillna(0)
-    )
-
-    df_linea["delay_rolling4_max"] = (
-        grp["delay_max_linea"]
-        .transform(lambda x: x.shift(1).rolling(4, min_periods=1).max())
-        .fillna(0)
-    )
-
-    df_linea["headway_rolling4_std"] = (
-        grp["headway_mean_linea"]
-        .transform(lambda x: x.shift(1).rolling(4, min_periods=1).std())
-        .fillna(0)
-    )
-
-    return df_linea
-
-
-def get_features(cat_cols: list[str], df: pd.DataFrame) -> list[str]:
-    features = [
-        "headway_cv", "colapso_linea", "delay_x_aceleracion",
-        "delay_mean_linea", "delay_max_linea", "delay_std_linea",
-        "paradas_retrasadas", "pct_paradas_retrasadas",
-        "lag1_mean_linea", "lag2_mean_linea", "delay_3_before_mean",
-        "delay_acceleration_linea", "delay_rolling4_mean", "delay_rolling4_max", "headway_rolling4_std",
-        "headway_mean_linea", "headway_std_linea",
-        "is_unscheduled", "num_updates", "match_key_nunique",
-        "hour_sin", "hour_cos", "dow", "is_weekend",
-        "route_id", "direction",
-        "seg_desde_ultima_alerta_linea",
-    ] + cat_cols
-    return [f for f in features if f in df.columns]
-
-
-def preparar_dataset_modelo(df: pd.DataFrame, features: list[str]) -> pd.DataFrame:
-    df_model = df[features + [TARGET, "merge_time"]].copy()
-
-    df_model = df_model.dropna(subset=[TARGET]).copy()
-    df_model[TARGET] = pd.to_numeric(df_model[TARGET], errors="coerce")
-    df_model = df_model.dropna(subset=[TARGET]).copy()
-    df_model[TARGET] = df_model[TARGET].astype(int)
-
-    categorical_features = ["direction", "route_id"] + [c for c in features if c.startswith("category_")]
-    categorical_features = [c for c in categorical_features if c in df_model.columns]
-
-    binary_features = [c for c in ["is_unscheduled", "is_weekend", "colapso_linea"] if c in df_model.columns]
-    numeric_features = [c for c in features if c not in categorical_features]
-
-    df_model[numeric_features] = df_model[numeric_features].replace([np.inf, -np.inf], np.nan)
-
-    for col in binary_features:
-        df_model[col] = pd.to_numeric(df_model[col], errors="coerce").fillna(0).astype(int)
-
-    for col in categorical_features:
-        df_model[col] = df_model[col].astype("string")
-
-    df_model = df_model.sort_values("merge_time").reset_index(drop=True)
-
-    fill_zero_cols = [
-        "delay_mean_linea", "delay_max_linea", "delay_std_linea",
-        "paradas_retrasadas", "total_paradas", "pct_paradas_retrasadas",
-        "lag1_mean_linea", "lag2_mean_linea", "delay_3_before_mean",
-        "delay_acceleration_linea", "delay_x_aceleracion",
-        "headway_mean_linea", "headway_std_linea", "headway_cv",
-        "delay_rolling4_mean", "delay_rolling4_max", "headway_rolling4_std",
-        "is_unscheduled", "num_updates", "match_key_nunique",
-        "hour_sin", "hour_cos", "dow", "is_weekend",
-        "seg_desde_ultima_alerta_linea", "colapso_linea",
-    ]
-
-    for col in fill_zero_cols:
-        if col in df_model.columns:
-            df_model[col] = pd.to_numeric(df_model[col], errors="coerce").fillna(0)
-
-    if {"paradas_retrasadas", "total_paradas"}.issubset(df_model.columns):
-        df_model["pct_paradas_retrasadas"] = (
-            df_model["paradas_retrasadas"] / df_model["total_paradas"].clip(lower=1)
-        )
-
-    if {"delay_mean_linea", "lag1_mean_linea"}.issubset(df_model.columns):
-        df_model["delay_acceleration_linea"] = (
-            df_model["delay_mean_linea"] - df_model["lag1_mean_linea"]
-        )
-
-    if {"delay_mean_linea", "delay_acceleration_linea"}.issubset(df_model.columns):
-        df_model["delay_x_aceleracion"] = (
-            df_model["delay_mean_linea"] * df_model["delay_acceleration_linea"].clip(lower=0)
-        )
-
-    if {"headway_std_linea", "headway_mean_linea"}.issubset(df_model.columns):
-        df_model["headway_cv"] = (
-            df_model["headway_std_linea"] / df_model["headway_mean_linea"].clip(lower=1)
-        )
-
-    print("Shape tras limpieza:", df_model.shape)
-    print(df_model[features + [TARGET]].isna().sum().sort_values(ascending=False).head(20))
-
-    return df_model, categorical_features, numeric_features
-
-
-def build_pipeline(categorical_features: list[str], numeric_features: list[str], C: float, class_weight):
-    numeric_transformer = Pipeline(steps=[
+    # Transformacion para variables numericas:
+    # 1) imputar faltantes con la mediana
+    # 2) escalar a media 0 y varianza 1
+    numeric_transformer = Pipeline([
         ("imputer", SimpleImputer(strategy="median")),
-        ("scaler", StandardScaler()),
+        ("scaler",  StandardScaler()),
     ])
 
-    categorical_transformer = Pipeline(steps=[
+    # Transformacion para variables categoricas:
+    # 1) imputar faltantes con el valor mas frecuente
+    # 2) aplicar OneHotEncoder
+    categorical_transformer = Pipeline([
         ("imputer", SimpleImputer(strategy="most_frequent")),
-        ("onehot", OneHotEncoder(handle_unknown="ignore")),
+        ("onehot",  OneHotEncoder(handle_unknown="ignore")),
     ])
 
-    preprocessor = ColumnTransformer(
-        transformers=[
-            ("num", numeric_transformer, numeric_features),
-            ("cat", categorical_transformer, categorical_features),
-        ]
-    )
+    # Une ambos bloques de transformacion en un ColumnTransformer
+    preprocessor = ColumnTransformer([
+        ("num", numeric_transformer,     numeric_features),
+        ("cat", categorical_transformer, CAT_FEATURES),
+    ])
 
-    pipeline = Pipeline(steps=[
+    # Pipeline final = preprocesado + modelo
+    return Pipeline([
         ("preprocessor", preprocessor),
         ("model", LogisticRegression(
             C=C,
@@ -358,237 +128,264 @@ def build_pipeline(categorical_features: list[str], numeric_features: list[str],
             max_iter=300,
             random_state=42,
             solver="lbfgs",
-        ))
+        )),
     ])
-    return pipeline
 
-
-def evaluar_baseline(y_train, X_test, y_test):
-    print("\nEvaluando baseline estratificado...")
-    baseline = DummyClassifier(strategy="stratified", random_state=42)
-    baseline.fit(np.zeros((len(y_train), 1)), y_train)
-
-    X_dummy_test = np.zeros((len(y_test), 1))
-    y_prob_base = baseline.predict_proba(X_dummy_test)[:, 1]
-    y_pred_base = baseline.predict(X_dummy_test)
-
-    metricas = {
-        "baseline_pr_auc": average_precision_score(y_test, y_prob_base),
-        "baseline_roc_auc": roc_auc_score(y_test, y_prob_base),
-        "baseline_f1": f1_score(y_test, y_pred_base, zero_division=0),
-        "baseline_recall": recall_score(y_test, y_pred_base, zero_division=0),
-        "baseline_precision": precision_score(y_test, y_pred_base, zero_division=0),
-    }
-
-    print(f"  PR-AUC   baseline: {metricas['baseline_pr_auc']:.4f}")
-    print(f"  ROC-AUC  baseline: {metricas['baseline_roc_auc']:.4f}")
-    print(f"  F1       baseline: {metricas['baseline_f1']:.4f}")
-
-    return metricas, y_prob_base
-
-
-# ── Main ───────────────────────────────────────────────────────────────────────
 
 def main():
-    print("\nCargando dataset...")
-    df = download_df_parquet(ACCESS_KEY, SECRET_KEY, PATH)
-    print("✓ Dataset cargado con éxito")
+    """
+    Flujo principal del entrenamiento:
+    1. Carga y agregacion de datos
+    2. Split temporal
+    3. Baseline
+    4. Busqueda de hiperparametros con Optuna
+    5. Reentrenamiento final con train+val
+    6. Seleccion de threshold
+    7. Evaluacion en test
+    8. Logging final en W&B
+    """
 
-    df = df.dropna(subset=[TARGET]).copy()
-    df[TARGET] = df[TARGET].astype(int)
+    # ------------------------------------------------------------------
+    # 1. Carga del dataset y feature engineering
+    # ------------------------------------------------------------------
+    print("Cargando dataset...")
+    df_raw = download_df_parquet(ACCESS_KEY, SECRET_KEY, PATH)
+    print(f"Dataset raw: {df_raw.shape[0]:,} filas")
 
-    df = filtro_comportamiento_alterado(df)
+    # Agrega el dataset a nivel de linea
+    df = agregar_por_linea(df_raw)
 
-    print("\nRe-agregando a nivel de línea...")
-    df_linea, cat_cols = agregar_por_linea(df)
-    df_linea = agregar_features_rolling_retraso(df_linea)
+    # Libera memoria del dataframe original
+    del df_raw
+    gc.collect()
 
-    FEATURES = get_features(cat_cols, df_linea)
-    df_model, categorical_features, numeric_features = preparar_dataset_modelo(df_linea, FEATURES)
+    # Agrega features rolling y retrasadas para capturar tendencia temporal
+    df = agregar_features_rolling_retraso(df)
 
-    df_sorted = df_model.sort_values("merge_time").copy()
+    # ------------------------------------------------------------------
+    # 2. Split temporal train / val / test
+    # ------------------------------------------------------------------
+    train, val, test = split_temporal(df)
 
-    print(f"\nFeatures: {len(FEATURES)}")
-    print(f"Filas:    {len(df_sorted):,}")
-    print("\nDistribución del target:")
-    print(df_sorted[TARGET].value_counts(normalize=True).round(3))
+    # Mantiene solo las features continuas definidas y presentes en el dataframe
+    FEATURES = [f for f in FEATURES_CON if f in df.columns]
 
-    dias = df_sorted["merge_time"].dt.date.unique()
-    dias_ordenados = sorted(dias)
+    # Las numericas son todas excepto las categoricas
+    NUM_FEATURES = [f for f in FEATURES if f not in CAT_FEATURES]
 
-    total_dias = len(dias_ordenados)
-    corte_70 = dias_ordenados[int(total_dias * 0.70)]
-    corte_85 = dias_ordenados[int(total_dias * 0.85)]
+    # Separa matrices de entrada y variable objetivo
+    # Nota: se hace fillna(0) antes del pipeline, aunque el pipeline tambien
+    # contiene imputadores. Esto puede ser redundante, pero se mantiene igual
+    # que en el script original.
+    X_train, y_train = train[FEATURES].fillna(0), train[TARGET]
+    X_val,   y_val   = val[FEATURES].fillna(0),   val[TARGET]
+    X_test,  y_test  = test[FEATURES].fillna(0),  test[TARGET]
 
-    print(f"Total días: {total_dias}")
-    print(f"Primer día: {dias_ordenados[0]}")
-    print(f"Último día: {dias_ordenados[-1]}")
-    print(f"\nCorte train (70%): {corte_70}")
-    print(f"Corte val   (85%): {corte_85}")
+    print(f"Features: {len(FEATURES)} ({len(NUM_FEATURES)} numericas + {len(CAT_FEATURES)} categoricas)")
 
-    train = df_sorted[df_sorted["merge_time"].dt.date < corte_70]
-    val = df_sorted[
-        (df_sorted["merge_time"].dt.date >= corte_70) &
-        (df_sorted["merge_time"].dt.date < corte_85)
-    ]
-    test = df_sorted[df_sorted["merge_time"].dt.date >= corte_85]
+    # ------------------------------------------------------------------
+    # 3. Baseline
+    # ------------------------------------------------------------------
+    print("\n-- Baseline --")
 
-    X_train, y_train = train[FEATURES], train[TARGET]
-    X_val, y_val = val[FEATURES], val[TARGET]
-    X_test, y_test = test[FEATURES], test[TARGET]
+    # Baseline estratificado:
+    # predice respetando aproximadamente la distribucion de clases observada
+    baseline = DummyClassifier(strategy="stratified", random_state=42)
+    baseline.fit(X_train, y_train)
 
-    n = len(df_sorted)
-    print(f"Train: {len(train):,} ({len(train)/n*100:.0f}%)  {train['merge_time'].min().date()} → {train['merge_time'].max().date()}")
-    print(f"Val:   {len(val):,} ({len(val)/n*100:.0f}%)  {val['merge_time'].min().date()} → {val['merge_time'].max().date()}")
-    print(f"Test:  {len(test):,} ({len(test)/n*100:.0f}%)  {test['merge_time'].min().date()} → {test['merge_time'].max().date()}")
+    # Probabilidades y predicciones del baseline sobre test
+    y_prob_base = baseline.predict_proba(X_test)[:, 1]
+    y_pred_base = baseline.predict(X_test)
 
-    metricas_baseline, y_prob_base = evaluar_baseline(y_train, X_test, y_test)
+    # Logging del baseline en W&B
+    run_base = wandb.init(
+        entity=ENTITY, project=PROJECT,
+        name="logreg_linea_optuna_baseline",
+        config={"model": "baseline_estratificado", "nivel": "linea"},
+        tags=["linea", "logreg", "optuna", "baseline"],
+    )
+    wandb.log({
+        "pr_auc":    average_precision_score(y_test, y_prob_base),
+        "auc_roc":   roc_auc_score(y_test, y_prob_base),
+        "f1":        f1_score(y_test, y_pred_base, zero_division=0),
+        "recall":    recall_score(y_test, y_pred_base, zero_division=0),
+        "precision": precision_score(y_test, y_pred_base, zero_division=0),
+    })
+    run_base.finish()
 
-    # ── Optuna ────────────────────────────────────────────────────────────────
+    # ------------------------------------------------------------------
+    # 4. Optuna: optimizacion de hiperparametros
+    # ------------------------------------------------------------------
+    print(f"\n-- Optuna 30 trials --")
 
     def objective(trial):
+        """
+        Funcion objetivo de Optuna.
+        Para cada trial:
+        - Propone valores para C y class_weight
+        - Entrena el pipeline sobre train
+        - Evalua PR-AUC sobre validation
+        """
+
+        # Hiperparametros a optimizar
         C = trial.suggest_float("C", 1e-3, 10.0, log=True)
         class_weight = trial.suggest_categorical("class_weight", [None, "balanced"])
 
-        pipeline = build_pipeline(
-            categorical_features=categorical_features,
-            numeric_features=numeric_features,
-            C=C,
-            class_weight=class_weight,
+        # Construccion y entrenamiento del pipeline
+        pipe = build_pipeline(NUM_FEATURES, C=C, class_weight=class_weight)
+        pipe.fit(X_train, y_train)
+
+        # Prediccion probabilistica en validation
+        pr_auc_val = average_precision_score(y_val, pipe.predict_proba(X_val)[:, 1])
+
+        print(
+            f"  Trial {trial.number+1:02d}/30 | "
+            f"C={C:.4f} | class_weight={class_weight} | PR-AUC val: {pr_auc_val:.4f}"
         )
+        return pr_auc_val
 
-        pipeline.fit(X_train, y_train)
-        y_val_prob = pipeline.predict_proba(X_val)[:, 1]
+    # Crea el estudio para maximizar PR-AUC usando TPE sampler
+    study = optuna.create_study(
+        direction="maximize",
+        sampler=optuna.samplers.TPESampler(seed=42)
+    )
 
-        # optimizamos PR-AUC del modelo; el threshold se ajusta después
-        return average_precision_score(y_val, y_val_prob)
-
-    print("\nIniciando búsqueda de hiperparámetros con Optuna...")
-    study = optuna.create_study(direction="maximize")
+    # Ejecuta 30 trials
     study.optimize(objective, n_trials=30, show_progress_bar=True)
 
-    print("Mejores hiperparámetros:")
-    print(study.best_params)
-
+    # Recupera los mejores hiperparametros encontrados
     best_C = study.best_params["C"]
     best_class_weight = study.best_params["class_weight"]
 
+    print(f"\nMejor PR-AUC val: {study.best_value:.4f}")
+    print(f"Mejores params: C={best_C:.4f}, class_weight={best_class_weight}")
+
+    # ------------------------------------------------------------------
+    # 5. Entrenamiento final con train + val
+    # ------------------------------------------------------------------
+    print("\n-- Modelo final (train+val) --")
+
+    # Une train y validation para entrenar el modelo definitivo
+    X_tv = pd.concat([X_train, X_val])
+    y_tv = pd.concat([y_train, y_val])
+
     pipeline_final = build_pipeline(
-        categorical_features=categorical_features,
-        numeric_features=numeric_features,
+        NUM_FEATURES,
         C=best_C,
-        class_weight=best_class_weight,
+        class_weight=best_class_weight
     )
+    pipeline_final.fit(X_tv, y_tv)
 
-    # entrenamos sobre train
-    print("\nEntrenando modelo final...")
-    pipeline_final.fit(X_train, y_train)
-
-    # threshold óptimo en validación
+    # ------------------------------------------------------------------
+    # 6. Seleccion del threshold optimo usando F1 en validation
+    # ------------------------------------------------------------------
+    # Nota: aqui se usa val para encontrar el threshold, aunque el modelo ya fue
+    # reentrenado con train+val. Se conserva exactamente la logica del script original.
     y_val_prob = pipeline_final.predict_proba(X_val)[:, 1]
+
     thresholds = np.arange(0.05, 0.95, 0.01)
-    f1_scores_val = [
+
+    # Calcula F1 para cada threshold candidato
+    f1s = [
         f1_score(y_val, (y_val_prob >= t).astype(int), zero_division=0)
         for t in thresholds
     ]
-    threshold_opt = float(thresholds[np.argmax(f1_scores_val)])
 
-    # evaluación final en test
+    # Elige el threshold que maximiza F1
+    thr = float(thresholds[np.argmax(f1s)])
+
+    # ------------------------------------------------------------------
+    # 7. Evaluacion en test
+    # ------------------------------------------------------------------
     y_prob = pipeline_final.predict_proba(X_test)[:, 1]
-    y_pred = (y_prob >= threshold_opt).astype(int)
+    y_pred = (y_prob >= thr).astype(int)
 
-    print(f"\nThreshold óptimo: {threshold_opt:.2f}")
-    print(classification_report(y_test, y_pred, zero_division=0))
-
-    precision_base, recall_base, _ = precision_recall_curve(y_test, y_prob_base)
-    precision_model, recall_model, _ = precision_recall_curve(y_test, y_prob)
-
-    # nombres tras one-hot para importancia por coeficientes
-    preprocessor = pipeline_final.named_steps["preprocessor"]
-    model = pipeline_final.named_steps["model"]
-
-    feature_names_out = preprocessor.get_feature_names_out()
-    coef_abs = np.abs(model.coef_[0])
-
-    importancias = pd.DataFrame({
-        "feature": feature_names_out,
-        "importance": coef_abs,
-    }).sort_values("importance", ascending=False)
-
-    parametros = {
-        "model_type": "logistic_regression",
-        "target": TARGET,
-        "features": FEATURES,
-        "C": best_C,
-        "class_weight": best_class_weight,
-        "threshold_opt": threshold_opt,
-        "n_trials": 30,
+    metricas = {
+        "pr_auc_test":    float(average_precision_score(y_test, y_prob)),
+        "auc_roc_test":   float(roc_auc_score(y_test, y_prob)),
+        "f1_test":        float(f1_score(y_test, y_pred, zero_division=0)),
+        "recall_test":    float(recall_score(y_test, y_pred, zero_division=0)),
+        "precision_test": float(precision_score(y_test, y_pred, zero_division=0)),
+        "threshold_opt":  thr,
     }
 
+    print(f"PR-AUC test: {metricas['pr_auc_test']:.4f}")
+    print(f"F1 test:     {metricas['f1_test']:.4f}")
+    print(f"Threshold:   {metricas['threshold_opt']:.2f}")
+
+    # ------------------------------------------------------------------
+    # 8. Importancia de variables via coeficientes
+    # ------------------------------------------------------------------
+    # Accede al preprocesador ya entrenado
+    preprocessor = pipeline_final.named_steps["preprocessor"]
+
+    # Recupera nombres de features numericas + categorias expandida por OneHot
+    feature_names = list(NUM_FEATURES) + list(
+        preprocessor.named_transformers_["cat"]
+        .named_steps["onehot"]
+        .get_feature_names_out(CAT_FEATURES)
+    )
+
+    # Importancia aproximada = valor absoluto del coeficiente
+    coef_abs = np.abs(pipeline_final.named_steps["model"].coef_[0])
+
+    importancias_df = pd.DataFrame({
+        "feature": feature_names,
+        "importance": coef_abs
+    }).sort_values("importance", ascending=False)
+
+    # ------------------------------------------------------------------
+    # 9. Construccion de curva Precision-Recall
+    # ------------------------------------------------------------------
+    prec, rec, _ = precision_recall_curve(y_test, y_prob)
+
+    pr_table = wandb.Table(
+        data=[[r, p] for r, p in zip(rec.tolist(), prec.tolist())],
+        columns=["recall", "precision"],
+    )
+
+    # ------------------------------------------------------------------
+    # 10. Logging final en W&B
+    # ------------------------------------------------------------------
     run = wandb.init(
-        entity=ENTITY,
-        project=PROJECT,
-        name=NAME,
-        config=parametros,
+        entity=ENTITY, project=PROJECT,
+        name="logreg_linea_optuna_FINAL",
+        config={
+            "C": best_C,
+            "class_weight": best_class_weight,
+            "threshold_opt": thr,
+            "nivel": "linea",
+        },
+        tags=["linea", "logreg", "optuna", "final"],
     )
 
     wandb.log({
-        **metricas_baseline,
-        "auc_roc": roc_auc_score(y_test, y_prob),
-        "pr_auc": average_precision_score(y_test, y_prob),
-        "f1": f1_score(y_test, y_pred, zero_division=0),
-        "recall": recall_score(y_test, y_pred, zero_division=0),
-        "precision": precision_score(y_test, y_pred, zero_division=0),
-        "threshold_opt": threshold_opt,
+        **metricas,
 
-        "curva_pr_baseline": wandb.plot.line_series(
-            xs=recall_base.tolist(),
-            ys=[precision_base.tolist()],
-            keys=["Baseline"],
-            title="Precision-Recall Curve - Baseline",
-            xname="Recall",
-        ),
-
-        "curva_pr_modelo": wandb.plot.line_series(
-            xs=recall_model.tolist(),
-            ys=[precision_model.tolist()],
-            keys=["LogisticRegression"],
-            title="Precision-Recall Curve - Modelo",
-            xname="Recall",
-        ),
-
+        # Matriz de confusion
         "confusion_matrix": wandb.plot.confusion_matrix(
             y_true=y_test.tolist(),
             preds=y_pred.tolist(),
             class_names=["No alerta", "Alerta"],
         ),
 
+        # Ranking de variables mas importantes segun magnitud del coeficiente
         "feature_importance": wandb.plot.bar(
-            wandb.Table(dataframe=importancias.head(30)),
+            wandb.Table(dataframe=importancias_df.head(30)),
             label="feature",
             value="importance",
-            title="Top 30 | Importancia por |coef|",
+            title="Top 30 coeficientes - LogReg Optuna",
+        ),
+
+        # Curva precision-recall
+        "pr_curve": wandb.plot.line(
+            pr_table, "recall", "precision",
+            title="Precision-Recall Curve - LogReg Optuna",
         ),
     })
 
-    # guardado de artefactos
-    os.makedirs("artifacts", exist_ok=True)
-
-    import joblib
-    model_path = "artifacts/modelo_logreg_optuna.joblib"
-    params_path = "artifacts/modelo_logreg_optuna_params.json"
-
-    joblib.dump(pipeline_final, model_path)
-
-    with open(params_path, "w", encoding="utf-8") as f:
-        json.dump(parametros, f, ensure_ascii=False, indent=2)
-
-    artifact_model = wandb.Artifact("modelo_logreg_optuna", type="model")
-    artifact_model.add_file(model_path)
-    artifact_model.add_file(params_path)
-    run.log_artifact(artifact_model)
-
     run.finish()
+    print("Logueado en W&B: logreg_linea_optuna_FINAL")
 
 
 if __name__ == "__main__":
