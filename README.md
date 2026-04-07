@@ -32,7 +32,6 @@ El sistema está diseñado siguiendo una arquitectura tipo data lake (raw → pr
 │   │   └── tiempo_real_metro/         # GTFS en tiempo real (MTA feeds)
 │   └── models/                        
 │       ├── common/
-│       │   └── time_aggregations.py
 │       ├── modelos_alertas/
 │       │   ├── common/
 │       │   ├── Optuna/
@@ -41,7 +40,7 @@ El sistema está diseñado siguiendo una arquitectura tipo data lake (raw → pr
 │       │   ├── delay_30m/
 │       │   ├── delay_end/
 │       │   ├── delta/
-│       │   ├── prediccion_por_intervalos/
+│       │   └── prediccion_por_intervalos/
 │       ├── propagacion_estacion/
 │       └── seleccion_variables.md
 ├── notebooks/                         # Análisis exploratorio y visualizaciones
