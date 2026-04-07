@@ -38,16 +38,11 @@ def evaluar_baseline():
         'Retraso muy grave (>7.5 min)'
     ]
 
-    # 3. Target real (Ground Truth)
     columna_objetivo = 'target_delay_10m_max'
     df['clase_retraso_real'] = pd.cut(df[columna_objetivo], bins=bins, labels=labels)
 
-    # 4. Target predicho (Baseline)
-    columna_retraso_actual = 'delay_seconds_mean' 
+    columna_retraso_actual = 'delay_seconds_max' 
     
-    # (Opcional): Si no tienes la columna de retraso actual guardada, la puedes deducir matemáticamente:
-    # df['retraso_actual_deducido'] = df['target_delay_10m_max'] - df['delta_delay_10m_max']
-    # columna_retraso_actual = 'retraso_actual_deducido'
 
     df['clase_retraso_predicha'] = pd.cut(df[columna_retraso_actual], bins=bins, labels=labels)
 
