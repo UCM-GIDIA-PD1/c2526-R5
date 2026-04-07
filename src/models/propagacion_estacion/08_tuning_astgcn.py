@@ -2,6 +2,7 @@ import gc
 import os
 import random
 from pathlib import Path
+from torch.utils.checkpoint import checkpoint as grad_checkpoint
 
 import numpy as np
 import optuna
@@ -12,8 +13,6 @@ import torch.nn.functional as F
 from sklearn.preprocessing import StandardScaler
 from torch.utils.data import DataLoader, Dataset
 
-os.environ["WANDB_MODE"] = "offline"
-os.environ["WANDB_START_METHOD"] = "thread"
 
 import wandb
 
@@ -54,8 +53,9 @@ def set_seed(seed=SEED):
 
 class DatasetASTGCN(Dataset):
     def __init__(self, X, Y, history_len):
-        self.X = torch.tensor(X, dtype=torch.float32)
-        self.Y = torch.tensor(Y, dtype=torch.float32)
+        # from_numpy comparte memoria con el array numpy — sin copia
+        self.X = torch.from_numpy(X) if isinstance(X, np.ndarray) else X
+        self.Y = torch.from_numpy(Y) if isinstance(Y, np.ndarray) else Y
         self.history_len = history_len
 
     def __len__(self):
@@ -70,15 +70,17 @@ def calcular_scaled_laplacian(adj_matrix):
     np.fill_diagonal(adj, 0.0)
     degree = np.sum(adj, axis=1)
     laplacian = np.diag(degree) - adj
+    del adj
     with np.errstate(divide="ignore"):
         d_inv_sqrt = np.power(degree, -0.5)
     d_inv_sqrt[np.isinf(d_inv_sqrt)] = 0.0
-    d_mat_inv_sqrt = np.diag(d_inv_sqrt)
-    laplacian_norm = d_mat_inv_sqrt @ laplacian @ d_mat_inv_sqrt
+    # Broadcasting en vez de np.diag() — evita crear dos matrices N×N completas
+    laplacian_norm = d_inv_sqrt[:, None] * laplacian * d_inv_sqrt[None, :]
+    del laplacian
     lambda_max = np.linalg.eigvals(laplacian_norm).real.max()
     if lambda_max == 0 or np.isnan(lambda_max):
         lambda_max = 1.0
-    scaled_laplacian = (2.0 / lambda_max) * laplacian_norm - np.eye(adj.shape[0], dtype=np.float32)
+    scaled_laplacian = (2.0 / lambda_max) * laplacian_norm - np.eye(laplacian_norm.shape[0], dtype=np.float32)
     return scaled_laplacian.astype(np.float32)
 
 
@@ -131,18 +133,17 @@ class ChebConvWithSpatialAttention(nn.Module):
         self.register_buffer("cheb_polynomials", torch.stack(cheb_polynomials, dim=0))
 
     def forward(self, x, spatial_attention):
-        B, T, N, _ = x.shape
-        outputs = []
-        for t in range(T):
-            graph_signal = x[:, t, :, :]
-            output_t = torch.zeros((B, N, self.out_channels), device=x.device, dtype=x.dtype)
-            for k in range(self.K):
-                T_k = self.cheb_polynomials[k]
-                T_k_at = T_k.unsqueeze(0) * spatial_attention
-                rhs = torch.einsum("bij,bjf->bif", T_k_at, graph_signal)
-                output_t = output_t + torch.matmul(rhs, self.Theta[k])
-            outputs.append(output_t.unsqueeze(1))
-        return F.relu(torch.cat(outputs, dim=1))
+        # x: (B, T, N, F_in)  spatial_attention: (B, N, N)
+        # Vectorizado sobre T para evitar guardar T*K copias de (B,N,N) en el backward
+        output = torch.zeros(
+            (x.shape[0], x.shape[1], x.shape[2], self.out_channels),
+            device=x.device, dtype=x.dtype,
+        )
+        for k in range(self.K):
+            T_k_at = self.cheb_polynomials[k].unsqueeze(0) * spatial_attention  # (B, N, N)
+            rhs = torch.einsum("bij,btjf->btif", T_k_at, x)                     # (B, T, N, F_in)
+            output = output + torch.matmul(rhs, self.Theta[k])
+        return F.relu(output)
 
 
 class ASTGCNBlock(nn.Module):
@@ -155,7 +156,7 @@ class ASTGCNBlock(nn.Module):
         self.residual_conv = nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=(1, 1))
         self.layer_norm = nn.LayerNorm(out_channels)
 
-    def forward(self, x):
+    def _forward_impl(self, x):
         temporal_attention = self.temporal_attention(x)
         x_ta = torch.einsum("bts,bsnf->btnf", temporal_attention, x)
         spatial_attention = self.spatial_attention(x_ta)
@@ -167,6 +168,12 @@ class ASTGCNBlock(nn.Module):
         x_out = x_out.permute(0, 2, 3, 1)
         x_out = self.layer_norm(x_out)
         return x_out
+
+    def forward(self, x):
+        # Gradient checkpointing: recomputa activaciones en el backward en vez de guardarlas
+        if self.training:
+            return grad_checkpoint(self._forward_impl, x, use_reentrant=False)
+        return self._forward_impl(x)
 
 
 class ASTGCN_Metro(nn.Module):
@@ -198,12 +205,20 @@ def descargar_datos():
         raise RuntimeError("Faltan MINIO_ACCESS_KEY y/o MINIO_SECRET_KEY")
     ruta_archivo = "grupo5/final/year=2025/month=01/dataset_final.parquet"
     df_final = download_df_parquet(access_key, secret_key, ruta_archivo)
+    cols_necesarias = [
+        'stop_id', 'merge_time',
+        'delay_seconds', 'lagged_delay_1', 'lagged_delay_2', 'is_unscheduled',
+        'temp_extreme', 'n_eventos_afectando', 'route_rolling_delay', 'actual_headway_seconds',
+        'station_delay_10m', 'station_delay_20m', 'station_delay_30m',
+    ]
+    df_final = df_final[[c for c in cols_necesarias if c in df_final.columns]]
     dates = pd.date_range(start="2025-01-01", end="2025-01-31").strftime("%Y-%m-%d").tolist()
     dfs = []
+    cols_gtfs = ['trip_uid', 'stop_id', 'scheduled_seconds']
     for date in dates:
         try:
             df_gtfs = download_df_parquet(access_key, secret_key, f"grupo5/cleaned/gtfs_clean_scheduled/date={date}/gtfs_scheduled_{date}.parquet")
-            dfs.append(df_gtfs)
+            dfs.append(df_gtfs[[c for c in cols_gtfs if c in df_gtfs.columns]])
         except Exception:
             print(f"Could not download data for date: {date}")
     if not dfs:
@@ -219,6 +234,7 @@ def construir_grafo(df):
     edges_df["travel_time"] = edges_df["next_scheduled_seconds"] - edges_df["scheduled_seconds"]
     edges_df = edges_df[edges_df["travel_time"] > 0]
     graph_df = edges_df.groupby(["stop_id", "next_stop_id"]).agg(median_travel_time=("travel_time", "median"), trip_count=("trip_uid", "count")).reset_index()
+    del edges_df
     graph_df = graph_df[graph_df["trip_count"] > 5]
     nodes = sorted(list(set(df["stop_id"].unique()) | set(df["next_stop_id"].dropna().unique())))
     node_to_idx = {stop_id: idx for idx, stop_id in enumerate(nodes)}
@@ -234,12 +250,9 @@ def construir_grafo(df):
         peso = np.exp(- (dist ** 2) / (sigma ** 2))
         A_weighted[i, j] = peso
         A_weighted[j, i] = peso
+    del graph_df
     np.fill_diagonal(A_weighted, 1.0)
-    grados = np.sum(A_weighted, axis=1)
-    grados_inv_raiz = np.power(grados, -0.5, where=(grados != 0))
-    grados_inv_raiz[np.isinf(grados_inv_raiz)] = 0.0
-    A_norm = np.diag(grados_inv_raiz) @ A_weighted @ np.diag(grados_inv_raiz)
-    return node_to_idx, A_weighted, torch.tensor(A_norm, dtype=torch.float32)
+    return node_to_idx, A_weighted
 
 
 def crear_tensores(df, mapa_nodos, features, targets, freq=FREQ):
@@ -249,13 +262,14 @@ def crear_tensores(df, mapa_nodos, features, targets, freq=FREQ):
     reglas_agregacion = {
         "delay_seconds": "mean", "lagged_delay_1": "mean", "lagged_delay_2": "mean", "is_unscheduled": "sum",
         "temp_extreme": "max", "n_eventos_afectando": "max", "route_rolling_delay": "mean", "actual_headway_seconds": "mean",
-        "target_delay_10m": "mean", "target_delay_20m": "mean", "target_delay_30m": "mean",
         "station_delay_10m": "mean", "station_delay_20m": "mean", "station_delay_30m": "mean",
     }
     df_agrupado = df.groupby(["time_bin", "stop_id"]).agg(reglas_agregacion)
+    del df
     todos_los_tiempos = pd.date_range(start=df_agrupado.index.get_level_values("time_bin").min(), end=df_agrupado.index.get_level_values("time_bin").max(), freq=freq)
     indice_completo = pd.MultiIndex.from_product([todos_los_tiempos, nodos_validos], names=["time_bin", "stop_id"])
     df_completo = df_agrupado.reindex(indice_completo).reset_index()
+    del df_agrupado
     cols_retrasos = ["delay_seconds", "lagged_delay_1", "lagged_delay_2", "is_unscheduled", "route_rolling_delay", "actual_headway_seconds"]
     df_completo[cols_retrasos] = df_completo[cols_retrasos].fillna(0)
     cols_contexto = ["temp_extreme", "n_eventos_afectando"]
@@ -299,9 +313,10 @@ def split_y_escalar(X_full, Y_full):
     Y_val_scaled = scaler_Y.transform(Y_val.reshape(-1, C_out)).reshape(T_val, N, C_out)
     Y_test_scaled = scaler_Y.transform(Y_test.reshape(-1, C_out)).reshape(T_test, N, C_out)
     return {
-        'X_train_scaled': X_train_scaled, 'Y_train_scaled': Y_train_scaled,
-        'X_val_scaled': X_val_scaled, 'Y_val_scaled': Y_val_scaled,
-        'X_test_scaled': X_test_scaled, 'Y_test_scaled': Y_test_scaled,
+        'X_train_scaled': X_train_scaled.astype(np.float32),
+        'Y_train_scaled': Y_train_scaled.astype(np.float32),
+        'X_val_scaled': X_val_scaled.astype(np.float32),
+        'Y_val_scaled': Y_val_scaled.astype(np.float32),
         'scaler_Y': scaler_Y,
     }
 
@@ -343,22 +358,40 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     RUTA_SALIDA.parent.mkdir(parents=True, exist_ok=True)
 
+    print("Descargando datos...")
     df_final, df_gtfs = descargar_datos()
-    node_to_idx, A_weighted, _ = construir_grafo(df_gtfs)
+    print("Construyendo grafo...")
+    node_to_idx, A_weighted = construir_grafo(df_gtfs)
+    print(f"Grafo construido: {len(node_to_idx)} nodos")
+    del df_gtfs
+    gc.collect()
+    print("Creando tensores...")
     X_full, Y_full = crear_tensores(df_final, node_to_idx, VARIABLES_ENTRADA, VARIABLES_OBJETIVO)
+    print(f"Tensores: X={X_full.shape}, Y={Y_full.shape}")
+    del df_final
+    gc.collect()
+    print("Escalando y dividiendo datos...")
     splits = split_y_escalar(X_full, Y_full)
+    del X_full, Y_full
+    gc.collect()
+    print("Precalculando polinomios de Chebyshev...")
+    scaled_lap = calcular_scaled_laplacian(A_weighted)
+    cheb_cache = {k: calcular_polinomios_chebyshev(scaled_lap, k) for k in [2, 3]}
+    del scaled_lap, A_weighted
+    gc.collect()
+    print(f"Iniciando HPO con {N_TRIALS} trials...")
 
     def objective(trial):
         config = {
-            'history_len': trial.suggest_categorical('history_len', [8, 12]),
-            'batch_size': trial.suggest_categorical('batch_size', [16, 32]),
+            'history_len': trial.suggest_categorical('history_len', [4, 8]),
+            'batch_size': trial.suggest_categorical('batch_size', [4, 8]),
             'learning_rate': trial.suggest_float('learning_rate', 5e-4, 1e-3, log=True),
-            'hidden_channels': trial.suggest_categorical('hidden_channels', [16, 32, 64]),
+            'hidden_channels': trial.suggest_categorical('hidden_channels', [8, 16, 32]),
             'K_cheb': trial.suggest_categorical('K_cheb', [2, 3]),
             'dropout': trial.suggest_float('dropout', 0.0, 0.3),
             'loss_name': trial.suggest_categorical('loss_name', ['mse', 'smoothl1']),
         }
-        cheb_polynomials = calcular_polinomios_chebyshev(calcular_scaled_laplacian(A_weighted), config['K_cheb'])
+        cheb_polynomials = cheb_cache[config['K_cheb']]
 
         train_dataset = DatasetASTGCN(splits['X_train_scaled'], splits['Y_train_scaled'], config['history_len'])
         val_dataset = DatasetASTGCN(splits['X_val_scaled'], splits['Y_val_scaled'], config['history_len'])
@@ -407,10 +440,12 @@ def main():
 
         metricas_val = evaluar_mae_real(model, val_loader, splits['scaler_Y'], device)
         wandb.log({'val_loss': best_val, **metricas_val})
+        del model
+        gc.collect()
         return metricas_val['MAE_global_real']
 
     study = optuna.create_study(direction='minimize', sampler=optuna.samplers.TPESampler(seed=SEED))
-    wandb.init(project=WANDB_PROJECT, name='astgcn-tuning', mode='offline', reinit=True)
+    wandb.init(project=WANDB_PROJECT, name='astgcn-tuning', reinit='finish_previous')
     study.optimize(objective, n_trials=N_TRIALS, show_progress_bar=False)
     wandb.finish()
 

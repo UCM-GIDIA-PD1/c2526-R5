@@ -22,17 +22,30 @@ El sistema está diseñado siguiendo una arquitectura tipo data lake (raw → pr
 ## Estructura del proyecto
 ```
 ├── src/
-│   ├── common/                       # Utilidades compartidas (MinIO client, etc.)
-│   └── ETL/                          # Scripts de ingestión, limpieza y generación de features
-│       ├── alertas_oficiales_tiempo_real/   # Alertas MTA (histórico y tiempo real)
-│       ├── clima/                    # Datos meteorológicos (Open-Meteo)
-│       ├── eventos/                  # Eventos NYC (deportes, conciertos, oficiales)
-│       ├── gtfs_historico/           # GTFS histórico (Mobility Database)
-│       ├── pipelines/                # Orquestadores run_extraccion y run_transform
-│       └── tiempo_real_metro/        # GTFS en tiempo real (MTA feeds)
-├── notebooks/                        # Análisis exploratorio y visualizaciones
-├── docs/                             # Documentación adicional
-├── pyproject.toml                    # Configuración del entorno
+│   ├── common/                        # Utilidades compartidas (MinIO client, etc.)
+│   ├── ETL/                           # Scripts de ingestión, limpieza y generación de features
+│   │   ├── alertas_oficiales_tiempo_real/   # Alertas MTA (histórico y tiempo real)
+│   │   ├── clima/                     # Datos meteorológicos (Open-Meteo)
+│   │   ├── eventos/                   # Eventos NYC (deportes, conciertos, oficiales)
+│   │   ├── gtfs_historico/            # GTFS histórico (Mobility Database)
+│   │   ├── pipelines/                 # Orquestadores run_extraccion y run_transform
+│   │   └── tiempo_real_metro/         # GTFS en tiempo real (MTA feeds)
+│   └── models/                        
+│       ├── common/
+│       ├── modelos_alertas/
+│       │   ├── common/
+│       │   ├── Optuna/
+│       │   └── Random/
+│       ├── prediccion_retrasos/
+│       │   ├── delay_30m/
+│       │   ├── delay_end/
+│       │   ├── delta/
+│       │   └── prediccion_por_intervalos/
+│       ├── propagacion_estacion/
+│       └── seleccion_variables.md
+├── notebooks/                         # Análisis exploratorio y visualizaciones
+├── docs/                              # Documentación adicional
+├── pyproject.toml                     # Configuración del entorno
 ├── .gitignore
 └── README.md
 ```
@@ -63,6 +76,13 @@ pd1/
     │   ├── gtfs_with_delays/
     │   ├── clima/
     │   └── official_alerts/
+    │
+    ├── final/
+    │   ├── year=2025/
+    │   └── year=2026/
+    │
+    ├── aggregations/
+    │   └── lines/
     │
     └── cleaned/
         ├── clima_clean/
