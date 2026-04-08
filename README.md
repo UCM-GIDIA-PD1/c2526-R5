@@ -270,6 +270,11 @@ Es importante ejecutar primero las celdas de:
 
 
 ---
+### Creación de modelos
+
+Todos los modelos se almacenan en la carpeta models, que a su vez se divide por problema.
+---
+
 
 ## Autores
 - Alex García
