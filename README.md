@@ -351,7 +351,7 @@ Que almacena los modelos en
 models/
 ```
 
-# Para resumir este es el esquema de organización de la carpeta models\
+# Para resumir esta es la estructura de la carpeta models/
 
 ```
 models/
