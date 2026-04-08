@@ -274,7 +274,7 @@ Es importante ejecutar primero las celdas de:
 
 Todos los modelos se almacenan en la carpeta models, la cual está dividida por problemas:
 
-# 1. Modelos de anticipación de alertas
+### 1. Modelos de anticipación de alertas
 
 Se almacenan en la carpeta
 
@@ -296,7 +296,7 @@ Los entrenamientos y evaluación se almacenan en
 common/
 ```
 
-# 2. Modelos de predicción de retrasos
+### 2. Modelos de predicción de retrasos
 
 Se almacenan en la carpeta
 
@@ -337,7 +337,7 @@ random/
 test/
 ```
 
-# 3. Modelos propagación de retrasos
+### 3. Modelos propagación de retrasos
 
 Se almacenan en la carpeta
 
