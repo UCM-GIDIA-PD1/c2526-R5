@@ -14,7 +14,7 @@ Incluye:
   - Curvas PR y matrices de confusión en WandB
 
 Uso:
-    uv run python -m src.models.prediccion_retrasos.delta.evaluacion_modelos_delta
+    uv run python src/models/prediccion_retrasos/delta/evaluacion_modelos_delta.py
 """
 
 import gc

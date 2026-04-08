@@ -11,7 +11,7 @@ División temporal:
     Val    → meses 10–12  (octubre–diciembre 2025)
 
 Uso:
-    uv run python -m src.models.prediccion_retrasos.delay_end.train.train_lgbm_lines
+    uv run python src/models/prediccion_retrasos/delay_end/train/train_lgbm_lines.py
 
 Variables de entorno necesarias:
     MINIO_ACCESS_KEY

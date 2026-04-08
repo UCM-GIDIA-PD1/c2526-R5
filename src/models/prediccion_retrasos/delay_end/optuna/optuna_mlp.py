@@ -4,7 +4,7 @@ Optuna — Busqueda bayesiana de hiperparametros para MLP (PyTorch)
 Predice target_delay_end usando solo registros con scheduled_time_to_end < 1800s.
 
 Uso:
-    uv run python -m src.models.prediccion_retrasos.delay_end.optuna.optuna_mlp
+    uv run python src/models/prediccion_retrasos/delay_end/optuna/optuna_mlp.py
 
 Variables de entorno necesarias:
     MINIO_ACCESS_KEY

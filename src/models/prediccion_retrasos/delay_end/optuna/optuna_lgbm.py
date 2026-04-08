@@ -4,7 +4,7 @@ Optuna — Búsqueda bayesiana de hiperparámetros para LightGBM (menos de 30 mi
 Predice target_delay_end usando solo registros con scheduled_time_to_end < 1800s.
 
 Uso:
-    uv run python -m src.models.prediccion_retrasos.delay_end.optuna.optuna_lgbm
+    uv run python src/models/prediccion_retrasos/delay_end/optuna/optuna_lgbm.py
 
 Variables de entorno necesarias:
     MINIO_ACCESS_KEY

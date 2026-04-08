@@ -14,6 +14,10 @@ Flujo:
 
 Target:  alert_in_next_15m  (1 si hay alerta MTA en los proximos 15 min)
 Metrica: PR-AUC  (clases desbalanceadas, ~18% positivos)
+
+Uso:
+  uv run python  src/models/modelos_alertas/Random/RegresionLogistica_alertas_random.py
+
 """
 
 import os

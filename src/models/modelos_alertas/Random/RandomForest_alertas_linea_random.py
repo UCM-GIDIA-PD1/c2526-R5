@@ -15,7 +15,7 @@ Metrica: PR-AUC  (clases desbalanceadas, ~18% positivos)
 
 
 Uso:
-  python -m src.models.modelos_alertas.Random.RandomForest_alertas_linea_random
+  uv run python src/models/modelos_alertas/Random/RandomForest_alertas_linea_random.py
 
 """
 

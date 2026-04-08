@@ -3,7 +3,7 @@ Optimización de hiperparámetros automatizada con Optuna para Random Forest
 Registra cada prueba (trial) como una ejecución independiente en Weights & Biases.
 
 Uso:
-    uv run python -m src.models.prediccion_retrasos.delta.rf_optuna_binary_classification_delta
+    uv run python src/models/prediccion_retrasos/delta/rf_optuna_binary_classification_delta.py
 """
 
 import gc

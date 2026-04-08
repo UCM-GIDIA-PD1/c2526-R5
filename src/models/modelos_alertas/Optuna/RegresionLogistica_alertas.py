@@ -22,7 +22,7 @@ Metrica principal:
     Elegida por el desbalance de clases (~18% positivos).
 
 Uso:
-    python -m src.models.modelos_alertas.Optuna.RegresionLogistica_alertas
+    uv run python src/models/modelos_alertas/Optuna/RegresionLogistica_alertas.py
 """
 
 import os

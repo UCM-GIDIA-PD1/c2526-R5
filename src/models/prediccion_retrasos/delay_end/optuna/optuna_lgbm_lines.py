@@ -6,7 +6,7 @@ Carga el dataset anual de una línea concreta desde:
     pd1/grupo5/aggregations/lines/line=XX/dataset_final.parquet
 
 Uso:
-    uv run python -m src.models.prediccion_retrasos.delay_end.optuna.optuna_lgbm_lines
+    uv run python src/models/prediccion_retrasos/delay_end/optuna/optuna_lgbm_lines.py
 
 Variables de entorno necesarias:
     MINIO_ACCESS_KEY

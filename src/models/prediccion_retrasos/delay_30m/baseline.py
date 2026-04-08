@@ -6,7 +6,7 @@ Calcula el MAE de dos baselines sobre el conjunto de validación:
   2. Predecir el retraso actual (delay_seconds) como retraso futuro
 
 Uso:
-    uv run python -m src.models.prediccion_retrasos.delay_30m.baseline
+    uv run python src/models/prediccion_retrasos/delay_30m/baseline.py
 
 Variables de entorno necesarias:
     MINIO_ACCESS_KEY

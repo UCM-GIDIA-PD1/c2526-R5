@@ -15,7 +15,7 @@ Target:  alert_in_next_30m  (1 si hay alerta MTA en los próximos 30 min)
 Métrica: PR-AUC  (clases desbalanceadas)
  
 Uso:
-  python -m src.models.modelos_alertas.Random.XGBoost_alertas_random
+  uv run python src.models/modelos_alertas/Random/XGBoost_alertas_random.py
  
 """
 

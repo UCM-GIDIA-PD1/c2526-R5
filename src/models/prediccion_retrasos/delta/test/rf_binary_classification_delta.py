@@ -5,7 +5,7 @@ Carga el dataset mensual desde MinIO, entrena un modelo binario que predice si
 el retraso mejorará (delta_delay < 0) y registra todas las métricas en WandB.
 
 Uso:
-    uv run python -m src.models.prediccion_retrasos.delta.rf_binary_classification_delta
+    uv run python src/models/prediccion_retrasos/delta/rf_binary_classification_delta.py
 
 Variables de entorno necesarias:
     MINIO_ACCESS_KEY
