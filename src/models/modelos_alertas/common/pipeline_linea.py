@@ -29,6 +29,22 @@ Las features elegidas son:
 -hour_sin, hour_cos :hora del dia codificada de forma ciclica (seno y coseno) para que las 23h y las 0h sean cercanas para el modelo
 -dow: dia de la semana
 -route_id : linea de metro codificada
+FEATURES CREADAS NUEVAS:
+-headway_cv : irregularidad relativa del intervalo entre trenes, calculada como desviación típica dividida entre la media del headway
+-colapso_linea: variable binaria que vale 1 si más del 50% de las paradas de la
+línea correspondiente tienen más de 60 segundo de retraso
+- 'delay_x_aceleracion': interacción entre el retraso medio actual y la aceleracion positiva
+del retraso.
+-'delay_rolling4_mean': media móvil del retraso medio de la línea en las últimas
+4 ventanas de 30 minutos.
+-'delay_rolling4_max': máximo retraso registrado en cualquier parada de la línea en las últimas 4 
+ventanas de 30 minutos.
+-'headway_rolling4_std': mide si la irregularidad del servicio es sostenida en el tiempo.
+
+
+
+
+
 -direction
 -seg_desde_ultima_alerta_linea
 
