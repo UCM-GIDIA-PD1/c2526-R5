@@ -272,7 +272,78 @@ Es importante ejecutar primero las celdas de:
 ---
 ### Creación de modelos
 
-Todos los modelos se almacenan en la carpeta models, que a su vez se divide por problema.
+Todos los modelos se almacenan en la carpeta models, la cual está dividida por problemas:
+
+# 1. Modelos de anticipación de alertas
+
+Se almacenan en la carpeta
+
+```
+modelos_alertas/
+```
+
+En ella encontramos los modelos de Regresión Logística, Random Forest y CGBoost, cuyos hiperparámetros se han obtenido de búsquedas con optuna y random search
+almacenados en 
+
+```
+optuna/
+random/
+```
+
+Los entrenamientos y evaluación se almacenan en 
+
+```
+common/
+```
+
+# 2. Modelos de predicción de retrasos
+
+Se almacenan en la carpeta
+
+```
+prediccion_retrasos/
+```
+
+Este modelo se divide en 4 subproblemas
+
+- Predicción de retrasos a 30 minutos vista para los trenes cuyo que estarán en funcionamiento más de 30 minutos.
+
+```
+delay_30m/
+```
+
+- Predicción del retraso final para trenes que acabarán su viaje antes de 30 minutos.
+
+```
+delay_end/
+```
+- Predicción de comportamiento del retraso (mejora o empeora).
+
+```
+delta/
+```
+
+- Predicción por intervalos.
+
+```
+prediccion_por_intervalos/
+```
+
+Todos ellos a su vez se organizan en carpetas análogas a las anteriores.
+
+```
+optuna/
+random/
+test/
+```
+
+# 3. Modelos propagación de retrasos
+
+Se almacenan en la carpeta
+
+```
+propagacion_estacion/
+```
 ---
 
 
