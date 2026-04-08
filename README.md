@@ -274,7 +274,7 @@ Es importante ejecutar primero las celdas de:
 
 Todos los modelos se almacenan en la carpeta models, la cual está dividida por problemas:
 
-#1. Modelos de anticipación de alertas
+# 1. Modelos de anticipación de alertas
 
 Se almacenan en la carpeta
 
@@ -296,7 +296,7 @@ Los entrenamientos y evaluación se almacenan en
 common/
 ```
 
-#2. Modelos de predicción de retrasos
+# 2. Modelos de predicción de retrasos
 
 Se almacenan en la carpeta
 
@@ -337,13 +337,51 @@ random/
 test/
 ```
 
-#3. Modelos propagación de retrasos
+# 3. Modelos propagación de retrasos
 
 Se almacenan en la carpeta
 
 ```
 propagacion_estacion/
 ```
+
+Que almacena los modelos en
+
+```
+models/
+```
+
+# Para resumir este es el esquema de organización de la carpeta models\
+
+```
+models/
+├── modelos_alertas/                 # 1. Modelos de anticipación de alertas
+│   ├── common/                      # Entrenamientos y evaluación
+│   ├── optuna/                      # Búsquedas de hiperparámetros con Optuna
+│   └── random/                      # Búsquedas con Random Search
+│
+├── prediccion_retrasos/             # 2. Modelos de predicción de retrasos
+│   ├── delay_30m/                   # Trenes en funcionamiento > 30 mins
+│   │   ├── optuna/
+│   │   ├── random/
+│   │   └── test/
+│   ├── delay_end/                   # Trenes que acaban viaje < 30 mins
+│   │   ├── optuna/
+│   │   ├── random/
+│   │   └── test/
+│   ├── delta/                       # Comportamiento del retraso (mejora/empeora)
+│   │   ├── optuna/
+│   │   ├── random/
+│   │   └── test/
+│   └── prediccion_por_intervalos/   # Predicción por intervalos
+│       ├── optuna/
+│       ├── random/
+│       └── test/
+│
+└── propagacion_estacion/            # 3. Modelos propagación de retrasos
+    └── models/                      # Modelos almacenados
+```
+
 ---
 
 
