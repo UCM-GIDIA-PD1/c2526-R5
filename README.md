@@ -7,15 +7,15 @@ Facultad de Informática – UCM
 
 ## Descripción del proyecto
 
-Express-Bound integra datos operativos y contextuales del metro de Nueva York para detectar patrones anómalos y estimar retrasos a corto plazo.
+Express-Bound integra datos operativos y contextuales del metro de Nueva York para estimar retrasos a corto plazo y anticipar incidencias.
 
 El proyecto se centra en tres líneas principales:
 
-1. Predicción del retraso en una parada concreta.
-2. Modelado de la propagación de retrasos a lo largo de una línea.
-3. Detección temprana de incidencias operativas mediante análisis estadístico en tiempo real.
+1. Predicción del retraso de un tren concreto.
+2. Modelado de la propagación de los retrasos por la red.
+3. Detección temprana de incidencias operativas.
 
-El enfoque es de predicción a corto horizonte (15–30 minutos), utilizando tanto el estado actual de la red como información contextual (clima, calendario, estructura de la red).
+El enfoque es de predicción a corto horizonte (10–30 minutos), utilizando tanto el estado actual de la red como información contextual (clima, calendario, estructura de la red).
 
 El sistema está diseñado siguiendo una arquitectura tipo data lake (raw → processed → cleaned) sobre almacenamiento en MinIO, garantizando trazabilidad y reproducibilidad del pipeline.
 
@@ -27,22 +27,16 @@ El sistema está diseñado siguiendo una arquitectura tipo data lake (raw → pr
 │   │   ├── alertas_oficiales_tiempo_real/   # Alertas MTA (histórico y tiempo real)
 │   │   ├── clima/                     # Datos meteorológicos (Open-Meteo)
 │   │   ├── eventos/                   # Eventos NYC (deportes, conciertos, oficiales)
-│   │   ├── gtfs_historico/            # GTFS histórico (Mobility Database)
-│   │   ├── pipelines/                 # Orquestadores run_extraccion y run_transform
+│   │   ├── gtfs_historico/            # GTFS histórico (instancias de trenes pasando por estaciones)
+│   │   ├── pipelines/                 # Orquestadores run_extraccion y run_transform, generacion de dataset final y agregaciones
 │   │   └── tiempo_real_metro/         # GTFS en tiempo real (MTA feeds)
 │   └── models/                        
-│       ├── common/
-│       ├── modelos_alertas/
-│       │   ├── common/
-│       │   ├── Optuna/
-│       │   └── Random/
-│       ├── prediccion_retrasos/
-│       │   ├── delay_30m/
-│       │   ├── delay_end/
-│       │   ├── delta/
-│       │   └── prediccion_por_intervalos/
-│       ├── propagacion_estacion/
-│       └── seleccion_variables.md
+│       ├── common/                    # Agregaciones temporales adicionales
+│       ├── modelos_alertas/           # Modelos entrenados para anticipar las alertas oficiales de la MTA
+│       ├── prediccion_retrasos/       # Modelos entrenados para predecir el retraso de trenes
+│       ├── propagacion_estacion/      # Modelos entrenados para modelar la propagación del retraso por la red 
+│       └── seleccion_variables.md     # Explicación de las variables que mantenemos en la fase de modelado a partir de los resultados de los notebooks de análisis
+│
 ├── notebooks/                         # Análisis exploratorio y visualizaciones
 ├── docs/                              # Documentación adicional
 ├── pyproject.toml                     # Configuración del entorno
@@ -99,7 +93,7 @@ No se modifican una vez almacenados.
 
 ### processed/
 Datos transformados a un formato estructurado (principalmente Parquet),
-unidos de distints fuentes pero todavía sin limpieza exhaustiva.
+unidos de distintas fuentes pero todavía sin limpieza exhaustiva.
 
 ### cleaned/
 Datos limpios y validados. Incluye:
@@ -113,7 +107,7 @@ También contiene features derivados y agregaciones temporales (p.ej. lagged_del
 ## Convención de nombres
 Los objetos se almacenan siguiendo la convención:
 
-grupo5/processed/gtfs_with_delays/date=YYYY-MM-DD/nombre_archivo.parquet
+grupo5/processed/nombre_fuente/date=YYYY-MM-DD/nombre_archivo.parquet
 
 Lo cual permite:
 - Filtrado eficiente por fecha
@@ -129,7 +123,6 @@ El proyecto utiliza Python y el gestor de dependencias `uv`.
 - Python >= 3.13
 - uv instalado
 - Acceso a MinIO (credenciales proporcionadas al grupo)
-
 
 ### Configuración de variables de entorno
 
@@ -270,7 +263,7 @@ Es importante ejecutar primero las celdas de:
 
 
 ---
-# Creación de modelos
+# Uso de modelos de ML
 
 Todos los modelos se almacenan en la carpeta models, la cual está dividida por problemas:
 
@@ -282,8 +275,8 @@ Se almacenan en la carpeta
 modelos_alertas/
 ```
 
-En ella encontramos los modelos de Regresión Logística, Random Forest y CGBoost, cuyos hiperparámetros se han obtenido de búsquedas con optuna y random search
-almacenados en 
+En ella encontramos los modelos de Regresión Logística, Random Forest y XGBoost, cuyos hiperparámetros se han obtenido de búsquedas con Optuna y Random Search
+almacenados en:
 
 ```
 optuna/
@@ -296,7 +289,7 @@ Los entrenamientos y evaluación se almacenan en
 common/
 ```
 
-### 2. Modelos de predicción de retrasos
+### 2. Modelos de predicción de retrasos a nivel de tren
 
 Se almacenan en la carpeta
 
@@ -323,7 +316,7 @@ delay_end/
 delta/
 ```
 
-- Predicción por intervalos.
+- Predicción del retraso por intervalos.
 
 ```
 prediccion_por_intervalos/
