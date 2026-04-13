@@ -30,7 +30,7 @@ Guarda: artefactos/astgcn_final.pth
 
 Uso
 ---
-    uv run python src/models/propagacion_estacion/09_entrenamiento_final_astgcn.py
+    uv run python src/models/propagacion_estacion/11_entrenamiento_final_astgcn.py
 """
 import copy
 import gc
@@ -264,8 +264,6 @@ def main():
     cheb_polynomials = calcular_polinomios_chebyshev(
         calcular_scaled_laplacian(A_raw), K_cheb
     )
-    del A_raw
-    gc.collect()
 
     # ── Concatenar Train + Val ────────────────────────────────────────────────
     X_trainval = np.concatenate([splits['X_train'], splits['X_val']], axis=0)
@@ -350,6 +348,8 @@ def main():
         },
         RUTA_MODELO,
     )
+    del A_raw
+    gc.collect()
     print(f"Modelo final ASTGCN guardado en: {RUTA_MODELO}")
     print("NOTA: la evaluación sobre Test se realiza en 12_evaluacion_modelos.py")
     wandb.finish()
