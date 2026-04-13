@@ -10,7 +10,7 @@ Validacion temporal:
     Val    -> meses 10-12  (octubre-diciembre 2025)
 
 Uso:
-    uv run python -m src.models.prediccion_retrasos.delay_end.train.train_mlp
+    uv run python src/models/prediccion_retrasos/delay_end/train/train_mlp.py
 
 Variables de entorno necesarias:
     MINIO_ACCESS_KEY

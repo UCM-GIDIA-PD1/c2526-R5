@@ -4,7 +4,7 @@ Random Search — Búsqueda aleatoria de hiperparámetros para LightGBM (menos d
 Predice target_delay_end usando solo registros con scheduled_time_to_end < 1800s.
 
 Uso:
-    uv run python -m src.models.prediccion_retrasos.delay_end.random.random_lgbm
+    uv run python src/models/prediccion_retrasos/delay_end/random/random_lgbm.py
 
 Variables de entorno necesarias:
     MINIO_ACCESS_KEY

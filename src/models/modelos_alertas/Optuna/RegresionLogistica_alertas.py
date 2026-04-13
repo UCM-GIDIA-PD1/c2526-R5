@@ -14,15 +14,15 @@ Flujo general:
 - Modelo final reentrenado en train+val con los mejores params.
 
 Target:
-    alert_in_next_30m
-    1 si hay alerta MTA en los proximos 30 min.
+    alert_in_next_15m
+    1 si hay alerta MTA en los proximos 15 min.
 
 Metrica principal:
     PR-AUC
     Elegida por el desbalance de clases (~18% positivos).
 
 Uso:
-    python -m src.models.modelos_alertas.Optuna.RegresionLogistica_alertas
+    uv run python src/models/modelos_alertas/Optuna/RegresionLogistica_alertas.py
 """
 
 import os

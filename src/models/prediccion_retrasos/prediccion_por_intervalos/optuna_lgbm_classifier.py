@@ -1,10 +1,10 @@
 """
-Optuna — Búsqueda bayesiana de hiperparámetros para LightGBM (menos de 30 min restantes)
+Optuna — Búsqueda bayesiana de hiperparámetros para LightGBM global (todas las líneas)
 
-Predice target_delay_end usando solo registros con scheduled_time_to_end < 1800s.
+Predice una clasificación multiclase del retraso usando el dataset mensual completo.
 
 Uso:
-    uv run python src/models/prediccion_retrasos/delay_end/optuna/optuna_lgbm.py
+    uv run python -m src.models.prediccion_retrasos.delay_30m.optuna.optuna_lgbm
 
 Variables de entorno necesarias:
     MINIO_ACCESS_KEY
@@ -20,14 +20,15 @@ import numpy as np
 import optuna
 import pandas as pd
 import wandb
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from sklearn.metrics import accuracy_score, f1_score, log_loss
+from optuna.integration import LightGBMPruningCallback
 
 from src.common.minio_client import download_df_parquet
 
 warnings.filterwarnings("ignore")
 optuna.logging.set_verbosity(optuna.logging.WARNING)
 
-# Configuracion
+# ── Configuración ──────────────────────────────────────────────────────────────
 
 ACCESS_KEY = os.environ["MINIO_ACCESS_KEY"]
 SECRET_KEY = os.environ["MINIO_SECRET_KEY"]
@@ -35,15 +36,27 @@ SECRET_KEY = os.environ["MINIO_SECRET_KEY"]
 YEAR          = 2025
 TRAIN_MONTHS  = range(1, 10)
 VAL_MONTHS    = range(10, 13)
-TARGET        = "target_delay_end"
+
+TARGET_CONT   = "target_delay_30m"
+TARGET_CLASS  = "target_class"
 DATA_TEMPLATE = "grupo5/final/year={year}/month={month:02d}/dataset_final.parquet"
 
 WANDB_PROJECT = "pd1-c2526-team5"
-SAMPLE_FRAC   = 0.5
-NUM_RUNS      = 50
+SAMPLE_FRAC   = 0.05 
+NUM_RUNS      = 30
 
 CAT_FEATURES = ["route_id", "direction", "category", "tipo_referente"]
 STOP_ID_COL  = "stop_id"
+
+BINS = [-np.inf, -60, 60, 180, 300, 450, np.inf]
+CLASS_NAMES = [
+    'Adelantado (>1 min)', 
+    'Puntual (-1 a 1 min)', 
+    'Retraso leve (1-3 min)', 
+    'Retraso moderado (3-5 min)', 
+    'Retraso grave (5-7.5 min)',
+    'Retraso muy grave (>7.5 min)'
+]
 
 EXCLUDE_COLS = {
     "date", "match_key", "stop_id", "merge_time", "timestamp_start",
@@ -54,12 +67,12 @@ EXCLUDE_COLS = {
     "delta_delay_45m",  "delta_delay_60m",  "delta_delay_end",
     "alert_in_next_15m", "alert_in_next_30m", "seconds_to_next_alert",
     "delay_minutes", "scheduled_time", "actual_time",
+    TARGET_CONT, TARGET_CLASS
 }
 
-# Helpers
+# ── Helpers ────────────────────────────────────────────────────────────────────
 
 def load_data():
-    """Descarga y filtra los datos de entrenamiento y validacion desde MinIO."""
     def _load(months):
         dfs = []
         for month in months:
@@ -67,8 +80,13 @@ def load_data():
             try:
                 df = download_df_parquet(ACCESS_KEY, SECRET_KEY, path)
                 df = df[df["is_unscheduled"] == False]
-                df = df.dropna(subset=[TARGET])
-                df = df[df["scheduled_time_to_end"] < 1800]
+                # Limpiar nulos del objetivo continuo original primero
+                df = df.dropna(subset=[TARGET_CONT])
+                df = df[df["scheduled_time_to_end"] >= 1800]
+                
+                # Crear variable clasificatoria con valores enteros (0-5)
+                df[TARGET_CLASS] = pd.cut(df[TARGET_CONT], bins=BINS, labels=False)
+                
                 if SAMPLE_FRAC < 1.0:
                     df = df.sample(frac=SAMPLE_FRAC, random_state=42)
                 dfs.append(df)
@@ -84,7 +102,6 @@ def load_data():
 
 
 def encode_categoricals(df_train, df_val):
-    """Convierte las columnas categoricas a enteros usando el vocabulario del conjunto de entrenamiento."""
     for col in CAT_FEATURES:
         if col not in df_train.columns:
             continue
@@ -95,7 +112,6 @@ def encode_categoricals(df_train, df_val):
 
 
 def add_derived_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Calcula variables derivadas del retraso como velocidad, aceleracion e interacciones."""
     if "lagged_delay_1" in df.columns and "delay_seconds" in df.columns:
         df["delay_velocity"] = df["delay_seconds"] - df["lagged_delay_1"]
     if "lagged_delay_1" in df.columns and "lagged_delay_2" in df.columns:
@@ -110,47 +126,52 @@ def add_derived_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def add_target_encoding(df_train, df_val, col, target):
-    """Aplica target encoding sobre una columna usando la media del target por grupo calculada en train."""
-    means = df_train.groupby(col)[target].mean()
-    global_mean = df_train[target].mean()
+def add_target_encoding(df_train, df_val, col, target_cont):
+    # Utilizamos el target continuo (target_delay_30m) para el encoding
+    means = df_train.groupby(col)[target_cont].mean()
+    global_mean = df_train[target_cont].mean()
     df_train[f"{col}_target_enc"] = df_train[col].map(means)
     df_val[f"{col}_target_enc"]   = df_val[col].map(means).fillna(global_mean)
     return df_train, df_val
 
 
 def get_features(df):
-    """Devuelve la lista de columnas que se usan como features, excluyendo el target y columnas no relevantes."""
-    return [c for c in df.columns if c not in EXCLUDE_COLS and c != TARGET]
+    # EXCLUDE_COLS ya excluye TARGET_CONT y TARGET_CLASS
+    return [c for c in df.columns if c not in EXCLUDE_COLS]
 
 
-# Precargar datos
+# ── Precargar datos ────────────────────────────────────────────────────────────
 
 print("Precargando datos (se hace una sola vez para todos los trials)...")
 df_train_global, df_val_global = load_data()
 df_train_global, df_val_global = encode_categoricals(df_train_global, df_val_global)
-df_train_global, df_val_global = add_target_encoding(df_train_global, df_val_global, STOP_ID_COL, TARGET)
+
+# Hacemos el target encoding basándonos en el delay continuo para no perder información
+df_train_global, df_val_global = add_target_encoding(df_train_global, df_val_global, STOP_ID_COL, TARGET_CONT)
+
 df_train_global = add_derived_features(df_train_global)
 df_val_global   = add_derived_features(df_val_global)
 feats   = get_features(df_train_global)
+
 X_train = df_train_global[feats]
-y_train = df_train_global[TARGET]
+# Pasamos la nueva clase categórica a LightGBM
+y_train = df_train_global[TARGET_CLASS]
 X_val   = df_val_global[feats]
-y_val   = df_val_global[TARGET]
+y_val   = df_val_global[TARGET_CLASS]
+
 print(f"Features ({len(feats)}): {feats}\n")
 
-# Funcion objetivo de Optuna
+# ── Función objetivo de Optuna ─────────────────────────────────────────────────
 
 def objective(trial: optuna.Trial) -> float:
-    """Entrena un LightGBM con los hiperparametros propuestos por Optuna y devuelve el MAE en validacion."""
-    objective_fn = trial.suggest_categorical("objective", ["regression_l1", "huber"])
     params = {
-        "objective":         objective_fn,
-        "metric":            "mae",
-        "num_leaves":        trial.suggest_categorical("num_leaves", [63, 127, 255, 511]),
-        "max_depth":         trial.suggest_categorical("max_depth", [-1, 8, 12, 16]),
-        "learning_rate":     trial.suggest_categorical("learning_rate", [0.01, 0.03, 0.05, 0.1]),
-        "min_child_samples": trial.suggest_categorical("min_child_samples", [20, 50, 100, 200]),
+        "objective":         "multiclass",
+        "num_class":         len(CLASS_NAMES),
+        "metric":            "multi_logloss",
+        "num_leaves":        trial.suggest_categorical("num_leaves", [31, 63, 127]),
+        "max_depth":         trial.suggest_categorical("max_depth", [-1, 8, 12]),
+        "learning_rate":     trial.suggest_categorical("learning_rate", [0.05, 0.1]),
+        "min_child_samples": trial.suggest_categorical("min_child_samples", [20, 50, 100]),
         "feature_fraction":  trial.suggest_float("feature_fraction", 0.5, 1.0),
         "bagging_fraction":  trial.suggest_float("bagging_fraction", 0.5, 1.0),
         "bagging_freq":      5,
@@ -161,8 +182,6 @@ def objective(trial: optuna.Trial) -> float:
         "verbose":           -1,
         "seed":              42,
     }
-    if objective_fn == "huber":
-        params["alpha"] = trial.suggest_float("huber_alpha", 3.0, 30.0)
 
     lgb_train = lgb.Dataset(X_train, label=y_train)
     lgb_val   = lgb.Dataset(X_val,   label=y_val, reference=lgb_train)
@@ -170,50 +189,55 @@ def objective(trial: optuna.Trial) -> float:
     model = lgb.train(
         params,
         lgb_train,
-        num_boost_round=2000,
+        num_boost_round=1000,
         valid_sets=[lgb_val],
         valid_names=["val"],
         callbacks=[
-            lgb.early_stopping(100, verbose=False),
+            lgb.early_stopping(30, verbose=False),
             lgb.log_evaluation(100),
+            LightGBMPruningCallback(trial, "multi_logloss", valid_name="val")
         ],
     )
 
-    y_pred = model.predict(X_val, num_iteration=model.best_iteration)
-    mae  = mean_absolute_error(y_val, y_pred)
-    rmse = np.sqrt(mean_squared_error(y_val, y_pred))
-    r2   = r2_score(y_val, y_pred)
+    y_pred_prob = model.predict(X_val, num_iteration=model.best_iteration)
+    y_pred_class = np.argmax(y_pred_prob, axis=1)
+
+    logloss = log_loss(y_val, y_pred_prob)
+    acc = accuracy_score(y_val, y_pred_class)
+    f1_macro = f1_score(y_val, y_pred_class, average="macro")
+    f1_weighted = f1_score(y_val, y_pred_class, average="weighted")
 
     run = wandb.init(
         project=WANDB_PROJECT,
-        name=f"optuna-end-trial{trial.number}",
-        group="prediccion-retrasos-end",
+        name=f"optuna-global-class-trial{trial.number}",
+        group="prediccion-retrasos-class",
         config={**params, "trial": trial.number},
         reinit=True,
     )
     wandb.log({
-        "val_mae_s":      round(mae, 2),
-        "val_mae_min":    round(mae / 60, 2),
-        "val_rmse_s":     round(rmse, 2),
-        "val_r2":         round(r2, 4),
-        "best_iteration": model.best_iteration,
+        "val_logloss":     round(logloss, 4),
+        "val_accuracy":    round(acc, 4),
+        "val_f1_macro":    round(f1_macro, 4),
+        "val_f1_weighted": round(f1_weighted, 4),
+        "best_iteration":  model.best_iteration,
     })
     wandb.finish()
 
-    return mae
+    return logloss
 
 
-# Lanzar estudio Optuna
+# ── Lanzar estudio Optuna ──────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     study = optuna.create_study(
         direction="minimize",
         sampler=optuna.samplers.TPESampler(seed=42),
+        pruner=optuna.pruners.MedianPruner(n_warmup_steps=20)
     )
-    print(f"Lanzando {NUM_RUNS} trials Optuna (target={TARGET}, scheduled_time_to_end < 1800s)...\n")
+    print(f"Lanzando {NUM_RUNS} trials Optuna (target={TARGET_CLASS}, multiclase)...\n")
     study.optimize(objective, n_trials=NUM_RUNS, show_progress_bar=True)
 
     print("\n── Mejores hiperparámetros ──────────────────────────────────────")
-    print(f"  val_mae_s: {study.best_value:.2f}s")
+    print(f"  val_logloss: {study.best_value:.4f}")
     for k, v in study.best_params.items():
         print(f"  {k}: {v}")

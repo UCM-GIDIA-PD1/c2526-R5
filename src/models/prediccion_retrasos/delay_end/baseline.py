@@ -8,7 +8,7 @@ Calcula el MAE de dos baselines sobre el conjunto de validación:
 Solo usa registros con scheduled_time_to_end < 1800s.
 
 Uso:
-    uv run python -m src.models.prediccion_retrasos.delay_end.baseline
+    uv run python src/models/prediccion_retrasos/delay_end/baseline.py
 
 Variables de entorno necesarias:
     MINIO_ACCESS_KEY

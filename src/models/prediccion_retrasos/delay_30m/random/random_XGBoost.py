@@ -10,7 +10,7 @@ Validación y Optimización:
     Aceleración: Uso de `tree_method='hist'` y `enable_categorical=True` para procesar millones de filas de forma eficiente.
 
 Uso:
-    python -m src.models.prediccion_retrasos.XGBoost
+    python src/models/prediccion_retrasos/XGBoost.py
 
 Variables de entorno necesarias:
     MINIO_ACCESS_KEY

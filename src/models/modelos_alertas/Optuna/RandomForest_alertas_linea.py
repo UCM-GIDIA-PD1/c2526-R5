@@ -10,12 +10,12 @@ que esta tiene en nuestros modelos.
 Cada trial = 1 run en W&B. Los modelos finales loguean ademas
 PR curve, feature importance y confusion matrix.
 
-Target:  alert_in_next_30m  (1 si hay alerta MTA en los proximos 30 min)
+Target:  alert_in_next_15m  (1 si hay alerta MTA en los proximos 15 min)
 Metrica: PR-AUC  (clases desbalanceadas, ~18% positivos)
 
 
 Uso:
-  python -m src.models.modelos_alertas.Optuna.RandomForest_alertas_linea
+  uv run python src/models/modelos_alertas/Optuna/RandomForest_alertas_linea.py
 
 """
 
@@ -51,6 +51,7 @@ PROJECT = "pd1-c2526-team5"
 
 N_TRIALS    = 30
 SAMPLE_FRAC = 0.30
+USE_WANDB   = True
 
 
 
@@ -104,7 +105,7 @@ def main():
     df_linea = agregar_features_rolling_retraso(df_linea)
     print(f"Dataset linea: {df_linea.shape[0]:,} filas x {df_linea.shape[1]} columnas")
     print(f"Positivos: {df_linea[TARGET].mean()*100:.1f}%")
-
+    #encoding necesario en rf
     for col in ['route_id', 'direction']:
         le = LabelEncoder()
         df_linea[col] = le.fit_transform(df_linea[col].astype(str))
@@ -132,21 +133,23 @@ def main():
     y_prob_base = baseline.predict_proba(test[feats_con].fillna(0))[:, 1]
     y_pred_base = baseline.predict(test[feats_con].fillna(0))
 
-    run = wandb.init(
-        entity=ENTITY, project=PROJECT,
-        name="rf_linea_optuna_baseline",
-        config={"model": "baseline_estratificado", "nivel": "linea"},
-        tags=["linea", "random_forest", "optuna", "baseline"],
-    )
-    wandb.log({
-        "pr_auc":    average_precision_score(y_test, y_prob_base),
-        "auc_roc":   roc_auc_score(y_test, y_prob_base),
-        "f1":        f1_score(y_test, y_pred_base, zero_division=0),
-        "recall":    recall_score(y_test, y_pred_base, zero_division=0),
-        "precision": precision_score(y_test, y_pred_base, zero_division=0),
-    })
-    run.finish()
-    print("Baseline logueado en W&B")
+    print(f"  Baseline PR-AUC: {average_precision_score(y_test, y_prob_base):.4f}")
+    if USE_WANDB:
+        run = wandb.init(
+            entity=ENTITY, project=PROJECT,
+            name="rf_linea_optuna_15m_baseline",
+            config={"model": "baseline_estratificado", "nivel": "linea"},
+            tags=["linea", "random_forest", "optuna", "baseline"],
+        )
+        wandb.log({
+            "pr_auc":    average_precision_score(y_test, y_prob_base),
+            "auc_roc":   roc_auc_score(y_test, y_prob_base),
+            "f1":        f1_score(y_test, y_pred_base, zero_division=0),
+            "recall":    recall_score(y_test, y_pred_base, zero_division=0),
+            "precision": precision_score(y_test, y_pred_base, zero_division=0),
+        })
+        run.finish()
+        print("Baseline logueado en W&B")
 
     print(f"\n-- Optuna {N_TRIALS} trials (con seg_alerta) --")
 
@@ -169,20 +172,6 @@ def main():
         y_prob_val = modelo.predict_proba(X_val_c)[:, 1]
         pr_auc_val = average_precision_score(y_val, y_prob_val)
         f1_val     = f1_score(y_val, (y_prob_val >= 0.5).astype(int), zero_division=0)
-
-        run = wandb.init(
-            entity=ENTITY, project=PROJECT,
-            name=f"rf_linea_optuna_{trial.number+1:02d}",
-            config={**params, "nivel": "linea", "estrategia": "optuna",
-                    "con_seg_alerta": True, "trial": trial.number + 1},
-            tags=["linea", "random_forest", "optuna"],
-        )
-        wandb.log({
-            "pr_auc_val":  pr_auc_val,
-            "f1_val":      f1_val,
-            "roc_auc_val": roc_auc_score(y_val, y_prob_val),
-        })
-        run.finish()
 
         print(f"  Trial {trial.number+1:02d}/{N_TRIALS} | PR-AUC val: {pr_auc_val:.4f} | F1 val: {f1_val:.4f}")
         return pr_auc_val
@@ -209,17 +198,17 @@ def main():
     print(f"F1 test:     {metricas_con['f1_test']:.4f}")
     print(f"Threshold:   {metricas_con['threshold_opt']:.2f}")
 
-    log_final_wandb(
-        run_name="rf_linea_optuna_FINAL_con_seg",
-        config={**best_params, "nivel": "linea", "con_seg_alerta": True},
-        metricas=metricas_con,
-        y_test=y_test, y_prob=y_prob_con, y_pred=y_pred_con,
-        features=feats_con, importances=modelo_con.feature_importances_,
-        tags=["linea", "random_forest", "optuna", "final", "con_seg_alerta"],
-    )
-    print("Logueado en W&B: rf_linea_optuna_FINAL_con_seg")
+    if USE_WANDB:
+        log_final_wandb(
+            run_name="rf_linea_optuna_15m_FINAL_con_seg",
+            config={**best_params, "nivel": "linea", "con_seg_alerta": True},
+            metricas=metricas_con,
+            y_test=y_test, y_prob=y_prob_con, y_pred=y_pred_con,
+            features=feats_con, importances=modelo_con.feature_importances_,
+            tags=["linea", "random_forest", "optuna", "final", "con_seg_alerta"],
+        )
+        print("Logueado en W&B: rf_linea_optuna_FINAL_con_seg")
 
-    # -- 9. Modelo final SIN seg_alerta (mismos hiperparametros) -------------
     print("\n-- Modelo final SIN seg_alerta (mismos hiperparametros) --")
     X_train_sin = pd.concat([train[feats_sin], val[feats_sin]]).fillna(0)
     X_test_sin  = test[feats_sin].fillna(0)
@@ -233,15 +222,16 @@ def main():
     print(f"F1 test:     {metricas_sin['f1_test']:.4f}")
     print(f"Threshold:   {metricas_sin['threshold_opt']:.2f}")
 
-    log_final_wandb(
-        run_name="rf_linea_optuna_FINAL_sin_seg",
-        config={**best_params, "nivel": "linea", "con_seg_alerta": False},
-        metricas=metricas_sin,
-        y_test=y_test, y_prob=y_prob_sin, y_pred=y_pred_sin,
-        features=feats_sin, importances=modelo_sin.feature_importances_,
-        tags=["linea", "random_forest", "optuna", "final", "sin_seg_alerta"],
-    )
-    print("Logueado en W&B: rf_linea_optuna_FINAL_sin_seg")
+    if USE_WANDB:
+        log_final_wandb(
+            run_name="rf_linea_optuna_15m_FINAL_sin_seg",
+            config={**best_params, "nivel": "linea", "con_seg_alerta": False},
+            metricas=metricas_sin,
+            y_test=y_test, y_prob=y_prob_sin, y_pred=y_pred_sin,
+            features=feats_sin, importances=modelo_sin.feature_importances_,
+            tags=["linea", "random_forest", "optuna", "final", "sin_seg_alerta"],
+        )
+        print("Logueado en W&B: rf_linea_optuna_FINAL_sin_seg")
 
   
     print(f"\n{'='*60}")

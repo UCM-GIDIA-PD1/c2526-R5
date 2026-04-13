@@ -13,8 +13,6 @@ import torch.nn.functional as F
 from sklearn.preprocessing import StandardScaler
 from torch.utils.data import DataLoader, Dataset
 
-os.environ["WANDB_MODE"] = "offline"
-os.environ["WANDB_START_METHOD"] = "thread"
 
 import wandb
 
@@ -41,7 +39,6 @@ VARIABLES_ENTRADA = [
     'actual_headway_seconds', 'hour_sin', 'hour_cos', 'dow'
 ]
 VARIABLES_OBJETIVO = [
-    'target_delay_10m', 'target_delay_20m', 'target_delay_30m',
     'station_delay_10m', 'station_delay_20m', 'station_delay_30m'
 ]
 
@@ -99,7 +96,7 @@ class STConvBlock(nn.Module):
 
 
 class STGCN_Metro(nn.Module):
-    def __init__(self, num_nodes, num_features, num_targets, history_len, adj_matrix, hidden1, hidden2, dropout):
+    def __init__(self, num_features, num_targets, history_len, adj_matrix, hidden1, hidden2, dropout):
         super().__init__()
         self.register_buffer('adj_matrix', adj_matrix)
         self.block1 = STConvBlock(num_features, hidden1)
@@ -126,6 +123,13 @@ def descargar_datos():
 
     ruta_archivo = "grupo5/final/year=2025/month=01/dataset_final.parquet"
     df_final = download_df_parquet(access_key, secret_key, ruta_archivo)
+    cols_necesarias = [
+        'stop_id', 'merge_time',
+        'delay_seconds', 'lagged_delay_1', 'lagged_delay_2', 'is_unscheduled',
+        'temp_extreme', 'n_eventos_afectando', 'route_rolling_delay', 'actual_headway_seconds',
+        'station_delay_10m', 'station_delay_20m', 'station_delay_30m',
+    ]
+    df_final = df_final[[c for c in cols_necesarias if c in df_final.columns]]
 
     dates = pd.date_range(start="2025-01-01", end="2025-01-31").strftime("%Y-%m-%d").tolist()
     dfs = []
@@ -175,8 +179,9 @@ def construir_grafo(df):
 
     np.fill_diagonal(A_weighted, 1.0)
     grados = np.sum(A_weighted, axis=1)
-    grados_inv_raiz = np.power(grados, -0.5, where=(grados != 0))
-    grados_inv_raiz[np.isinf(grados_inv_raiz)] = 0.0
+    grados_inv_raiz = np.zeros_like(grados)
+    mask = grados != 0
+    grados_inv_raiz[mask] = np.power(grados[mask], -0.5)
     matriz_diagonal = np.diag(grados_inv_raiz)
     A_norm = matriz_diagonal @ A_weighted @ matriz_diagonal
     A_tensor = torch.tensor(A_norm, dtype=torch.float32)
@@ -199,9 +204,6 @@ def crear_tensores(df, mapa_nodos, features, targets, freq=FREQ):
         'n_eventos_afectando': 'max',
         'route_rolling_delay': 'mean',
         'actual_headway_seconds': 'mean',
-        'target_delay_10m': 'mean',
-        'target_delay_20m': 'mean',
-        'target_delay_30m': 'mean',
         'station_delay_10m': 'mean',
         'station_delay_20m': 'mean',
         'station_delay_30m': 'mean',
@@ -333,10 +335,23 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     RUTA_SALIDA.parent.mkdir(parents=True, exist_ok=True)
 
+    print("Descargando datos...")
     df_final, df_gtfs = descargar_datos()
+    print("Construyendo grafo...")
     node_to_idx, A_tensor = construir_grafo(df_gtfs)
+    print(f"Grafo construido: {len(node_to_idx)} nodos")
+    del df_gtfs
+    gc.collect()
+    print("Creando tensores...")
     X_full, Y_full = crear_tensores(df_final, node_to_idx, VARIABLES_ENTRADA, VARIABLES_OBJETIVO)
+    print(f"Tensores: X={X_full.shape}, Y={Y_full.shape}")
+    del df_final
+    gc.collect()
+    print("Escalando y dividiendo datos...")
     splits = split_y_escalar(X_full, Y_full)
+    del X_full, Y_full
+    gc.collect()
+    print(f"Iniciando HPO con {N_TRIALS} trials...")
 
     def objective(trial):
         config = {
@@ -355,7 +370,6 @@ def main():
         val_loader = DataLoader(val_dataset, batch_size=config['batch_size'], shuffle=False)
 
         model = STGCN_Metro(
-            num_nodes=len(node_to_idx),
             num_features=len(VARIABLES_ENTRADA),
             num_targets=len(VARIABLES_OBJETIVO),
             history_len=config['history_len'],
@@ -401,7 +415,7 @@ def main():
         return metricas_val['MAE_global_real']
 
     study = optuna.create_study(direction='minimize', sampler=optuna.samplers.TPESampler(seed=SEED))
-    wandb.init(project=WANDB_PROJECT, name='stgcn-tuning', mode='offline', reinit=True)
+    wandb.init(project=WANDB_PROJECT, name='stgcn-tuning', reinit='finish_previous')
     study.optimize(objective, n_trials=N_TRIALS, show_progress_bar=False)
     wandb.finish()
 

@@ -1,16 +1,9 @@
 """
-Clasificación binaria de mejora de retraso con Random Forest — subida a WandB
-
-Carga el dataset mensual desde MinIO, entrena un modelo binario que predice si
-el retraso mejorará (delta_delay < 0) y registra todas las métricas en WandB.
+Optimización de hiperparámetros automatizada con Optuna para Random Forest
+Registra cada prueba (trial) como una ejecución independiente en Weights & Biases.
 
 Uso:
-    uv run python -m src.models.prediccion_retrasos.delta.rf_binary_classification_delta
-
-Variables de entorno necesarias:
-    MINIO_ACCESS_KEY
-    MINIO_SECRET_KEY
-    WANDB_API_KEY
+    uv run python src/models/prediccion_retrasos/delta/rf_optuna_binary_classification_delta.py
 """
 
 import gc
@@ -19,6 +12,7 @@ import warnings
 
 import numpy as np
 import pandas as pd
+import optuna
 import wandb
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import (
@@ -34,13 +28,14 @@ from sklearn.metrics import (
 from src.common.minio_client import download_df_parquet
 warnings.filterwarnings("ignore")
 
-# ── Configuración ──────────────────────────────────────────────────────────────
+# ── Configuración Igual que en el original ───────────────────────────────────
 
-ACCESS_KEY = os.environ["MINIO_ACCESS_KEY"]
-SECRET_KEY = os.environ["MINIO_SECRET_KEY"]
+ACCESS_KEY = os.environ.get("MINIO_ACCESS_KEY", "")
+SECRET_KEY = os.environ.get("MINIO_SECRET_KEY", "")
 
 YEAR          = 2025
-MONTHS        = range(1, 2)
+MONTHS        = range(1, 13)
+SAMPLE_FRAC   = 0.1
 DATA_TEMPLATE = "grupo5/final/year={year}/month={month:02d}/dataset_final.parquet"
 
 TARGET_DELTA  = "delta_delay_10m"   # cambiar para otro horizonte: _20m, _30m, _45m, _60m, etc.
@@ -68,16 +63,9 @@ CAT_FEATURES = [
     "is_alert_just_published", "has_alert",
 ]
 
-RF_PARAMS = {
-    "n_estimators":     500,
-    "max_depth":        None,
-    "min_samples_leaf": 50,
-    "max_features":     "sqrt",
-    "n_jobs":           -1,
-    "random_state":     SEED,
-}
+# Configuración de Optuna
+N_TRIALS = 15  # Número de combinaciones automáticas que probará antes de detenerse
 
-# ── Funciones auxiliares ───────────────────────────────────────────────────────
 
 def load_months(months: range) -> pd.DataFrame:
     dfs = []
@@ -87,8 +75,10 @@ def load_months(months: range) -> pd.DataFrame:
             df = download_df_parquet(ACCESS_KEY, SECRET_KEY, path)
             total = len(df)
             df = df.dropna(subset=[TARGET_DELTA])
+            if SAMPLE_FRAC < 1.0:
+                df = df.sample(frac=SAMPLE_FRAC, random_state=SEED)
             mb = df.memory_usage(deep=True).sum() / 1e6
-            print(f"  month={month:02d}  {total:>10,} filas  ->  {len(df):>10,} tras filtrado  ~{mb:.0f} MB")
+            print(f"  month={month:02d}  {total:>10,} filas  ->  {len(df):>10,} muestreadas  ~{mb:.0f} MB")
             dfs.append(df)
         except Exception as e:
             print(f"  month={month:02d}  no encontrado ({e})")
@@ -135,24 +125,10 @@ def compute_metrics(y_true, y_prob, y_pred, prefix="") -> dict:
     }
 
 
-# ── Entrenamiento ──────────────────────────────────────────────────────────────
+# ── Parte de Optuna ────────────────────────────────────────────────────────────
 
-def train():
-    run = wandb.init(
-        project=WANDB_PROJECT,
-        name=f"rf_binary_delta_{TARGET_DELTA}",
-        config={
-            "target_delta": TARGET_DELTA,
-            "year":         YEAR,
-            "months":       list(MONTHS),
-            "train_ratio":  TRAIN_RATIO,
-            "val_ratio":    VAL_RATIO,
-            "model":        "RandomForest",
-            **RF_PARAMS,
-        },
-    )
-
-    # Carga
+def load_and_prepare_data():
+    """Carga los datos una única vez en memoria para acelerar todos los intentos de Optuna."""
     print(f"\nCargando datos (meses {list(MONTHS)})...")
     df = load_months(MONTHS)
     print(f"  Total: {len(df):,} filas\n")
@@ -163,14 +139,9 @@ def train():
         if col in df.columns and not pd.api.types.is_datetime64_any_dtype(df[col]):
             df[col] = pd.to_datetime(df[col], errors="coerce")
 
-    # Feature engineering y target binario
     df = add_features(df)
     df[TARGET] = (df[TARGET_DELTA] < 0).astype(np.int8)
 
-    counts = df[TARGET].value_counts().sort_index()
-    print(f"Clase 0 (no mejora): {counts[0]:,}  |  Clase 1 (mejora): {counts[1]:,}")
-
-    # Split temporal
     sort_col = "merge_time" if df["merge_time"].notna().sum() > 0 else "date"
     df = df.sort_values(sort_col).reset_index(drop=True)
     n       = len(df)
@@ -184,93 +155,95 @@ def train():
     gc.collect()
 
     df_train, df_val, df_test = encode_categoricals(df_train, df_val, df_test)
-
     feats = get_features(df_train)
-    print(f"Features ({len(feats)}): {feats}\n")
 
     X_train, y_train = df_train[feats], df_train[TARGET]
     X_val,   y_val   = df_val[feats],   df_val[TARGET]
     X_test,  y_test  = df_test[feats],  df_test[TARGET]
 
-    for name, X, y in [("train", X_train, y_train), ("val", X_val, y_val), ("test", X_test, y_test)]:
-        print(f"  {name:>5s}: {len(X):>10,} filas  |  clase 1: {y.mean()*100:.1f}%")
+    return X_train, y_train, X_val, y_val, X_test, y_test, feats
 
-    wandb.log({
-        "n_train":            len(X_train),
-        "n_val":              len(X_val),
-        "n_test":             len(X_test),
-        "n_features":         len(feats),
-        "class1_ratio_train": round(float(y_train.mean()), 4),
-    })
 
-    # Entrenamiento
-    class_ratio = y_train.mean()
+def objective(trial, X_train, y_train, X_val, y_val, X_test, y_test, feats):
+    """
+    Función de evaluación de Optuna.
+    En cada iteración, elige al azar (Bayes) unos parámetros, entrena, predice y lo envía a Wandb.
+    """
+    # 1. Optuna elige los hiperparámetros
+    class_ratio  = y_train.mean()
     class_weight = "balanced" if class_ratio < 0.3 or class_ratio > 0.7 else None
-    print(f"\nClase 1 en train: {class_ratio:.3f}  ->  class_weight={class_weight}")
 
-    print(f"\nEntrenando RandomForest (target={TARGET_DELTA})...")
-    model = RandomForestClassifier(**RF_PARAMS, class_weight=class_weight)
+    params = {
+        "n_estimators":     trial.suggest_int("n_estimators", 50, 300, step=50),
+        "max_depth":        trial.suggest_categorical("max_depth", [5, 10, 15, 20]),
+        "min_samples_leaf": trial.suggest_int("min_samples_leaf", 20, 200),
+        "max_features":     trial.suggest_categorical("max_features", ["sqrt", "log2"]),
+        "bootstrap":        True,
+        "n_jobs":           -1,
+        "random_state":     SEED,
+        "class_weight":     class_weight,
+    }
+
+    # 2. Iniciar sesión de Weights and Biases
+    run = wandb.init(
+        project=WANDB_PROJECT,
+        name=f"rf_optuna_binary_delta_{TARGET_DELTA}",
+        reinit=True,
+        config={**params, "model": "RandomForest"}
+    )
+
+    # 3. Entrenar el modelo
+    model = RandomForestClassifier(**params)
     model.fit(X_train, y_train)
 
-    # Predicciones
-    y_prob_val  = model.predict_proba(X_val)[:, 1]
-    y_prob_test = model.predict_proba(X_test)[:, 1]
+    # 4. Calcular Métricas
+    y_prob_val = model.predict_proba(X_val)[:, 1]
+    y_pred_val = (y_prob_val >= 0.5).astype(int)
+    m_val = compute_metrics(y_val, y_prob_val, y_pred_val, prefix="val_")
 
-    y_pred_val  = (y_prob_val  >= 0.5).astype(int)
-    y_pred_test = (y_prob_test >= 0.5).astype(int)
-
-    m_val  = compute_metrics(y_val,  y_prob_val,  y_pred_val,  prefix="val_")
-    m_test = compute_metrics(y_test, y_prob_test, y_pred_test, prefix="test_")
-
-    # Umbral óptimo por F1 en validación
+    # Umbral óptimo por F1
     thresholds = np.arange(0.20, 0.80, 0.01)
     f1s = [f1_score(y_val, (y_prob_val >= t).astype(int), zero_division=0) for t in thresholds]
     best_idx       = int(np.argmax(f1s))
     best_threshold = float(thresholds[best_idx])
-    print(f"\nMejor umbral (val): {best_threshold:.2f}  ->  F1={f1s[best_idx]:.4f}")
 
+    y_prob_test = model.predict_proba(X_test)[:, 1]
     y_pred_test_opt = (y_prob_test >= best_threshold).astype(int)
     m_test_opt = compute_metrics(y_test, y_prob_test, y_pred_test_opt, prefix="test_opt_")
 
-    # Métricas adicionales con umbral óptimo
-    tn, fp, fn, tp = confusion_matrix(y_test, y_pred_test_opt).ravel()
-    spec    = tn / (tn + fp) if (tn + fp) > 0 else float("nan")
-    rec_val = recall_score(y_test, y_pred_test_opt, zero_division=0)
-    bal_acc = (rec_val + spec) / 2 if not np.isnan(spec) else float("nan")
-
-    # Log a WandB
+    # 5. Guardar todas las métricas en WandB
     wandb.log({
         **m_val,
-        **m_test,
         **m_test_opt,
-        "best_threshold":          round(best_threshold, 2),
-        "val_best_f1":             round(f1s[best_idx], 4),
-        "target_delta":            TARGET_DELTA,
-        "test_tp":                 int(tp),
-        "test_fp":                 int(fp),
-        "test_fn":                 int(fn),
-        "test_tn":                 int(tn),
-        "test_opt_specificity":    round(spec, 4) if not np.isnan(spec) else None,
-        "test_opt_fpr":            round(fp / (fp + tn), 4) if (fp + tn) > 0 else None,
-        "test_opt_fnr":            round(fn / (fn + tp), 4) if (fn + tp) > 0 else None,
-        "test_opt_balanced_acc":   round(bal_acc, 4) if not np.isnan(bal_acc) else None,
+        "best_threshold": best_threshold,
+        "val_best_f1":    f1s[best_idx],
+        "target_delta":   TARGET_DELTA,
     })
-
-    # Feature importance
-    importance = pd.DataFrame({
-        "feature":    feats,
-        "importance": model.feature_importances_,
-    }).sort_values("importance", ascending=False)
-    importance["pct"] = (importance["importance"] / importance["importance"].sum() * 100).round(2)
-    print(f"\nTop 20 features:")
-    print(importance.head(20).to_string(index=False))
-
-    wandb.log({"feature_importance": wandb.Table(dataframe=importance.head(30))})
 
     run.finish()
 
+    # Devolvemos el AUC de validación a Optuna
+    return m_val["val_roc_auc"]
 
-# ── Punto de entrada ───────────────────────────────────────────────────────────
+
+def run_optuna_study():
+    X_train, y_train, X_val, y_val, X_test, y_test, feats = load_and_prepare_data()
+
+    # direction="maximize" para obtener luego el máximo AUC posible
+    study = optuna.create_study(direction="maximize", study_name=f"RF_Optuna_{TARGET_DELTA}")
+
+    print(f"\nIniciando Optuna:")
+    study.optimize(
+        lambda trial: objective(trial, X_train, y_train, X_val, y_val, X_test, y_test, feats),
+        n_trials=N_TRIALS
+    )
+
+    print("\nBÚSQUEDA DE OPTUNA TERMINADA")
+    print(f"La mejor prueba ha sido la Trial: {study.best_trial.number}")
+    print(f"Mejor AUC en validación: {study.best_value}")
+    print("El modelo de Optuna determinó que los mejores hiperparámetros fueron:")
+    for k, v in study.best_params.items():
+        print(f"    '{k}': {v},")
 
 if __name__ == "__main__":
-    train()
+    run_optuna_study()

@@ -9,7 +9,7 @@ Partición final:
     Test   → enero 2026
 
 Uso:
-    uv run python -m src.models.prediccion_retrasos.delay_end.test.eval_lgbm
+    uv run python src/models/prediccion_retrasos/delay_end/test/eval_lgbm.py
 
 Variables de entorno necesarias:
     MINIO_ACCESS_KEY

@@ -14,7 +14,7 @@ Guarda en disco: artefactos/grafo.pt
 
 Uso
 ---
-    uv run python src/models/prediccion_propagacion/01_generar_grafo.py
+    uv run python src/models/propagacion_estacion/01_generar_grafo.py
 """
 import gc
 import os

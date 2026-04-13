@@ -17,7 +17,7 @@ Guarda:   artefactos/tensores.pt
 
 Uso
 ---
-    uv run python src/models/prediccion_propagacion/02_generar_tensores.py
+    uv run python src/models/propagacion_estacion/02_generar_tensores.py
 """
 import gc
 import os
