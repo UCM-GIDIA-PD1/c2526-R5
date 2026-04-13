@@ -316,9 +316,17 @@ def main():
     # --- Metricas finales con mejor modelo ---
     model.load_state_dict(best_state)
     model.eval()
-    with torch.no_grad():
-        y_pred_train = model(torch.from_numpy(X_train_np).to(device)).cpu().numpy()
-        y_pred_test  = model(torch.from_numpy(X_test_np).to(device)).cpu().numpy()
+
+    def predict_in_batches(X_np, batch_size=4096):
+        preds = []
+        with torch.no_grad():
+            for i in range(0, len(X_np), batch_size):
+                batch = torch.from_numpy(X_np[i:i+batch_size]).to(device)
+                preds.append(model(batch).cpu().numpy())
+        return np.concatenate(preds)
+
+    y_pred_train = predict_in_batches(X_train_np)
+    y_pred_test  = predict_in_batches(X_test_np)
 
     metrics_train = compute_metrics(y_train_np, y_pred_train, prefix="train_")
     metrics_test  = compute_metrics(y_test_np,  y_pred_test,  prefix="test_")

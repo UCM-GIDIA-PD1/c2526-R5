@@ -85,7 +85,7 @@ LGBM_PARAMS = {
     "verbose":           -1,
     "seed":              42,
 }
-NUM_BOOST_ROUND = 20000
+NUM_BOOST_ROUND = 5000
 EARLY_STOPPING  = 100
 SAMPLE_FRAC = 1.0
 
