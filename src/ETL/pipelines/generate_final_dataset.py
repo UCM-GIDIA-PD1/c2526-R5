@@ -8,7 +8,7 @@ Fuentes mezcladas en un único dataset:
 4) Alertas oficiales cleaned
 
 Uso:
-  uv run python -m src.ETL.pipelines.generate_final_dataset \
+  uv run python src/ETL/pipelines/generate_final_dataset.py \
 	--start 2025-01-01 --end 2025-01-31
 """
 
@@ -484,7 +484,7 @@ def merge_gtfs_events(df_base: pd.DataFrame, df_events: pd.DataFrame) -> pd.Data
 	base = df_base.copy()
 	evt = df_events.copy()
 
-	# --- Preparar clave de fecha en base (service_date como string YYYY-MM-DD) ---
+	# Preparar clave de fecha en base (service_date como string YYYY-MM-DD)
 	if "service_date" not in base.columns:
 		if "date" in base.columns:
 			base["service_date"] = pd.to_datetime(base["date"], errors="coerce").dt.strftime("%Y-%m-%d")
@@ -510,7 +510,7 @@ def merge_gtfs_events(df_base: pd.DataFrame, df_events: pd.DataFrame) -> pd.Data
 	# Índice original para hacer join de vuelta.
 	base["_tren_idx"] = base.index
 
-	# --- Preparar eventos ---
+	# Preparar eventos
 	if "date" in evt.columns:
 		evt["service_date"] = pd.to_datetime(evt["date"], errors="coerce").dt.strftime("%Y-%m-%d")
 	elif "fecha_inicio" in evt.columns:
@@ -538,7 +538,7 @@ def merge_gtfs_events(df_base: pd.DataFrame, df_events: pd.DataFrame) -> pd.Data
 	evt["_evento_inicio_secs"] = evt["hora_inicio"].apply(_time_str_to_seconds)
 	evt["_evento_fin_secs"] = evt["hora_salida_estimada"].apply(_time_str_to_seconds)
 
-	# --- INNER JOIN por stop_id + service_date (solo candidatos espaciales) ---
+	# INNER JOIN por stop_id + service_date (solo candidatos espaciales)
 	merged = base[["_tren_idx", "stop_id", "service_date", "_actual_secs"]].merge(
 		evt[["service_date", "stop_id", "nombre_evento", tipo_col, "score",
 			 "_evento_inicio_secs", "_evento_fin_secs"]],
@@ -546,7 +546,7 @@ def merge_gtfs_events(df_base: pd.DataFrame, df_events: pd.DataFrame) -> pd.Data
 		how="inner",
 	)
 
-	# --- Filtrar por ventana temporal ---
+	# Filtrar por ventana temporal
 	merged["_ventana_pre"] = merged["_evento_inicio_secs"] - VENTANA
 	merged["_ventana_post"] = merged["_evento_fin_secs"] + VENTANA
 
@@ -566,7 +566,7 @@ def merge_gtfs_events(df_base: pd.DataFrame, df_events: pd.DataFrame) -> pd.Data
 		out["afecta_despues"] = 0
 		return out
 
-	# --- Flags de fase temporal ---
+	# Flags de fase temporal
 	afectados["es_previo"] = (
 		afectados["_actual_secs"] < afectados["_evento_inicio_secs"]
 	).astype(int)
@@ -578,7 +578,7 @@ def merge_gtfs_events(df_base: pd.DataFrame, df_events: pd.DataFrame) -> pd.Data
 		afectados["_actual_secs"] > afectados["_evento_fin_secs"]
 	).astype(int)
 
-	# --- Agregar por tren (nombres idénticos al notebook) ---
+	# Agregar por tren (nombres idénticos al notebook)
 	n_eventos = afectados.groupby("_tren_idx").size().rename("n_eventos_afectando")
 
 	tipo_ref = (
@@ -597,7 +597,7 @@ def merge_gtfs_events(df_base: pd.DataFrame, df_events: pd.DataFrame) -> pd.Data
 		axis=1,
 	)
 
-	# --- JOIN de vuelta preservando todas las filas GTFS ---
+	# JOIN de vuelta preservando todas las filas GTFS
 	out = base.join(agg, on="_tren_idx")
 
 	out["n_eventos_afectando"] = out["n_eventos_afectando"].fillna(0).astype(int)

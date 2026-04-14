@@ -403,7 +403,7 @@ print("Iniciando el entrenamiento de STGCN...")
 for epoca in range(epocas):
     inicio_epoca = time.time()
     
-    # --- FASE DE ENTRENAMIENTO ---
+    # FASE DE ENTRENAMIENTO
     modelo.train()
     loss_entrenamiento_total = 0.0
     
@@ -438,7 +438,7 @@ for epoca in range(epocas):
 
 
 
-# --- FASE DE EVALUACIÓN Y CÁLCULO DE MÉTRICAS REALES ---
+# FASE DE EVALUACIÓN Y CÁLCULO DE MÉTRICAS REALES
 print("\nExtrayendo predicciones del conjunto de Test...")
 modelo.eval()
 

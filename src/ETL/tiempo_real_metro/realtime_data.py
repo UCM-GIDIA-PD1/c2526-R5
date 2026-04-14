@@ -38,9 +38,10 @@ import io
 import math
 
 
-# ─────────────────────────────────────────────
+
 #  Fuentes de datos MTA Real Time
-# ─────────────────────────────────────────────
+
+
 FUENTES = {
     "ACES": {
         "url": "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-ace",
@@ -77,15 +78,16 @@ FUENTES = {
 }
 
 
-# ─────────────────────────────────────────────
-#  Datos a DataFrame
-# ─────────────────────────────────────────────
+
+# Datos a DataFrame
+
 
 def extraccion_linea(url, linea):
     """
     Extrae los datos de una línea
     """
     response = requests.get(url)
+    response.raise_for_status()
     fuentes = gtfs_realtime_pb2.FeedMessage()
     fuentes.ParseFromString(response.content)
 
@@ -129,10 +131,8 @@ def extraccion_datos():
     return pd.DataFrame(todos_los_datos)
 
 
-# ─────────────────────────────────────────────
-#  Funciones auxiliares
-# ─────────────────────────────────────────────
 
+#  Funciones auxiliares
 
 def conversion_hora_NYC(df):
 
@@ -244,9 +244,9 @@ def hora_ciclica(df):
     return df
 
 
-# ─────────────────────────────────────────────
+
 #  DataFrame tiempo real
-# ─────────────────────────────────────────────
+
 
 
 def creacion_df_tiempo_real():
@@ -268,11 +268,8 @@ def creacion_df_tiempo_real():
     return df
 
 
-# ─────────────────────────────────────────────
+
 #  DataFrame horarios previstos
-# ─────────────────────────────────────────────
-
-
 def creacion_df_previsto():
 
     """
@@ -302,10 +299,8 @@ def creacion_df_previsto():
     return df
 
 
-# ─────────────────────────────────────────────
-#  Unión DataFrames
-# ─────────────────────────────────────────────
 
+#  Unión DataFrames
 def union_dataframes(df1, df2):
 
     """
@@ -340,9 +335,6 @@ def union_dataframes(df1, df2):
     return df
 
 
-# ─────────────────────────────────────────────
-#  Main
-# ─────────────────────────────────────────────
 if __name__ == "__main__":
 
     df_real_time = None
@@ -360,5 +352,12 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"  Error en datos previstos: {e}")
 
-    df_final = union_dataframes(df_real_time, df_previsto)
-    print(df_final)
+    if df_real_time is None or df_previsto is None:
+        print("\nNo se puede continuar: alguno de los DataFrames no se pudo obtener.")
+        if df_real_time is None:
+            print("  - df_real_time es None (falló la extracción en tiempo real)")
+        if df_previsto is None:
+            print("  - df_previsto es None (falló la descarga de horarios previstos)")
+    else:
+        df_final = union_dataframes(df_real_time, df_previsto)
+        print(df_final)

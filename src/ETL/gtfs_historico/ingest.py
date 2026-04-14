@@ -1,5 +1,8 @@
 '''
-Ejecutar usando -m
+Ingesta histórica de GTFS.
+
+Uso:
+    uv run python src/ETL/gtfs_historico/ingest.py
 '''
 import os
 from datetime import date, timedelta

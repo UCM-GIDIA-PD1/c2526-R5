@@ -189,7 +189,7 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}\n")
 
-    # --- Datos ---
+    # Datos
     print(f"Cargando datos de entrenamiento (año {TRAIN_YEAR}, meses {list(TRAIN_MONTHS)})...")
     df_train = load_months(TRAIN_MONTHS, TRAIN_YEAR)
     print(f"  Total: {len(df_train):,} filas\n")
@@ -230,7 +230,7 @@ def main():
     train_loader = DataLoader(train_ds, batch_size=MLP_CONFIG["batch_size"], shuffle=True)
     test_loader  = DataLoader(test_ds,  batch_size=MLP_CONFIG["batch_size"], shuffle=False)
 
-    # --- Modelo ---
+    # Modelo
     model = MLP(
         input_dim=len(feats),
         hidden_layers=MLP_CONFIG["hidden_layers"],
@@ -248,7 +248,7 @@ def main():
     )
     criterion = nn.L1Loss()
 
-    # --- W&B ---
+    # W&B
     wandb.init(
         project=WANDB_PROJECT,
         name=WANDB_RUN_NAME,
@@ -267,7 +267,7 @@ def main():
         },
     )
 
-    # --- Training loop ---
+    # Training loop
     best_test_mae = float("inf")
     patience_counter = 0
 
@@ -312,7 +312,7 @@ def main():
                 print(f"\n  Early stopping en epoch {epoch}  (best test_mae={best_test_mae:.2f}s)")
                 break
 
-    # --- Metricas finales con mejor modelo ---
+    # Metricas finales con mejor modelo
     model.load_state_dict(best_state)
     model.eval()
 

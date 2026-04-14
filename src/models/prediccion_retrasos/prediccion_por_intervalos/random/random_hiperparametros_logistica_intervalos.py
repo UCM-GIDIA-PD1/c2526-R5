@@ -100,9 +100,7 @@ def evaluar_configuracion(trial_number, param, X_train, X_val, y_train, y_val, l
     if param['penalty'] != 'elasticnet':
         param['l1_ratio'] = None
 
-    # ==========================================
     # INICIA W&B PARA ESTE INTENTO ESPECÍFICO
-    # ==========================================
     run = wandb.init(
         project="pd1-c2526-team5",
         group="randomsearch-logreg-tuning-intervalos-group60min-obj-target10m", 

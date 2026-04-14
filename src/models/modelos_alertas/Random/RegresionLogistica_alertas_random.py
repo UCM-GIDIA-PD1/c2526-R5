@@ -69,9 +69,7 @@ N_ITER = 20
 CAT_FEATURES = ['route_id', 'direction']
 
 
-# --------------------------------------------------------------------------
 # Construcción del pipeline completo (preprocesado + modelo)
-# --------------------------------------------------------------------------
 def build_pipeline(numeric_features, C=1.0, class_weight=None):
     """
     Crea un pipeline de sklearn con:
@@ -113,9 +111,7 @@ def build_pipeline(numeric_features, C=1.0, class_weight=None):
 
 def main():
 
-    # ----------------------------------------------------------------------
     # 1. Carga y preparación de datos
-    # ----------------------------------------------------------------------
     print("Cargando dataset...")
     df_raw = download_df_parquet(ACCESS_KEY, SECRET_KEY, PATH)
     print(f"Dataset raw: {df_raw.shape[0]:,} filas")
@@ -144,9 +140,7 @@ def main():
 
     print(f"Features: {len(FEATURES)} ({len(NUM_FEATURES)} numericas + {len(CAT_FEATURES)} categoricas)")
 
-    # ----------------------------------------------------------------------
     # 2. Baseline (modelo dummy)
-    # ----------------------------------------------------------------------
     print("\n-- Baseline --")
 
     # Modelo trivial (predicción aleatoria estratificada)
@@ -173,9 +167,7 @@ def main():
     })
     run_base.finish()
 
-    # ----------------------------------------------------------------------
     # 3. Random Search de hiperparámetros
-    # ----------------------------------------------------------------------
     param_dist = {
         "C":            loguniform(1e-3, 10.0),  # fuerza de regularización
         "class_weight": [None, "balanced"],      # balanceo de clases
@@ -207,9 +199,7 @@ def main():
     print(f"\nMejor PR-AUC val: {mejor_pr_auc:.4f}")
     print(f"Mejores params: {mejores_params}")
 
-    # ----------------------------------------------------------------------
     # 4. Entrenamiento final (train + val)
-    # ----------------------------------------------------------------------
     print("\n-- Modelo final (train+val) --")
 
     X_tv = pd.concat([X_train, X_val])
@@ -222,9 +212,7 @@ def main():
     )
     pipeline_final.fit(X_tv, y_tv)
 
-    # ----------------------------------------------------------------------
     # 5. Optimización del threshold (maximizar F1)
-    # ----------------------------------------------------------------------
     y_val_prob = pipeline_final.predict_proba(X_val)[:, 1]
 
     thresholds = np.arange(0.05, 0.95, 0.01)
@@ -233,9 +221,7 @@ def main():
     # Threshold óptimo
     thr = float(thresholds[np.argmax(f1s)])
 
-    # ----------------------------------------------------------------------
     # 6. Evaluación en test
-    # ----------------------------------------------------------------------
     y_prob = pipeline_final.predict_proba(X_test)[:, 1]
     y_pred = (y_prob >= thr).astype(int)
 
@@ -252,9 +238,7 @@ def main():
     print(f"F1 test:     {metricas['f1_test']:.4f}")
     print(f"Threshold:   {metricas['threshold_opt']:.2f}")
 
-    # ----------------------------------------------------------------------
     # 7. Importancia de variables (coeficientes del modelo)
-    # ----------------------------------------------------------------------
     preprocessor    = pipeline_final.named_steps["preprocessor"]
 
     # Nombres de features tras OneHot
@@ -272,9 +256,7 @@ def main():
         "importance": coef_abs
     }).sort_values("importance", ascending=False)
 
-    # ----------------------------------------------------------------------
     # 8. Curva Precision-Recall
-    # ----------------------------------------------------------------------
     prec, rec, _ = precision_recall_curve(y_test, y_prob)
 
     pr_table = wandb.Table(
@@ -282,9 +264,7 @@ def main():
         columns=["recall", "precision"],
     )
 
-    # ----------------------------------------------------------------------
     # 9. Logging final en W&B
-    # ----------------------------------------------------------------------
     run = wandb.init(
         entity=ENTITY, project=PROJECT,
         name="logreg_linea_random_FINAL",

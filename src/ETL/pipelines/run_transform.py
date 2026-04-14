@@ -2,8 +2,8 @@
 Orquestador de la etapa de transformación para una o varias fuentes.
 
 Uso:
-  [uv run] python -m src.ETL.pipelines.run_transform --source gtfs_historico --start 2025-12-01 --end 2025-12-31
-  [uv run] python -m src.ETL.pipelines.run_transform --source clima --start 2025-01-01 --end 2025-12-31
+  uv run python src/ETL/pipelines/run_transform.py --source gtfs_historico --start 2025-12-01 --end 2025-12-31
+  uv run python src/ETL/pipelines/run_transform.py --source clima --start 2025-01-01 --end 2025-12-31
 """
 
 import argparse

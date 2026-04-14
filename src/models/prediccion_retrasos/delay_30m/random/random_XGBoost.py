@@ -102,7 +102,7 @@ def XGBoost():
 
     # 3. Dividir los datos en Entrenamiento (80%) y Prueba (20%)
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, shuffle=False)
-    # --- INICIO WANDB ---
+    # INICIO WANDB
     # Inicializamos wandb y guardamos los hiperparámetros en 'config'
     WANDB_PROJECT  = "pd1-c2526-team5"
     wandb.init(
@@ -117,7 +117,6 @@ def XGBoost():
             "objetivo": OBJETIVO
         }
     )
-    # --------------------
 
     # 4. Configurar el Modelo XGBoost (usando la config de wandb para mantener consistencia)
     modelo_xgb = xgb.XGBRegressor(
@@ -144,11 +143,10 @@ def XGBoost():
 
     print(f"Error Absoluto Medio (MAE): El modelo se equivoca en promedio por {mae:.2f} segundos.")
 
-    # --- CIERRE WANDB ---
+    # CIERRE WANDB
     # Registramos la métrica final y cerramos la ejecución
     wandb.log({"test_mae": mae})
     wandb.finish()
-    # --------------------
 
 if __name__ == "__main__":
     XGBoost()

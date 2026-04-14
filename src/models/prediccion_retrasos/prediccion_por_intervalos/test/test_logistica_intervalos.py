@@ -165,16 +165,12 @@ def main():
     if config.penalty == 'elasticnet':
         logreg_params['l1_ratio'] = config.l1_ratio
 
-    # ==========================================
     # 1. ENTRENAR CON LOS PARÁMETROS ÓPTIMOS
-    # ==========================================
     modelo = LogisticRegression(**logreg_params)
 
     modelo.fit(X_train_full_scaled, y_train_full)
 
-    # ==========================================
     # 2. PREDICCIONES Y LOG EN W&B
-    # ==========================================
     print("Generando predicciones y enviando datos a W&B...")
     y_pred = modelo.predict(X_test_scaled)
     y_probas = modelo.predict_proba(X_test_scaled) 
