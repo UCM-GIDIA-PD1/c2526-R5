@@ -263,7 +263,7 @@ Es importante ejecutar primero las celdas de:
 
 
 ---
-# Uso de modelos de ML
+## Uso de modelos de ML
 
 Todos los modelos se almacenan en la carpeta models, la cual está dividida por problemas:
 
@@ -330,7 +330,7 @@ random/
 test/
 ```
 
-### 3. Modelos propagación de retrasos
+### 3. Modelos de propagación de retrasos
 
 Se almacenan en la carpeta
 
@@ -338,20 +338,49 @@ Se almacenan en la carpeta
 propagacion_estacion/
 ```
 
-Que almacena los modelos en
+Modela cómo un retraso en una estación se propaga por la red de metro usando *Graph Neural Networks* (GNN). La red está representada como un grafo de 899 nodos (paradas en estaciones) con pesos calculados mediante Gaussian Kernel sobre los tiempos medianos de viaje entre ellas.
+
+Se implementan y comparan tres arquitecturas GNN:
+
+- **DCRNN** (*Diffusion Convolutional Recurrent Neural Network*): combina convolución difusiva sobre el grafo con GRU para capturar dependencias espaciales y temporales.
+- **STGCN** (*Spatio-Temporal Graph Convolutional Network*): bloques de convolución espacial y temporal en paralelo.
+- **ASTGCN** (*Attention-based STGCN*): añade mecanismos de atención espacial y temporal sobre STGCN.
+
+#### Scripts del pipeline (ejecución en orden)
+
+| Script | Descripción |
+|--------|-------------|
+| `01_generar_grafo.py` | Procesa el GTFS histórico desde MinIO y construye el grafo de la red: `edge_index`, `edge_weight` y lista de nodos. Guarda `artefactos/grafo.pt`. |
+| `02_generar_tensores.py` | Genera los tensores espacio-temporales X e Y a partir del dataset final, aplica el split cronológico train/val/test y escala con `StandardScaler`. Guarda `artefactos/tensores.pt`. |
+| `03_baseline_naive.py` | Baseline 1 — predice para todos los horizontes el último valor observado de retraso. Sirve de cota inferior de referencia. |
+| `04_baseline_ha.py` | Baseline 2 — Historical Average. Calcula la media de retraso histórica por (estación, día de semana, hora) en train y la aplica como predicción en test. Captura patrones cíclicos sin aprendizaje. |
+| `05_ablacion_features.py` | Entrena variantes de DCRNN con subconjuntos de features (retraso base, contexto, calendario) durante pocas épocas para identificar el conjunto óptimo. Guarda `artefactos/ablacion.pt`. |
+| `06_tuning_hpo_dcrnn.py` | HPO de DCRNN con Optuna y Random Search. Guarda el mejor conjunto de hiperparámetros en `artefactos/hpo.pt`. |
+| `07_tuning_stgcn.py` | HPO de STGCN con Optuna. Guarda en `artefactos/stgcn_hpo.pt`. |
+| `08_tuning_astgcn.py` | HPO de ASTGCN con Optuna. Guarda en `artefactos/astgcn_hpo.pt`. |
+| `09_entrenamiento_final_dcrnn.py` | Entrena DCRNN con los mejores hiperparámetros cargando los artefactos pre-calculados. Guarda `artefactos/dcrnn_final.pth`. |
+| `10_entrenamiento_final_stgcn.py` | Entrena STGCN final. Guarda `artefactos/stgcn_final.pth`. |
+| `11_entrenamiento_final_astgcn.py` | Entrena ASTGCN final. Guarda `artefactos/astgcn_final.pth`. |
+| `12_evaluacion_modelos.py` | **Único script que toca el conjunto de test.** Evaluación comparativa de los tres modelos: métricas principales (MAE, RMSE, R²), análisis por segmentos (fin de semana, clima extremo) y Permutation Feature Importance. |
+
+#### Módulos de soporte
+
+```
+models/        — implementaciones de DCRNN, STGCN y ASTGCN
+utils/         — dataset.py (carga y ventanas deslizantes), metrics.py (MAE, RMSE, R²)
+artefactos/    — artefactos generados por los scripts anteriores
+```
+
+## Estructura resumida de la carpeta models/
 
 ```
 models/
-```
-
-# Para resumir esta es la estructura de la carpeta models/
-
-```
-models/
+├── common/                          # Utilidades compartidas entre modelos
+│
 ├── modelos_alertas/                 # 1. Modelos de anticipación de alertas
-│   ├── common/                      # Entrenamientos y evaluación
-│   ├── optuna/                      # Búsquedas de hiperparámetros con Optuna
-│   └── random/                      # Búsquedas con Random Search
+│   ├── common/                      # Entrenamiento y evaluación compartidos
+│   ├── Optuna/                      # Búsquedas de hiperparámetros con Optuna
+│   └── Random/                      # Búsquedas con Random Search
 │
 ├── prediccion_retrasos/             # 2. Modelos de predicción de retrasos
 │   ├── delay_30m/                   # Trenes en funcionamiento > 30 mins
@@ -371,8 +400,22 @@ models/
 │       ├── random/
 │       └── test/
 │
-└── propagacion_estacion/            # 3. Modelos propagación de retrasos
-    └── models/                      # Modelos almacenados
+└── propagacion_estacion/            # 3. Modelos de propagación de retrasos (GNN)
+    ├── 01_generar_grafo.py          # Construye el grafo de la red desde GTFS
+    ├── 02_generar_tensores.py       # Genera tensores X/Y, split y escalado
+    ├── 03_baseline_naive.py         # Baseline: último valor observado
+    ├── 04_baseline_ha.py            # Baseline: media histórica por estación/hora
+    ├── 05_ablacion_features.py      # Ablación de subconjuntos de features
+    ├── 06_tuning_hpo_dcrnn.py       # HPO de DCRNN con Optuna/Random Search
+    ├── 07_tuning_stgcn.py           # HPO de STGCN con Optuna
+    ├── 08_tuning_astgcn.py          # HPO de ASTGCN con Optuna
+    ├── 09_entrenamiento_final_dcrnn.py  # Entrenamiento final DCRNN
+    ├── 10_entrenamiento_final_stgcn.py  # Entrenamiento final STGCN
+    ├── 11_entrenamiento_final_astgcn.py # Entrenamiento final ASTGCN
+    ├── 12_evaluacion_modelos.py     # Evaluación comparativa en test
+    ├── models/                      # Implementaciones: dcrnn.py, stgcn.py, astgcn.py
+    ├── utils/                       # dataset.py, metrics.py
+    └── artefactos/                  # Pesos y tensores generados por los scripts
 ```
 
 ---
