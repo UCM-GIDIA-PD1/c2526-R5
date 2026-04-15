@@ -420,6 +420,79 @@ models/
 
 ---
 
+## 📊 Resultados de los mejores modelos
+
+### 1. Anticipación de alertas
+
+El modelo ganador es **XGBoost**, con un PR-AUC de **0.795** sobre el conjunto de test (baseline aleatorio: 0.145).
+
+Distribuye el peso predictivo entre múltiples variables, siendo `seg_desde_ultima_alerta_linea` la más relevante (importancia ~0.37), a diferencia de Random Forest y Regresión Logística que dependen de ella de forma excesiva (~0.73).
+
+| Modelo                | PR-AUC |
+|----------------------|-------:|
+| Baseline aleatorio   | 0.145  |
+| Regresión Logística  | 0.44   |
+| Random Forest        | 0.755  |
+| **XGBoost**          | **0.795** |
+
+---
+
+### 2. Predicción de retrasos a nivel de tren
+
+Los modelos seleccionados para producción son:
+
+- **LightGBM (regresión)** → `delay_30m` y `delay_end`
+- **LightGBM (clasificación binaria)** → comportamiento del retraso (`delta_delay`)
+
+Los modelos por intervalos se descartaron por su escasa mejora respecto al baseline.
+
+#### 📈 Regresión por horizonte temporal
+
+| Modelo                 | MAE delay_30m (s) | MAE delay_end (s) | R² delay_end |
+|-----------------------|------------------:|------------------:|-------------:|
+| Baseline media        | 220               | 232               | ~0           |
+| Baseline persistencia | 160               | 156               | 0.453        |
+| **LightGBM**          | **134**           | **109**           | **0.696**    |
+| MLP                   | 137               | 121               | 0.686        |
+
+#### 🔁 Clasificación binaria del `delta_delay` (media entre horizontes 10–60 min)
+
+| Modelo               | ROC-AUC |
+|---------------------|--------:|
+| Baseline mayoritario| 0.50    |
+| Random Forest       | 0.801   |
+| **LightGBM**        | **0.828** |
+
+Las variables más influyentes en todos los modelos son:
+
+- `delay_seconds` (retraso actual)  
+- `lagged_delay_1` (retraso retardado)  
+- `delay_velocity` (velocidad de cambio del retraso)
+
+---
+
+### 3. Propagación de retrasos a nivel de estación (GNN)
+
+El modelo ganador es **DCRNN**, con un MAE global de **81.24 segundos** en test, superando a STGCN y ASTGCN y a los dos baselines.
+
+Destaca especialmente durante los fines de semana (**MAE de 50.58 s**).
+
+| Modelo                  | MAE (s) | RMSE (s) | R²     |
+|--------------------------|--------:|----------:|-------:|
+| Baseline media           | 102.27  | 185.32    | 0.051  |
+| Baseline persistencia    | 105.79  | 225.00    | -0.400 |
+| STGCN                    | 95.08   | 189.09    | 0.021  |
+| ASTGCN                   | 93.66   | 175.83    | 0.151  |
+| **DCRNN**                | **81.24** | 177.60  | 0.134  |
+
+El análisis de importancia (*Permutation Feature Importance*) confirma que las variables más relevantes son:
+
+- `delay_seconds` (retraso actual)  
+- hora del día  
+- `route_rolling_delay` (congestión de red)
+
+---
+
 
 ## Autores
 - Alex García
