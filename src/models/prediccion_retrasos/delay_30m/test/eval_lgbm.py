@@ -266,7 +266,8 @@ def main():
     )
     artifact.add_file(model_filename)
     wandb.log_artifact(artifact)
-    print(f"\nModelo guardado y subido como artifact wandb: {model_filename}")
+    os.remove(model_filename)
+    print(f"\nModelo subido como artifact wandb: {model_filename}")
 
     wandb.finish()
     print("\nEvaluación completada.")
