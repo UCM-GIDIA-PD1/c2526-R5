@@ -335,7 +335,7 @@ def construir_grupos_pfi(feature_names: list[str]) -> dict[str, list[int]]:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def main():
-    device     = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device     = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
     batch_size = 32
 
     print("=" * 60)

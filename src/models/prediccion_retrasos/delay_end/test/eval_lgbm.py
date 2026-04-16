@@ -4,9 +4,11 @@ Evaluación final LightGBM — Predicción de retraso al final del viaje (Objeti
 Predice target_delay_end = retraso absoluto del tren al terminar el viaje.
 Solo usa registros con scheduled_time_to_end < 1800s (menos de 30 min restantes).
 
-Partición final:
-    Train  → enero–diciembre 2025  (todo el año)
-    Test   → enero 2026
+Partición final (Entrega 4):
+    Train  → enero–diciembre 2025 + enero 2026  (todos los datos anteriores)
+    Test   → febrero–marzo 2026  (datos nuevos)
+
+Iteraciones fijas (best_iteration del run anterior): 6299
 
 Uso:
     uv run python src/models/prediccion_retrasos/delay_end/test/eval_lgbm.py
@@ -34,16 +36,18 @@ warnings.filterwarnings("ignore")
 ACCESS_KEY = os.environ["MINIO_ACCESS_KEY"]
 SECRET_KEY = os.environ["MINIO_SECRET_KEY"]
 
-TRAIN_YEAR     = 2025
-TRAIN_MONTHS   = range(1, 13)
-TEST_YEAR      = 2026
-TEST_MONTHS    = range(1, 2)
-TARGET         = "target_delay_end"
-DATA_TEMPLATE  = "grupo5/final/year={year}/month={month:02d}/dataset_final.parquet"
-MODEL_PATH_OUT = "grupo5/models/lgbm_stop_delay_end_final.txt"
+TRAIN_YEAR_2025  = 2025
+TRAIN_MONTHS_2025 = range(1, 13)
+TRAIN_YEAR_2026  = 2026
+TRAIN_MONTHS_2026 = range(1, 2)   # enero 2026
+TEST_YEAR        = 2026
+TEST_MONTHS      = range(2, 4)    # febrero–marzo 2026
+TARGET           = "target_delay_end"
+DATA_TEMPLATE    = "grupo5/final/year={year}/month={month:02d}/dataset_final.parquet"
+MODEL_PATH_OUT   = "grupo5/models/lgbm_stop_delay_end_final.txt"
 
 WANDB_PROJECT  = "pd1-c2526-team5"
-WANDB_RUN_NAME = "lgbm-delay-end-final-test"
+WANDB_RUN_NAME = "lgbm-delay-end-entrega4"
 
 
 EXCLUDE_COLS = {
@@ -85,8 +89,7 @@ LGBM_PARAMS = {
     "verbose":           -1,
     "seed":              42,
 }
-NUM_BOOST_ROUND = 5000
-EARLY_STOPPING  = 100
+NUM_BOOST_ROUND = 6299   # best_iteration del run anterior (Entrega 3)
 SAMPLE_FRAC = 1.0
 
 
@@ -173,9 +176,16 @@ def compute_metrics(y_true, y_pred, prefix="") -> dict:
 
 def main():
     """Funcion principal que orquesta la carga de datos, el entrenamiento y el registro de resultados."""
-    print(f"\nCargando datos de entrenamiento (año {TRAIN_YEAR}, meses {list(TRAIN_MONTHS)})...")
-    df_train = load_months(TRAIN_MONTHS, TRAIN_YEAR)
-    print(f"  Total: {len(df_train):,} filas\n")
+    print(f"\nCargando datos de entrenamiento (año {TRAIN_YEAR_2025}, meses {list(TRAIN_MONTHS_2025)})...")
+    df_train_2025 = load_months(TRAIN_MONTHS_2025, TRAIN_YEAR_2025)
+    print(f"  Total 2025: {len(df_train_2025):,} filas\n")
+
+    print(f"Cargando datos de entrenamiento (año {TRAIN_YEAR_2026}, meses {list(TRAIN_MONTHS_2026)})...")
+    df_train_2026 = load_months(TRAIN_MONTHS_2026, TRAIN_YEAR_2026)
+    print(f"  Total ene-2026: {len(df_train_2026):,} filas\n")
+
+    df_train = pd.concat([df_train_2025, df_train_2026], ignore_index=True)
+    print(f"  Total train combinado: {len(df_train):,} filas\n")
 
     print(f"Cargando datos de test (año {TEST_YEAR}, meses {list(TEST_MONTHS)})...")
     df_test = load_months(TEST_MONTHS, TEST_YEAR)
@@ -200,37 +210,32 @@ def main():
         group="prediccion-retrasos-end",
         config={
             **LGBM_PARAMS,
-            "target":       TARGET,
-            "train_year":   TRAIN_YEAR,
-            "train_months": list(TRAIN_MONTHS),
-            "test_year":    TEST_YEAR,
-            "test_months":  list(TEST_MONTHS),
-            "n_features":   len(feats),
-            "train_rows":   len(df_train),
-            "test_rows":    len(df_test),
+            "target":         TARGET,
+            "train_2025":     list(TRAIN_MONTHS_2025),
+            "train_2026":     list(TRAIN_MONTHS_2026),
+            "test_year":      TEST_YEAR,
+            "test_months":    list(TEST_MONTHS),
+            "num_boost_round": NUM_BOOST_ROUND,
+            "n_features":     len(feats),
+            "train_rows":     len(df_train),
+            "test_rows":      len(df_test),
         }
     )
 
-    print(f"Entrenando LightGBM (target={TARGET})...")
+    print(f"Entrenando LightGBM (target={TARGET}, iteraciones fijas={NUM_BOOST_ROUND})...")
     lgb_train = lgb.Dataset(X_train, label=y_train)
-    lgb_test  = lgb.Dataset(X_test,  label=y_test, reference=lgb_train)
 
     model = lgb.train(
         LGBM_PARAMS,
         lgb_train,
         num_boost_round=NUM_BOOST_ROUND,
-        valid_sets=[lgb_train, lgb_test],
-        valid_names=["train", "test"],
-        callbacks=[
-            lgb.early_stopping(EARLY_STOPPING, verbose=False),
-            lgb.log_evaluation(50),
-        ],
+        callbacks=[lgb.log_evaluation(500)],
     )
 
-    print(f"\nMejor iteración: {model.best_iteration}")
+    print(f"\nIteraciones completadas: {NUM_BOOST_ROUND}")
 
-    y_pred_train = model.predict(X_train, num_iteration=model.best_iteration)
-    y_pred_test  = model.predict(X_test,  num_iteration=model.best_iteration)
+    y_pred_train = model.predict(X_train)
+    y_pred_test  = model.predict(X_test)
 
     metrics_train = compute_metrics(y_train, y_pred_train, prefix="train_")
     metrics_test  = compute_metrics(y_test,  y_pred_test,  prefix="test_")
@@ -238,7 +243,7 @@ def main():
     print("\nMétricas train:"); [print(f"  {k}: {v}") for k, v in metrics_train.items()]
     print("Métricas test:");   [print(f"  {k}: {v}") for k, v in metrics_test.items()]
 
-    wandb.log({**metrics_train, **metrics_test, "best_iteration": model.best_iteration})
+    wandb.log({**metrics_train, **metrics_test, "num_boost_round": NUM_BOOST_ROUND})
 
     importance = pd.DataFrame({
         "feature":    model.feature_name(),
@@ -247,6 +252,17 @@ def main():
 
     print(f"\nTop 15 features:\n{importance.head(15).to_string(index=False)}")
     wandb.log({"feature_importance": wandb.Table(dataframe=importance.head(20))})
+
+    model_filename = "lgbm_delay_end.txt"
+    model.save_model(model_filename)
+    artifact = wandb.Artifact(
+        name="lgbm-delay-end",
+        type="model",
+        description="LightGBM delay_end — train 2025+ene2026, test feb-mar2026, iter=6299",
+    )
+    artifact.add_file(model_filename)
+    wandb.log_artifact(artifact)
+    print(f"\nModelo guardado y subido como artifact wandb: {model_filename}")
 
     wandb.finish()
     print("\nEvaluación completada.")

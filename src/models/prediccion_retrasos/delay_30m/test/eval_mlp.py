@@ -186,7 +186,7 @@ def main():
     """Funcion principal que orquesta la carga de datos, el entrenamiento y el registro de resultados."""
     torch.manual_seed(MLP_CONFIG["seed"])
     np.random.seed(MLP_CONFIG["seed"])
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
     print(f"Device: {device}\n")
 
     # Datos
@@ -212,8 +212,10 @@ def main():
     X_test_np  = df_test[feats].values.astype(np.float32)
     y_test_np  = df_test[TARGET].values.astype(np.float32)
 
-    X_train_np = np.nan_to_num(X_train_np, nan=0.0)
-    X_test_np  = np.nan_to_num(X_test_np,  nan=0.0)
+    train_medians = np.nanmedian(X_train_np, axis=0)
+    for col_idx in range(X_train_np.shape[1]):
+        X_train_np[np.isnan(X_train_np[:, col_idx]), col_idx] = train_medians[col_idx]
+        X_test_np[np.isnan(X_test_np[:, col_idx]),   col_idx] = train_medians[col_idx]
 
     scaler = StandardScaler()
     X_train_np = scaler.fit_transform(X_train_np)
