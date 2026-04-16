@@ -1,8 +1,8 @@
 '''
 Script simplificado para subir y descargar datos desde MinIO.
 
-Ejecutar siempre usando -m (ejecuta archivo como módulo dentro del paquete)
-Ejemplo: uv run python -m src.nombre_archivo
+Uso:
+    uv run python src/common/minio_client.py
 
 Permite trabajar con:
 - Archivos locales

@@ -165,8 +165,10 @@ y_train_np = df_train_global[TARGET].values.astype(np.float32)
 X_val_np   = df_val_global[feats].values.astype(np.float32)
 y_val_np   = df_val_global[TARGET].values.astype(np.float32)
 
-X_train_np = np.nan_to_num(X_train_np, nan=0.0)
-X_val_np   = np.nan_to_num(X_val_np,   nan=0.0)
+train_medians = np.nanmedian(X_train_np, axis=0)
+for col_idx in range(X_train_np.shape[1]):
+    X_train_np[np.isnan(X_train_np[:, col_idx]), col_idx] = train_medians[col_idx]
+    X_val_np[np.isnan(X_val_np[:, col_idx]),     col_idx] = train_medians[col_idx]
 
 scaler = StandardScaler()
 X_train_scaled = scaler.fit_transform(X_train_np)
@@ -174,7 +176,7 @@ X_val_scaled   = scaler.transform(X_val_np)
 
 print(f"Features ({len(feats)}): {feats}\n")
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
 print(f"Device: {device}\n")
 
 

@@ -38,7 +38,7 @@ TARGET        = "target_delay_end"
 DATA_TEMPLATE = "grupo5/final/year={year}/month={month:02d}/dataset_final.parquet"
 
 WANDB_PROJECT = "pd1-c2526-team5"
-SAMPLE_FRAC   = 0.3
+SAMPLE_FRAC   = 0.5
 NUM_RUNS      = 14
 SEED          = 42
 

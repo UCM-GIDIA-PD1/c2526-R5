@@ -145,9 +145,7 @@ def main():
     8. Logging final en W&B
     """
 
-    # ------------------------------------------------------------------
     # 1. Carga del dataset y feature engineering
-    # ------------------------------------------------------------------
     print("Cargando dataset...")
     df_raw = download_df_parquet(ACCESS_KEY, SECRET_KEY, PATH)
     print(f"Dataset raw: {df_raw.shape[0]:,} filas")
@@ -162,9 +160,7 @@ def main():
     # Agrega features rolling y retrasadas para capturar tendencia temporal
     df = agregar_features_rolling_retraso(df)
 
-    # ------------------------------------------------------------------
     # 2. Split temporal train / val / test
-    # ------------------------------------------------------------------
     train, val, test = split_temporal(df)
 
     # Mantiene solo las features continuas definidas y presentes en el dataframe
@@ -183,9 +179,7 @@ def main():
 
     print(f"Features: {len(FEATURES)} ({len(NUM_FEATURES)} numericas + {len(CAT_FEATURES)} categoricas)")
 
-    # ------------------------------------------------------------------
     # 3. Baseline
-    # ------------------------------------------------------------------
     print("\n-- Baseline --")
 
     # Baseline estratificado:
@@ -213,9 +207,7 @@ def main():
     })
     run_base.finish()
 
-    # ------------------------------------------------------------------
     # 4. Optuna: optimizacion de hiperparametros
-    # ------------------------------------------------------------------
     print(f"\n-- Optuna 30 trials --")
 
     def objective(trial):
@@ -260,9 +252,7 @@ def main():
     print(f"\nMejor PR-AUC val: {study.best_value:.4f}")
     print(f"Mejores params: C={best_C:.4f}, class_weight={best_class_weight}")
 
-    # ------------------------------------------------------------------
     # 5. Entrenamiento final con train + val
-    # ------------------------------------------------------------------
     print("\n-- Modelo final (train+val) --")
 
     # Une train y validation para entrenar el modelo definitivo
@@ -276,9 +266,7 @@ def main():
     )
     pipeline_final.fit(X_tv, y_tv)
 
-    # ------------------------------------------------------------------
     # 6. Seleccion del threshold optimo usando F1 en validation
-    # ------------------------------------------------------------------
     # Nota: aqui se usa val para encontrar el threshold, aunque el modelo ya fue
     # reentrenado con train+val. Se conserva exactamente la logica del script original.
     y_val_prob = pipeline_final.predict_proba(X_val)[:, 1]
@@ -294,9 +282,7 @@ def main():
     # Elige el threshold que maximiza F1
     thr = float(thresholds[np.argmax(f1s)])
 
-    # ------------------------------------------------------------------
     # 7. Evaluacion en test
-    # ------------------------------------------------------------------
     y_prob = pipeline_final.predict_proba(X_test)[:, 1]
     y_pred = (y_prob >= thr).astype(int)
 
@@ -313,9 +299,7 @@ def main():
     print(f"F1 test:     {metricas['f1_test']:.4f}")
     print(f"Threshold:   {metricas['threshold_opt']:.2f}")
 
-    # ------------------------------------------------------------------
     # 8. Importancia de variables via coeficientes
-    # ------------------------------------------------------------------
     # Accede al preprocesador ya entrenado
     preprocessor = pipeline_final.named_steps["preprocessor"]
 
@@ -334,9 +318,7 @@ def main():
         "importance": coef_abs
     }).sort_values("importance", ascending=False)
 
-    # ------------------------------------------------------------------
     # 9. Construccion de curva Precision-Recall
-    # ------------------------------------------------------------------
     prec, rec, _ = precision_recall_curve(y_test, y_prob)
 
     pr_table = wandb.Table(
@@ -344,9 +326,7 @@ def main():
         columns=["recall", "precision"],
     )
 
-    # ------------------------------------------------------------------
     # 10. Logging final en W&B
-    # ------------------------------------------------------------------
     run = wandb.init(
         entity=ENTITY, project=PROJECT,
         name="logreg_linea_optuna_FINAL",

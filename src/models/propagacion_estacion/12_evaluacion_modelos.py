@@ -335,7 +335,7 @@ def construir_grupos_pfi(feature_names: list[str]) -> dict[str, list[int]]:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def main():
-    device     = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device     = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
     batch_size = 32
 
     print("=" * 60)
@@ -503,17 +503,27 @@ def main():
         },
     }
 
-    # Usar las etiquetas del modelo ganador para la tabla comparativa unificada
-    # (los tres modelos se comparan sobre la misma segmentación temporal)
-    etiq_ganador = etiquetas_segmento[ganador]
+    # Alinear los arrays de predicción al período temporal común para que las
+    # máscaras booleanas (de longitud M = T_test - hl) sean aplicables a todos
+    # los modelos. Si los HPO eligieron history_len distintos, M difiere y la
+    # indexación booleana fallaría. Recortamos cada array por las primeras
+    # (max_hl - hl_model) filas para que todos comiencen en t_test + max_hl.
+    max_hl = max(hl_dcrnn, hl_stgcn, hl_astgcn)
+    hl_map = {'DCRNN': hl_dcrnn, 'STGCN': hl_stgcn, 'ASTGCN': hl_astgcn}
 
     # Para DCRNN las predicciones tienen 3 targets, para STGCN/ASTGCN 6 targets;
     # comparamos solo los primeros 3 (station_delay_10/20/30m) si hay discrepancia.
     min_C = min(preds_dcrnn.shape[2], preds_stgcn.shape[2], preds_astgcn.shape[2])
     resultados_segmentos = {
-        'DCRNN':  (preds_dcrnn[:, :, :min_C],  trues_dcrnn[:, :, :min_C]),
-        'STGCN':  (preds_stgcn[:, :, :min_C],  trues_stgcn[:, :, :min_C]),
-        'ASTGCN': (preds_astgcn[:, :, :min_C], trues_astgcn[:, :, :min_C]),
+        'DCRNN':  (preds_dcrnn[max_hl - hl_dcrnn:, :, :min_C],   trues_dcrnn[max_hl - hl_dcrnn:, :, :min_C]),
+        'STGCN':  (preds_stgcn[max_hl - hl_stgcn:, :, :min_C],   trues_stgcn[max_hl - hl_stgcn:, :, :min_C]),
+        'ASTGCN': (preds_astgcn[max_hl - hl_astgcn:, :, :min_C], trues_astgcn[max_hl - hl_astgcn:, :, :min_C]),
+    }
+    # Etiquetas del ganador recortadas al mismo período común
+    trim_ganador = max_hl - hl_map[ganador]
+    etiq_ganador = {
+        'dow':  etiquetas_segmento[ganador]['dow'][trim_ganador:],
+        'temp': etiquetas_segmento[ganador]['temp'][trim_ganador:],
     }
     evaluar_segmentos(resultados_segmentos, etiq_ganador)
 

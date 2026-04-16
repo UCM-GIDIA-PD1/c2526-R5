@@ -110,9 +110,7 @@ def objective(trial, X_train, X_val, y_train, y_val, labels):
         'verbose': -1
     }
 
-    # ==========================================
     # INICIAR W&B PARA ESTE INTENTO ESPECÍFICO
-    # ==========================================
     run = wandb.init(
         project="pd1-c2526-team5",
         group="optuna-lgbm-tuning-intervalos-group60min-obj-target10m", 

@@ -12,7 +12,7 @@ Estrategia de memoria:
     (lee sus 12 meses, concatena, sube). En RAM nunca hay más de una línea completa.
 
 Uso:
-    uv run python -m src.ETL.pipelines.aggregate_lines_yearly
+    uv run python src/ETL/pipelines/aggregate_lines_yearly.py
 
 Variables de entorno necesarias:
     MINIO_ACCESS_KEY
@@ -93,11 +93,11 @@ for line in lines:
     path_out = OUTPUT_TEMPLATE.format(line=line)
     try:
         upload_df_parquet(ACCESS_KEY, SECRET_KEY, path_out, df_yearly)
-        print(f"  ✓ line={line:<4}  {len(df_yearly):>10,} filas  meses={meses_disponibles}  →  {path_out}")
+        print(f" line={line:<4}  {len(df_yearly):>10,} filas  meses={meses_disponibles}  →  {path_out}")
         lineas_ok.append(line)
     except Exception as e:
         errores.append(line)
-        print(f"  ✗ line={line:<4}  ERROR al subir: {e}")
+        print(f"line={line:<4}  ERROR al subir: {e}")
 
     del df_yearly
 

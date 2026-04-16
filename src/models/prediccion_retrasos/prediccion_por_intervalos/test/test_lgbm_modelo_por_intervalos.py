@@ -157,9 +157,7 @@ def main():
     # 6. Entrenar el Modelo
     print("Entrenando el modelo...")
 
-    # ==========================================
     # 1. ENTRENAR CON LOS PARÁMETROS ÓPTIMOS
-    # ==========================================
     modelo = LGBMClassifier(
         n_estimators=config.n_estimators,
         learning_rate=config.learning_rate,
@@ -178,9 +176,7 @@ def main():
         callbacks=[wandb_callback()] 
     )
 
-    # ==========================================
     # 2. PREDICCIONES Y LOG EN W&B
-    # ==========================================
     print("Generando predicciones y enviando datos a W&B...")
     y_pred = modelo.predict(X_test)
     y_probas = modelo.predict_proba(X_test) 

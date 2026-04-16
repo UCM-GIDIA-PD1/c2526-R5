@@ -41,7 +41,8 @@ from src.ETL.tiempo_real_metro.aggregations import agregar_por_ventana
 
 # ─────────────────────────────────────────────
 #  Fuentes de datos MTA Real Time
-# ─────────────────────────────────────────────
+
+
 FUENTES = {
     "ACES": {
         "url": "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-ace",
@@ -78,9 +79,9 @@ FUENTES = {
 }
 
 
-# ─────────────────────────────────────────────
-#  Datos a DataFrame
-# ─────────────────────────────────────────────
+
+# Datos a DataFrame
+
 
 def extraccion_linea(url, linea, reintentos=3):
     """
@@ -141,10 +142,8 @@ def extraccion_datos():
     return pd.DataFrame(todos_los_datos)
 
 
-# ─────────────────────────────────────────────
-#  Funciones auxiliares
-# ─────────────────────────────────────────────
 
+#  Funciones auxiliares
 
 def conversion_hora_NYC(df):
 
@@ -261,9 +260,9 @@ def hora_ciclica(df):
     return df
 
 
-# ─────────────────────────────────────────────
+
 #  DataFrame tiempo real
-# ─────────────────────────────────────────────
+
 
 
 def creacion_df_tiempo_real():
@@ -292,11 +291,8 @@ def creacion_df_tiempo_real():
     return df
 
 
-# ─────────────────────────────────────────────
+
 #  DataFrame horarios previstos
-# ─────────────────────────────────────────────
-
-
 def creacion_df_previsto():
 
     """
@@ -328,10 +324,8 @@ def creacion_df_previsto():
     return df
 
 
-# ─────────────────────────────────────────────
-#  Unión DataFrames
-# ─────────────────────────────────────────────
 
+#  Unión DataFrames
 def union_dataframes(df1, df2):
 
     """
@@ -373,9 +367,6 @@ def union_dataframes(df1, df2):
     return df
 
 
-# ─────────────────────────────────────────────
-#  Main
-# ─────────────────────────────────────────────
 if __name__ == "__main__":
 
     df_real_time = None

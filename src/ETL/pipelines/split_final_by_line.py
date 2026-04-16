@@ -12,7 +12,7 @@ Estrategia de memoria:
     En RAM nunca hay más de un mes cargado.
 
 Uso:
-    uv run python -m src.ETL.pipelines.split_final_by_line
+    uv run python src/ETL/pipelines/split_final_by_line.py
 
 Variables de entorno necesarias:
     MINIO_ACCESS_KEY
@@ -23,7 +23,7 @@ import os
 
 from src.common.minio_client import download_df_parquet, upload_df_parquet
 
-# ── Configuración ──────────────────────────────────────────────────────────────
+# Configuración
 
 ACCESS_KEY = os.environ["MINIO_ACCESS_KEY"]
 SECRET_KEY = os.environ["MINIO_SECRET_KEY"]
@@ -35,7 +35,7 @@ LINE_COLUMN = "route_id"
 INPUT_TEMPLATE  = "grupo5/final/year={year}/month={month:02d}/dataset_final.parquet"
 OUTPUT_TEMPLATE = "grupo5/final/year={year}/month={month:02d}/lines/line={line}/dataset_final.parquet"
 
-# ── Procesar mes a mes ─────────────────────────────────────────────────────────
+#Procesar mes a mes
 
 meses_ok        = []
 meses_faltantes = []
@@ -73,9 +73,9 @@ for month in MONTHS:
             errores.append((month, line))
             print(f"  ✗ line={line:<4}  ERROR: {e}")
 
-    del df_month  # liberar RAM antes del siguiente mes
+    del df_month  
 
-# ── Resumen final ──────────────────────────────────────────────────────────────
+# Resumen final 
 
 print("\n" + "─" * 60)
 print(f"Resumen:")

@@ -187,7 +187,7 @@ def main():
     print(f"\nMejor PR-AUC val: {mejor_pr_auc:.4f}")
     print(f"Mejores params: {mejores_params}")
 
-    # -- 8. Modelo final CON seg_alerta --------------------------------------
+    # 8. Modelo final CON seg_alerta
     print("\n-- Modelo final CON seg_alerta (train + val) --")
     X_train_final = pd.concat([train[feats_con], val[feats_con]]).fillna(0)
     y_train_final = pd.concat([y_train, y_val])
@@ -211,7 +211,7 @@ def main():
     )
     print("Logueado en W&B: rf_linea_random_FINAL_con_seg")
 
-    # -- 9. Modelo final SIN seg_alerta (mismos hiperparametros) -------------
+    # 9. Modelo final SIN seg_alerta (mismos hiperparametros)
     print("\n-- Modelo final SIN seg_alerta (mismos hiperparametros) --")
     X_train_sin = pd.concat([train[feats_sin], val[feats_sin]]).fillna(0)
     X_test_sin  = test[feats_sin].fillna(0)
@@ -235,7 +235,7 @@ def main():
     )
     print("Logueado en W&B: rf_linea_random_FINAL_sin_seg")
 
-    # -- 10. Resumen ----
+    # 10. Resumen
     print(f"\n{'='*60}")
     print("RESUMEN - RF por linea (Random Search)")
     print(f"{'='*60}")

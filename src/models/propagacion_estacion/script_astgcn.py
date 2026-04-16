@@ -53,9 +53,7 @@ for date in dates:
     dfs.append(df_gtfs)
 df = pd.concat(dfs, ignore_index=True)
 
-# =========================
 # MATRIZ DE ADYACENCIA
-# =========================
 df = df.sort_values(by=["trip_uid", "scheduled_seconds"]).reset_index(drop=True)
 
 df["next_stop_id"] = df.groupby("trip_uid")["stop_id"].shift(-1)
@@ -108,9 +106,7 @@ A_tensor = torch.tensor(A_norm, dtype=torch.float32)
 print(f"Número de nodos únicos: {n_nodes}")
 print(f"Matriz de adyacencia normalizada lista. Forma: {A_tensor.shape}")
 
-# =========================
 # VARIABLES 
-# =========================
 variables_entrada = [
     "delay_seconds",
     "lagged_delay_1",
@@ -134,9 +130,7 @@ variables_objetivo = [
     "station_delay_30m",
 ]
 
-# =========================
 # TENSORES
-# =========================
 def crear_tensores_astgcn(df, mapa_nodos, features, targets, freq="15min"):
     nodos_validos = list(mapa_nodos.keys())
     df = df[df["stop_id"].isin(nodos_validos)].copy()
@@ -233,9 +227,7 @@ Y_full = np.nan_to_num(Y_full, nan=0.0)
 print(f"¿Hay NaNs en X_full?: {np.isnan(X_full).any()}")
 print(f"¿Hay NaNs en Y_full?: {np.isnan(Y_full).any()}")
 
-# =========================
 # TRAIN / TEST
-# =========================
 num_tiempos = X_full.shape[0]
 limite_corte = int(num_tiempos * 0.8)
 
@@ -282,9 +274,7 @@ for nombre, escala in zip(variables_objetivo, scaler_Y.scale_):
     print(f"{nombre}: {escala:.2f} s")
 
 
-# =========================
 # DATASET
-# =========================
 class DatasetASTGCN(Dataset):
     def __init__(self, X, Y, history_len):
         self.X = torch.tensor(X, dtype=torch.float32)
@@ -314,9 +304,7 @@ test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
 print(f"Lotes de entrenamiento (batches): {len(train_loader)}")
 
-# =========================
 # HELPERS PARA ASTGCN
-# =========================
 def calcular_scaled_laplacian(adj_matrix):
     adj = adj_matrix.astype(np.float32).copy()
     np.fill_diagonal(adj, 0.0)
@@ -354,9 +342,7 @@ def calcular_polinomios_chebyshev(scaled_laplacian, K):
     return [torch.tensor(p, dtype=torch.float32) for p in cheb_polynomials]
 
 
-# =========================
 # BLOQUES ASTGCN
-# =========================
 class TemporalAttention(nn.Module):
     def __init__(self, in_channels, num_nodes, history_len):
         super().__init__()
@@ -532,10 +518,8 @@ class ASTGCN_Metro(nn.Module):
         return x
 
 
-# =========================
 # INSTANCIAR MODELO
-# =========================
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
 
 K_cheb = 3
 scaled_laplacian = calcular_scaled_laplacian(A_weighted)
@@ -553,9 +537,7 @@ modelo = ASTGCN_Metro(
 
 print(f"Modelo ASTGCN instanciado en: {device}")
 
-# =========================
 # ENTRENAMIENTO
-# =========================
 import torch.optim as optim
 import time
 
@@ -576,7 +558,7 @@ print("Iniciando entrenamiento...")
 for epoca in range(epocas):
     inicio_epoca = time.time()
 
-    # ---------------- TRAIN ----------------
+    # TRAIN
     modelo.train()
     loss_entrenamiento_total = 0.0
     mae_entrenamiento_total = 0.0
@@ -606,7 +588,7 @@ for epoca in range(epocas):
     train_mae = mae_entrenamiento_total / len(train_dataset)
     train_rmse = np.sqrt(mse_entrenamiento_total / len(train_dataset))
 
-    # ---------------- VALIDATION ----------------
+    # VALIDATION
     modelo.eval()
     loss_validacion_total = 0.0
     mae_validacion_total = 0.0

@@ -186,10 +186,10 @@ def main():
     """Funcion principal que orquesta la carga de datos, el entrenamiento y el registro de resultados."""
     torch.manual_seed(MLP_CONFIG["seed"])
     np.random.seed(MLP_CONFIG["seed"])
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
     print(f"Device: {device}\n")
 
-    # --- Datos ---
+    # Datos
     print(f"Cargando datos de entrenamiento (año {TRAIN_YEAR}, meses {list(TRAIN_MONTHS)})...")
     df_train = load_months(TRAIN_MONTHS, TRAIN_YEAR)
     print(f"  Total: {len(df_train):,} filas\n")
@@ -212,8 +212,10 @@ def main():
     X_test_np  = df_test[feats].values.astype(np.float32)
     y_test_np  = df_test[TARGET].values.astype(np.float32)
 
-    X_train_np = np.nan_to_num(X_train_np, nan=0.0)
-    X_test_np  = np.nan_to_num(X_test_np,  nan=0.0)
+    train_medians = np.nanmedian(X_train_np, axis=0)
+    for col_idx in range(X_train_np.shape[1]):
+        X_train_np[np.isnan(X_train_np[:, col_idx]), col_idx] = train_medians[col_idx]
+        X_test_np[np.isnan(X_test_np[:, col_idx]),   col_idx] = train_medians[col_idx]
 
     scaler = StandardScaler()
     X_train_np = scaler.fit_transform(X_train_np)
@@ -230,7 +232,7 @@ def main():
     train_loader = DataLoader(train_ds, batch_size=MLP_CONFIG["batch_size"], shuffle=True)
     test_loader  = DataLoader(test_ds,  batch_size=MLP_CONFIG["batch_size"], shuffle=False)
 
-    # --- Modelo ---
+    # Modelo
     model = MLP(
         input_dim=len(feats),
         hidden_layers=MLP_CONFIG["hidden_layers"],
@@ -248,7 +250,7 @@ def main():
     )
     criterion = nn.L1Loss()
 
-    # --- W&B ---
+    # W&B
     wandb.init(
         project=WANDB_PROJECT,
         name=WANDB_RUN_NAME,
@@ -267,7 +269,7 @@ def main():
         },
     )
 
-    # --- Training loop ---
+    # Training loop
     best_test_mae = float("inf")
     patience_counter = 0
 
@@ -312,12 +314,20 @@ def main():
                 print(f"\n  Early stopping en epoch {epoch}  (best test_mae={best_test_mae:.2f}s)")
                 break
 
-    # --- Metricas finales con mejor modelo ---
+    # Metricas finales con mejor modelo
     model.load_state_dict(best_state)
     model.eval()
-    with torch.no_grad():
-        y_pred_train = model(torch.from_numpy(X_train_np).to(device)).cpu().numpy()
-        y_pred_test  = model(torch.from_numpy(X_test_np).to(device)).cpu().numpy()
+
+    def predict_in_batches(X_np, batch_size=4096):
+        preds = []
+        with torch.no_grad():
+            for i in range(0, len(X_np), batch_size):
+                batch = torch.from_numpy(X_np[i:i+batch_size]).to(device)
+                preds.append(model(batch).cpu().numpy())
+        return np.concatenate(preds)
+
+    y_pred_train = predict_in_batches(X_train_np)
+    y_pred_test  = predict_in_batches(X_test_np)
 
     metrics_train = compute_metrics(y_train_np, y_pred_train, prefix="train_")
     metrics_test  = compute_metrics(y_test_np,  y_pred_test,  prefix="test_")
