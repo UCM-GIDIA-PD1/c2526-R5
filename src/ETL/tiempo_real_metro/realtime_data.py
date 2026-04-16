@@ -27,15 +27,16 @@ OUTPUT:
 
 
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 import pandas as pd
 import numpy as np
-from pathlib import Path
 from google.transit import gtfs_realtime_pb2
 import urllib.request
 import zipfile
 import io
 import math
+import time
+from src.ETL.tiempo_real_metro.aggregations import agregar_por_ventana
 
 
 # ─────────────────────────────────────────────
@@ -81,32 +82,43 @@ FUENTES = {
 #  Datos a DataFrame
 # ─────────────────────────────────────────────
 
-def extraccion_linea(url, linea):
+def extraccion_linea(url, linea, reintentos=3):
     """
     Extrae los datos de una línea
     """
-    response = requests.get(url)
-    fuentes = gtfs_realtime_pb2.FeedMessage()
-    fuentes.ParseFromString(response.content)
 
-    datos_linea = []
-    for entity in fuentes.entity:
-        if entity.HasField('trip_update'):
-            trayecto = entity.trip_update
+    for intento in range(reintentos):
+        try:
+            response = requests.get(url, timeout = 10)
+            fuentes = gtfs_realtime_pb2.FeedMessage()
+            fuentes.ParseFromString(response.content)
 
-            if trayecto.trip.route_id == linea:
-                for stop in trayecto.stop_time_update:
-                    campos = {
-                        'viaje_id': trayecto.trip.trip_id,
-                        'linea_id': trayecto.trip.route_id,
-                        'parada_id': stop.stop_id,
-                        'hora_llegada': datetime.fromtimestamp(stop.arrival.time) if stop.HasField('arrival') else None,
-                        'hora_partida': datetime.fromtimestamp(stop.departure.time) if stop.HasField('departure') else None,
-                        'timestamp': datetime.now(),                       
-                    }
+            datos_linea = []
+            for entity in fuentes.entity:
+                if entity.HasField('trip_update'):
+                    trayecto = entity.trip_update
 
-                    datos_linea.append(campos)
-    return datos_linea
+                    if trayecto.trip.route_id == linea:
+                        for stop in trayecto.stop_time_update:
+                            campos = {
+                                'viaje_id': trayecto.trip.trip_id,
+                                'linea_id': trayecto.trip.route_id,
+                                'parada_id': stop.stop_id,
+                                'hora_llegada': datetime.fromtimestamp(stop.arrival.time, tz=timezone.utc) if stop.HasField('arrival') else None,
+                                'hora_partida': datetime.fromtimestamp(stop.departure.time, tz=timezone.utc) if stop.HasField('departure') else None,
+                                'timestamp': datetime.now(tz=timezone.utc),                       
+                            }
+
+                            datos_linea.append(campos)
+            return datos_linea
+        
+        except Exception as e:
+            if intento == reintentos - 1:
+                print(f"  [ERROR] Línea {linea} fallida tras {reintentos} intentos: {e}")
+                return []
+            espera = 2 ** intento
+            print(f"  [WARN] Línea {linea} intento {intento + 1} fallido, reintentando en {espera}s...")
+            time.sleep(espera)
 
 
 def extraccion_datos():
@@ -140,10 +152,8 @@ def conversion_hora_NYC(df):
     Para las variables de tipo datetime, modifica el valor a la hora local de NY
     """
     
-    df['hora_llegada'] = df['hora_llegada'].dt.tz_localize('UTC').dt.tz_convert('America/New_York')  
-    df['hora_partida'] = df['hora_partida'].dt.tz_localize('UTC').dt.tz_convert('America/New_York')
-    df['timestamp'] = df['timestamp'].dt.tz_localize('UTC').dt.tz_convert('America/New_York')
-
+    for col in ['hora_llegada', 'hora_partida', 'timestamp']:
+        df[col] = pd.to_datetime(df[col], utc=True).dt.tz_convert('America/New_York')
     return df
 
 def dia_segun_fecha_y_formato(df):
@@ -152,17 +162,17 @@ def dia_segun_fecha_y_formato(df):
     Según el dia en el que se ha hecho la extracción, crea una nueva variable
     que lo clasifica en 3 grupos (Weekday, Saturday, Sunday).
 
+    También se extrae si es fin de semana y que día de la semana es numéricamente
+
     Posteriormente cambia el formato de las horas y lo convierte a string.
     """
 
-    df['dia'] = df['timestamp'].dt.strftime("%A")
-    df['dia'] = df['dia'].apply(
+    df['dia'] = df['timestamp'].dt.strftime("%A").apply(
         lambda x: 'Weekday' if x not in ('Saturday', 'Sunday') else x
     )
 
-    df['hora_llegada'] = df['hora_llegada'].dt.strftime('%H:%M:%S')
-    df['hora_partida'] = df['hora_partida'].dt.strftime('%H:%M:%S')
-    df['timestamp'] = df['timestamp'].dt.strftime('%H:%M:%S')
+    df['dow']        = df['timestamp'].dt.dayofweek
+    df['is_weekend'] = df['dow'].isin([5, 6]).astype(int)
 
     return df
 
@@ -188,11 +198,14 @@ def normalizar_horas(columna):
     """
     Para horas mayores a 24 horas, se convierte a hora del día siguiente
     """
-    columna = columna.str.replace('24:', '00:', regex=False)
-    columna = columna.str.replace('25:', '01:', regex=False)
-    columna = columna.str.replace('26:', '02:', regex=False)
-    columna = columna.str.replace('27:', '03:', regex=False)
-    return columna
+    def ajustar(hora):
+        if pd.isna(hora):
+            return hora
+        partes = hora.split(':')
+        h = int(partes[0]) % 24
+        return f"{h:02d}:{partes[1]}:{partes[2]}"
+ 
+    return columna.apply(ajustar)
 
 def hora_a_segundos(hora):
 
@@ -214,30 +227,34 @@ def hora_posterior(hora1, hora2):
     segunda.
     """
     
-    partes1 = hora1.split(':')
-    partes2 = hora2.split(':')
+    s1 = hora_a_segundos(hora1)
+    s2 = hora_a_segundos(hora2)
+    dif = s1 - s2
 
-    return (
-        (int(partes1[0]) > int(partes2[0])) | 
-        ((int(partes1[0]) == int(partes2[0])) & (int(partes1[1]) > int(partes2[1]))) |
-        ((int(partes1[0]) == int(partes2[0])) & (int(partes1[1]) == int(partes2[1])) & ((int(partes1[2]) > int(partes2[2]))))
-    )
+    # Tenemos en cuenta posibles primeras horas del día siguiente (00:15) y
+    # asumimos que si la diferencia supera las 12 horas es cruce de media noche
+    if dif > 43200:   
+        dif -= 86400
+    elif dif < -43200:
+        dif += 86400
+
+    return dif > 0
 
 def filter_delay_outliers(df: pd.DataFrame) -> pd.DataFrame:
     """
     Filtro suave de outliers: delays fuera de +/- 2.5h suelen ser ruido (pero ajustable)
     """
-    return df[df["delay"].between(-9000, 9000)]
-
-def dia_a_numerico(df):
-
-    df['timestamp'] = pd.to_datetime(df['timestamp'])
-    df['dow'] = df['timestamp'].dt.dayofweek
-    df['is_weekend'] = df['dow'].isin([5, 6]).astype(int)
+    antes = len(df)
+    df = df[df["delay"].between(-9000, 9000)]
+    descartadas = antes - len(df)
+    if descartadas:
+        print(f"  Outliers de delay eliminados: {descartadas} filas ({descartadas/antes*100:.1f}%)")
     return df
 
+
 def hora_ciclica(df):
-    hour_float = df["hora_llegada"].str.split(':').str[0].astype("float")
+    """Codifica la hora de llegada como coordenadas cíclicas (sin/cos).""" 
+    hour_float = df["hora_llegada"].dt.hour.astype(float)
     df["hour_sin"] = hour_float.apply(lambda h: math.sin(2 * math.pi * h / 24) if pd.notna(h) else None)
     df["hour_cos"] = hour_float.apply(lambda h: math.cos(2 * math.pi * h / 24) if pd.notna(h) else None)
 
@@ -254,16 +271,23 @@ def creacion_df_tiempo_real():
     """
     Creación de dataframe de tiempo real
     """
-
     df = extraccion_datos()
-    conversion_hora_NYC(df)
-    dia_segun_fecha_y_formato(df)
-    direccion_tren(df)
+
+    if df.empty:
+        raise ValueError("No se obtuvieron datos de tiempo real de ninguna línea.")
+    
+    df = conversion_hora_NYC(df)
+    df = dia_segun_fecha_y_formato(df)
+    df = direccion_tren(df)
+    df = df.dropna()
 
     #Eliminación de filas con nulos en alguna columna
     df = df.dropna()
 
-    df['segundos_reales'] = df['hora_llegada'].apply(hora_a_segundos)
+    df['segundos_reales'] = (df['hora_llegada'].dt.hour * 3600 + 
+                             df['hora_llegada'].dt.minute * 60 + 
+                             df['hora_llegada'].dt.second)
+    print(f"  DataFrame tiempo real: {len(df)} filas, {df['linea_id'].nunique()} líneas")
 
     return df
 
@@ -299,6 +323,8 @@ def creacion_df_previsto():
 
     df['segundos_previstos'] = df['arrival_time'].apply(hora_a_segundos)
 
+    print(f"  DataFrame previsto: {len(df)} filas")
+
     return df
 
 
@@ -309,10 +335,12 @@ def creacion_df_previsto():
 def union_dataframes(df1, df2):
 
     """
-    Une los dos dataframes anteriores
+    Une los DataFrames de tiempo real y horarios previstos, calcula el delay
+    y aplica las transformaciones finales.
     """
 
     df = pd.merge(df1, df2, left_on=['viaje_id', 'parada_id', 'dia'], right_on=['trip_id', 'stop_id', 'day'])
+
     
     #Calcula el retraso de los trenes restando el tiempo de llegada actual menos el tiempo de llegada previsto
     df['delay'] = df['segundos_reales']-df['segundos_previstos']
@@ -324,17 +352,22 @@ def union_dataframes(df1, df2):
     #Comprueba que los datos dados son de trenes que ya han realizado sus paradas y no son predicciones que realiza la
     # api para el futuro de los trayectos. Los que son predicciones marcamos el delay a None
     df['delay'] = np.where(
-    df.apply(lambda row: hora_posterior(row['timestamp'], row['hora_llegada']), axis=1),
-    df['delay'],  # valor si True
-    None    # valor si False
+        df['timestamp'] >= df['hora_llegada'],
+        df['delay'],  
+        np.nan    
     )
 
+    df = df.dropna(subset=['delay'])
     #Filtro para delays con valores masivos y transformacion del día de la semana a valor numérico
     df = filter_delay_outliers(df)
-    df = dia_a_numerico(df)
     df = hora_ciclica(df)
 
-    df = df.drop(['dia', 'hora_partida','timestamp', 'segundos_reales', 'trip_id', 'stop_id', 'arrival_time', 'departure_time', 'day', 'segundos_previstos'], axis=1)
+    columnas_a_eliminar = [
+        'dia', 'hora_partida', 'timestamp',
+        'segundos_reales', 'trip_id', 'stop_id', 'stop_sequence',
+        'arrival_time', 'departure_time', 'day', 'segundos_previstos'
+    ]
+    df = df.drop(columns=columnas_a_eliminar, errors='ignore')
     df = df.dropna()
 
     return df
@@ -360,5 +393,16 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"  Error en datos previstos: {e}")
 
-    df_final = union_dataframes(df_real_time, df_previsto)
-    print(df_final)
+    if df_real_time is None or df_previsto is None:
+        print("\n[FATAL] No se puede continuar: uno o ambos DataFrames no se pudieron obtener.")
+        exit(1)
+
+    try:
+        print("\nUniendo DataFrames...")
+        df_final = union_dataframes(df_real_time, df_previsto)
+        df_agregado = agregar_por_ventana(df_final)
+    except Exception as e:
+        print(f"  [ERROR] Unión de DataFrames: {e}")
+        exit(1)
+
+    print(df_agregado)
