@@ -370,7 +370,7 @@ class STGCN_Metro(nn.Module):
         return out
 
 # Instanciar el modelo
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
 
 # A_tensor es la matriz normalizada que creamos en los primeros pasos
 modelo = STGCN_Metro(

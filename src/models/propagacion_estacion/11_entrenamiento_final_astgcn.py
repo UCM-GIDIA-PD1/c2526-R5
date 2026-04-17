@@ -234,7 +234,7 @@ def split_y_escalar(X_full, Y_full):
 
 def main():
     set_seed(SEED)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
     RUTA_MODELO.parent.mkdir(parents=True, exist_ok=True)
 
     hpo         = torch.load(RUTA_HPO, weights_only=False)

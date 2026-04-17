@@ -332,7 +332,7 @@ def evaluar_mae_real(model, loader, scaler_Y, device):
 
 def main():
     set_seed(SEED)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
     RUTA_SALIDA.parent.mkdir(parents=True, exist_ok=True)
 
     print("Descargando datos...")

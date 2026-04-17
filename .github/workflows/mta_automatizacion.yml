@@ -1,0 +1,26 @@
+name: MTA Data Collector
+
+on:
+  #schedule:
+    # Se ejecuta cada 30 minutos
+    #- cron: '*/30 * * * *'
+  workflow_dispatch:
+
+jobs:
+  collect-and-upload:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      - name: Instalar uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Ejecutar script de descarga
+        run: uv run 
+        env:
+          MINIO_ENDPOINT: ${{ secrets.MINIO_ENDPOINT }}
+          MINIO_ACCESS_KEY: ${{ secrets.MINIO_ACCESS_KEY }}
+          MINIO_SECRET_KEY: ${{ secrets.MINIO_SECRET_KEY }}

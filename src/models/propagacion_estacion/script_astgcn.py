@@ -519,7 +519,7 @@ class ASTGCN_Metro(nn.Module):
 
 
 # INSTANCIAR MODELO
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
 
 K_cheb = 3
 scaled_laplacian = calcular_scaled_laplacian(A_weighted)
