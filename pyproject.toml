@@ -36,6 +36,8 @@ dependencies = [
   "torch-geometric-temporal",
   "category-encoders>=2.9.0",
   "setuptools>=82.0.1",
+  "fastapi[standard]",
+  "jinja2",
 ]
 
 [dependency-groups]

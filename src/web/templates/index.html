@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NYC Subway Dashboard - Predicciones en Tiempo Real</title>
+    <!-- Google Fonts: Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    <!-- Vanilla CSS -->
+    <link rel="stylesheet" href="{{ url_for('static', path='css/style.css') }}">
+</head>
+<body>
+    <div id="map"></div>
+    
+    <div class="glass-panel dashboard over-map">
+        <header>
+            <div class="header-title">
+                <h1>NYC Live Subway</h1>
+                <span class="live-indicator"><span class="pulse"></span> ONLINE</span>
+            </div>
+            <p>Monitoreo inteligente con modelos predictivos</p>
+        </header>
+        
+        <div class="panel-content">
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <h3>Alertas Activas</h3>
+                    <p id="alert-count">0</p>
+                </div>
+                <div class="stat-card">
+                    <h3>Actualización</h3>
+                    <p id="next-update">T-60s</p>
+                </div>
+            </div>
+            
+            <div class="delays-list">
+                <h2>Retrasos Detectados (MinIO Buffer)</h2>
+                <ul id="delay-items">
+                    <li class="empty-state">Esperando predicciones de los modelos...</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <script src="{{ url_for('static', path='js/main.js') }}"></script>
+</body>
+</html>
