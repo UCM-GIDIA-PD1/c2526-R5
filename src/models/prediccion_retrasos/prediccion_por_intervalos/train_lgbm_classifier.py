@@ -33,7 +33,6 @@ VAL_MONTHS     = range(10, 13)
 TARGET_REG     = "target_delay_30m" # Lo mantenemos temporalmente para features
 TARGET_CLASS   = "target_class"     # Nuevo target para clasificación
 
-# Configuración de los Bins para las clases
 BINS = [-np.inf, -60, 60, 180, 300, 450, np.inf]
 LABELS = [
     'Adelantado (>1 min)', 
@@ -169,12 +168,10 @@ def main():
     print(f"\nCargando datos de validación (meses {list(VAL_MONTHS)})...")
     df_val = load_months(VAL_MONTHS)
 
-    # Discretizar el target a clasificación
     df_train = create_class_target(df_train)
     df_val   = create_class_target(df_val)
 
     df_train, df_val = encode_categoricals(df_train, df_val)
-    # Target encoding basado en los segundos de retraso continuos (excelente feature predictiva)
     df_train, df_val = add_target_encoding(df_train, df_val, STOP_ID_COL, TARGET_REG)
 
     df_train = add_derived_features(df_train)
@@ -187,7 +184,6 @@ def main():
     X_train, y_train = df_train[feats], df_train[TARGET_CLASS]
     X_val,   y_val   = df_val[feats],   df_val[TARGET_CLASS]
 
-    # Imprimir distribución de clases para control de desbalanceo
     print("Distribución de clases en TRAIN:")
     print(y_train.value_counts(normalize=True).sort_index().rename(index=dict(enumerate(LABELS))))
     print("\n")
@@ -226,7 +222,6 @@ def main():
 
     print(f"\nMejor iteración: {model.best_iteration}")
 
-    # En multiclass, model.predict devuelve las probabilidades por clase (N_filas, N_clases)
     y_pred_proba_train = model.predict(X_train, num_iteration=model.best_iteration)
     y_pred_proba_val   = model.predict(X_val,   num_iteration=model.best_iteration)
 
