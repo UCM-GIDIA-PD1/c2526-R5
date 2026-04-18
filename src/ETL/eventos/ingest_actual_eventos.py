@@ -474,8 +474,8 @@ def api_nycopendata(df_paradas):
     df = df[df.nivel_riesgo_tipo > 6]
 
     # Geocodificación con rate limiter para respetar los límites de Nominatim
-    geolocator = Nominatim(user_agent="nyc_events_geocoder")
-    geocode = RateLimiter(geolocator.geocode, min_delay_seconds=1, max_retries=2)
+    geolocator = Nominatim(user_agent="nyc_events_geocoder", timeout = 10)
+    geocode = RateLimiter(geolocator.geocode, min_delay_seconds=1, max_retries=2, swallow_exceptions=True, error_wait_seconds=2.0)
 
     df["coordenadas"] = df.apply(
         lambda row: list(extraer_coord(row["event_location"], row["event_borough"], geocode)), axis=1
@@ -580,8 +580,8 @@ def api_espn(df_paradas):
     fecha_lte = fecha_gte
 
     session = requests.Session()
-    geolocator = Nominatim(user_agent="espn_nyc_geocoder")
-    funcion_geocode = RateLimiter(geolocator.geocode, min_delay_seconds=1, max_retries=2)
+    geolocator = Nominatim(user_agent="espn_nyc_geocoder", timeout = 10)
+    funcion_geocode = RateLimiter(geolocator.geocode, min_delay_seconds=1, max_retries=2, swallow_exceptions=True, error_wait_seconds=2.0)
 
     filas = []
 
