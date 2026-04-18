@@ -124,20 +124,15 @@ def extraccion_linea(url, linea, reintentos=3):
 
 def extraccion_datos():
     """
-    Repite la función anterior para cada linea y unifica la información
-    de cada una de ellas en una dataframe
+    Repite la función de extracción para cada línea y unifica la información
+    de todas ellas en un DataFrame.
     """
-
-    todas_las_lineas = []
-    for info in FUENTES.values():
-        todas_las_lineas.extend(info['lineas'])
-    
     todos_los_datos = []
-    for linea in todas_las_lineas:
-        for grupo, info in FUENTES.items():
-            if linea in info['lineas']:
-                fuentes_url = info['url']
-            todos_los_datos.extend(extraccion_linea(fuentes_url, linea))  
+
+    for grupo, info in FUENTES.items():
+        url = info['url']
+        for linea in info['lineas']:
+            todos_los_datos.extend(extraccion_linea(url, linea))
 
     return pd.DataFrame(todos_los_datos)
 
@@ -244,7 +239,8 @@ def filter_delay_outliers(df: pd.DataFrame) -> pd.DataFrame:
     Filtro suave de outliers: delays fuera de +/- 2.5h suelen ser ruido (pero ajustable)
     """
     antes = len(df)
-    df = df[df["delay"].between(-9000, 9000)]
+    mask = df["delay"].isna() | df["delay"].between(-9000, 9000)
+    df = df[mask]
     descartadas = antes - len(df)
     if descartadas:
         print(f"  Outliers de delay eliminados: {descartadas} filas ({descartadas/antes*100:.1f}%)")
@@ -324,6 +320,79 @@ def creacion_df_previsto():
     return df
 
 
+def calcular_features_rt(df):
+    """
+    Calcula features derivados de la secuencia del viaje y del histórico
+    reciente por línea, necesarios para inferencia en tiempo real.
+
+    Genera:
+      - lagged_delay_1, lagged_delay_2: delay en las 1-2 paradas previas
+        del mismo viaje.
+      - route_rolling_delay: media móvil del delay por línea (últimos 30 min).
+      - actual_headway_seconds: segundos entre este tren y el anterior en
+        la misma parada y dirección.
+      - stops_to_end: paradas restantes hasta el final del viaje.
+      - scheduled_time_to_end: segundos programados hasta la última parada.
+    """
+    if df.empty:
+        return df
+
+    # 1) Lagged delays dentro del mismo viaje
+    df = df.sort_values(['viaje_id', 'segundos_reales']).reset_index(drop=True)
+    df['lagged_delay_1'] = df.groupby('viaje_id')['delay'].shift(1)
+    df['lagged_delay_2'] = df.groupby('viaje_id')['delay'].shift(2)
+
+    # 2) Rolling delay por línea (ventana temporal 30 min sobre hora_llegada)
+    df_sorted = (
+        df[['linea_id', 'direccion', 'segundos_reales', 'delay']]
+        .sort_values(['linea_id', 'direccion', 'segundos_reales'])
+        .reset_index()
+        .rename(columns={'index': '_orig_idx'})
+    )
+
+    df_sorted['route_rolling_delay'] = (
+        df_sorted
+        .groupby(['linea_id', 'direccion'])['delay']
+        .transform(lambda x: x.rolling(window=5, min_periods=1).mean().shift(1))
+    )
+
+    df['route_rolling_delay'] = (
+        df_sorted
+        .set_index('_orig_idx')['route_rolling_delay']
+        .reindex(df.index)
+    )
+
+    # 3) Headway: tiempo desde el tren anterior en (parada_id)
+    df_hw = (
+        df[['parada_id', 'segundos_reales']]
+        .sort_values(['parada_id', 'segundos_reales'])
+        .reset_index()
+        .rename(columns={'index': '_orig_idx'})
+    )
+
+    df_hw['actual_headway_seconds'] = (
+        df_hw.groupby('parada_id')['segundos_reales'].diff()
+    )
+
+    df['actual_headway_seconds'] = (
+        df_hw
+        .set_index('_orig_idx')['actual_headway_seconds']
+        .reindex(df.index)
+    )
+
+    # 4) stops_to_end y scheduled_time_to_end por viaje
+    # Último stop_sequence y último segundos_previstos de cada viaje
+    final_por_viaje = df.groupby('viaje_id').agg(
+        max_seq=('stop_sequence', 'max'),
+        final_secs=('segundos_previstos', 'max'),
+    )
+    df = df.merge(final_por_viaje, left_on='viaje_id', right_index=True, how='left')
+    df['stops_to_end'] = df['max_seq'] - df['stop_sequence']
+    df['scheduled_time_to_end'] = df['final_secs'] - df['segundos_previstos']
+    df = df.drop(columns=['max_seq', 'final_secs'])
+
+    return df
+
 
 #  Unión DataFrames
 def union_dataframes(df1, df2):
@@ -333,7 +402,12 @@ def union_dataframes(df1, df2):
     y aplica las transformaciones finales.
     """
 
-    df = pd.merge(df1, df2, left_on=['viaje_id', 'parada_id', 'dia'], right_on=['trip_id', 'stop_id', 'day'])
+    df = pd.merge(df1, df2, left_on=['viaje_id', 'parada_id', 'dia'], 
+              right_on=['trip_id', 'stop_id', 'day'], 
+              how='left')
+
+    # Marcar trenes no programados: no encontraron match en el schedule
+    df['is_unscheduled'] = df['trip_id'].isna()
 
     
     #Calcula el retraso de los trenes restando el tiempo de llegada actual menos el tiempo de llegada previsto
@@ -343,28 +417,23 @@ def union_dataframes(df1, df2):
     df.loc[df['delay'] > 43200, 'delay'] -= 86400
     df.loc[df['delay'] < -43200, 'delay'] += 86400
 
-    #Comprueba que los datos dados son de trenes que ya han realizado sus paradas y no son predicciones que realiza la
-    # api para el futuro de los trayectos. Los que son predicciones marcamos el delay a None
-    df['delay'] = np.where(
-        df['timestamp'] >= df['hora_llegada'],
-        df['delay'],  
-        np.nan    
-    )
+    # Descartar predicciones futuras (tanto programadas como no programadas)
+    df = df[df['timestamp'] >= df['hora_llegada']].copy()
 
-    df = df.dropna(subset=['delay'])
     #Filtro para delays con valores masivos y transformacion del día de la semana a valor numérico
     df = filter_delay_outliers(df)
     df = hora_ciclica(df)
+    df = calcular_features_rt(df)
 
     columnas_a_eliminar = [
         'dia', 'hora_partida', 'timestamp',
-        'segundos_reales', 'trip_id', 'stop_id', 'stop_sequence',
-        'arrival_time', 'departure_time', 'day', 'segundos_previstos'
+        'segundos_reales', 'trip_id', 'stop_id',
+        'arrival_time', 'departure_time', 'day'
     ]
     df = df.drop(columns=columnas_a_eliminar, errors='ignore')
-    df = df.dropna()
 
     return df
+
 
 
 if __name__ == "__main__":
@@ -391,9 +460,8 @@ if __name__ == "__main__":
     try:
         print("\nUniendo DataFrames...")
         df_final = union_dataframes(df_real_time, df_previsto)
-        df_agregado = agregar_por_ventana(df_final)
     except Exception as e:
         print(f"  [ERROR] Unión de DataFrames: {e}")
         exit(1)
 
-    print(df_agregado)
+    print(df_final)
