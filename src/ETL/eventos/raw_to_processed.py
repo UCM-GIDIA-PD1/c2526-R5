@@ -3,11 +3,6 @@ import pandas as pd
 import os
 import sys
 
-ruta_raiz = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-if ruta_raiz not in sys.path:
-    sys.path.insert(0, ruta_raiz)
-
-
 from src.common.minio_client import (
     download_df_parquet,
     upload_df_parquet,

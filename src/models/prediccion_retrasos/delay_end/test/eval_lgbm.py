@@ -5,8 +5,8 @@ Predice target_delay_end = retraso absoluto del tren al terminar el viaje.
 Solo usa registros con scheduled_time_to_end < 1800s (menos de 30 min restantes).
 
 Partición final (Entrega 4):
-    Train  → enero–diciembre 2025 + enero 2026  (todos los datos anteriores)
-    Test   → febrero–marzo 2026  (datos nuevos)
+    Train  → julio–diciembre 2025 + enero 2026  (sliding window por drift detectado)
+    Test   → febrero 2026  (datos nuevos)
 
 Iteraciones fijas (best_iteration del run anterior): 6299
 
@@ -37,17 +37,17 @@ ACCESS_KEY = os.environ["MINIO_ACCESS_KEY"]
 SECRET_KEY = os.environ["MINIO_SECRET_KEY"]
 
 TRAIN_YEAR_2025  = 2025
-TRAIN_MONTHS_2025 = range(1, 13)
+TRAIN_MONTHS_2025 = range(7, 13)   # jul-dic 2025 (sliding window)
 TRAIN_YEAR_2026  = 2026
 TRAIN_MONTHS_2026 = range(1, 2)   # enero 2026
 TEST_YEAR        = 2026
-TEST_MONTHS      = range(2, 4)    # febrero–marzo 2026
+TEST_MONTHS      = range(2, 3)    # febrero 2026
 TARGET           = "target_delay_end"
 DATA_TEMPLATE    = "grupo5/final/year={year}/month={month:02d}/dataset_final.parquet"
 MODEL_PATH_OUT   = "grupo5/models/lgbm_stop_delay_end_final.txt"
 
 WANDB_PROJECT  = "pd1-c2526-team5"
-WANDB_RUN_NAME = "lgbm-delay-end-entrega4"
+WANDB_RUN_NAME = "lgbm-delay-end-entrega4-feb-sliding"
 
 
 EXCLUDE_COLS = {

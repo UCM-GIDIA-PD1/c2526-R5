@@ -22,6 +22,8 @@ Variables de entorno necesarias:
 
 import os
 import calendar
+import io
+import zipfile
 import requests
 from datetime import datetime, timedelta, date
 import pandas as pd
@@ -81,6 +83,160 @@ from src.ETL.eventos.utils_eventos import (
     cargar_paradas_df,
     obtener_paradas_afectadas,
 )
+
+
+# Esquema común usado por los pipelines de eventos
+COLUMNAS_ESTANDAR_EVENTOS = [
+    'nombre_evento',
+    'tipo',
+    'fecha_inicio',
+    'hora_inicio',
+    'fecha_final',
+    'hora_salida_estimada',
+    'score',
+    'paradas_afectadas',
+]
+
+# Fuentes para mapear parada_nombre -> stop_id (mismo criterio que transform.py)
+_MTA_GTFS_ZIP_URL = "http://web.mta.info/developers/data/nyct/subway/google_transit.zip"
+_METRO_CSV_URL = "https://data.ny.gov/api/views/39hk-dx4f/rows.csv?accessType=DOWNLOAD"
+
+
+def _descargar_stops_gtfs() -> pd.DataFrame:
+    """
+    Descarga el GTFS estático y devuelve stops con stop_id y coordenadas.
+    """
+    resp = requests.get(_MTA_GTFS_ZIP_URL, timeout=60)
+    resp.raise_for_status()
+    with zipfile.ZipFile(io.BytesIO(resp.content)) as z:
+        with z.open("stops.txt") as f:
+            df = pd.read_csv(f)
+    return df[["stop_id", "stop_name", "stop_lat", "stop_lon"]].copy()
+
+
+def _construir_tabla_correspondencias_stop_id() -> dict:
+    """
+    Construye un diccionario parada_nombre -> [stop_id, ...] combinando
+    matching por nombre y por proximidad (<100m) para casos sin match exacto.
+    """
+    df_paradas_gtfs = _descargar_stops_gtfs()
+    df_paradas_nyc = pd.read_csv(_METRO_CSV_URL)
+
+    df_paradas_gtfs["nombre_normalizado"] = df_paradas_gtfs["stop_name"].str.lower().str.strip()
+    df_paradas_nyc["nombre_normalizado"] = df_paradas_nyc["Stop Name"].str.lower().str.strip()
+
+    correspondencias = df_paradas_nyc[
+        ["Stop Name", "GTFS Latitude", "GTFS Longitude", "nombre_normalizado"]
+    ].merge(
+        df_paradas_gtfs[["stop_id", "stop_lat", "stop_lon", "nombre_normalizado"]],
+        on="nombre_normalizado",
+        how="left",
+    )
+
+    sin_correspondencia = correspondencias[correspondencias["stop_id"].isna()]["Stop Name"].unique()
+    if len(sin_correspondencia) > 0:
+        latitudes_gtfs = np.radians(df_paradas_gtfs["stop_lat"].values)
+        longitudes_gtfs = np.radians(df_paradas_gtfs["stop_lon"].values)
+        correspondencias_por_coordenada = []
+        for nombre in sin_correspondencia:
+            fila = df_paradas_nyc[df_paradas_nyc["Stop Name"] == nombre].iloc[0]
+            lat1 = np.radians(fila["GTFS Latitude"])
+            lon1 = np.radians(fila["GTFS Longitude"])
+            delta_lat = latitudes_gtfs - lat1
+            delta_lon = longitudes_gtfs - lon1
+            factor_haversine = (
+                np.sin(delta_lat / 2) ** 2
+                + np.cos(lat1) * np.cos(latitudes_gtfs) * np.sin(delta_lon / 2) ** 2
+            )
+            distancia_m = 2 * np.arcsin(np.sqrt(factor_haversine)) * 6_371_000
+            for id_parada in df_paradas_gtfs.loc[distancia_m <= 100, "stop_id"]:
+                correspondencias_por_coordenada.append({"Stop Name": nombre, "stop_id": id_parada})
+
+        if correspondencias_por_coordenada:
+            correspondencias = pd.concat(
+                [correspondencias, pd.DataFrame(correspondencias_por_coordenada)],
+                ignore_index=True,
+            )
+
+    tabla_correspondencias = (
+        correspondencias[correspondencias["stop_id"].notna()]
+        .groupby("Stop Name")["stop_id"]
+        .apply(list)
+        .to_dict()
+    )
+    print(f"  [paradas] tabla de correspondencias construida: {len(tabla_correspondencias)} paradas")
+    return tabla_correspondencias
+
+
+def _normalizar_paradas(value):
+    """
+    Convierte paradas_afectadas a lista de tuplas [(nombre, lineas), ...].
+    """
+    if value is None or (isinstance(value, float) and np.isnan(value)):
+        return []
+
+    if isinstance(value, (list, np.ndarray)):
+        out = []
+        for x in value:
+            if isinstance(x, (tuple, list, np.ndarray)) and len(x) >= 2:
+                out.append((str(x[0]), str(x[1])))
+        return out
+
+    return []
+
+
+def transformar_eventos_actuales_sin_minio(df_eventos: pd.DataFrame) -> pd.DataFrame:
+    """
+    Replica la lógica de transform.py sobre los datos de ingest_actual,
+    devolviendo un DataFrame cleaned en memoria (sin subir a MinIO).
+    """
+    if df_eventos is None or df_eventos.empty:
+        return pd.DataFrame()
+
+    print("\n[actual] Construyendo correspondencias de paradas a stop_id...")
+    tabla_correspondencias = _construir_tabla_correspondencias_stop_id()
+
+    df = df_eventos.copy()
+
+    # 1) Score numérico con fallback por consistencia.
+    if "score" in df.columns:
+        df["score"] = pd.to_numeric(df["score"], errors="coerce").fillna(1.0)
+    else:
+        df["score"] = 1.0
+
+    # 2) Garantizar fecha_final.
+    if "fecha_final" not in df.columns and "fecha_inicio" in df.columns:
+        df["fecha_final"] = df["fecha_inicio"]
+    elif "fecha_final" in df.columns and "fecha_inicio" in df.columns:
+        df["fecha_final"] = df["fecha_final"].fillna(df["fecha_inicio"])
+
+    # 3) Normalizar y filtrar paradas afectadas.
+    df["paradas_afectadas"] = df["paradas_afectadas"].apply(_normalizar_paradas)
+    df = df[df["paradas_afectadas"].map(len) > 0].copy()
+    if df.empty:
+        return df
+
+    # 4) Una fila por parada.
+    df = df.explode("paradas_afectadas", ignore_index=True)
+
+    # 5) Split de metadata de parada.
+    df["parada_nombre"] = df["paradas_afectadas"].apply(
+        lambda x: x[0] if isinstance(x, (tuple, list, np.ndarray)) and len(x) >= 2 else None
+    )
+    df["parada_lineas"] = df["paradas_afectadas"].apply(
+        lambda x: x[1] if isinstance(x, (tuple, list, np.ndarray)) and len(x) >= 2 else None
+    )
+    df = df.drop(columns=["paradas_afectadas"])
+
+    # 6) Mapeo a stop_id y expansión de múltiples matches.
+    df["stop_id"] = df["parada_nombre"].map(lambda n: tabla_correspondencias.get(n, [None]))
+    df = df.explode("stop_id", ignore_index=True)
+
+    # 7) Limpieza final equivalente al pipeline histórico.
+    df = df.drop_duplicates(subset=["nombre_evento", "stop_id"]).copy()
+    df = df[df["stop_id"].astype("string").str.endswith(("N", "S"), na=False)].copy()
+
+    return df.reset_index(drop=True)
 
 
 #  SeatGeek
@@ -159,8 +315,9 @@ def api_seatgeek(df_paradas):
     # Capacidad 0 no tiene sentido, la tratamos como dato desconocido
     df['capacidad'] = df['capacidad'].replace(0, np.nan)
 
-    # Calculamos hora de salida estimada según el tipo de evento
+    # Calculamos fecha/hora de inicio y hora de salida estimada según tipo
     df['hora_inicio'] = pd.to_datetime(df['hora_inicio'])
+    df['fecha_inicio'] = df['hora_inicio'].dt.strftime('%Y-%m-%d')
     df['hora_inicio_str'] = df['hora_inicio'].dt.strftime('%H:%M')
 
     tiempos_salida = {
@@ -169,6 +326,7 @@ def api_seatgeek(df_paradas):
     }
 
     df['hora_salida_estimada'] = df.apply(lambda fila: calcular_salida(fila, tiempos_salida), axis=1)
+    df['fecha_final'] = df['fecha_inicio']
     df['hora_inicio'] = df['hora_inicio_str']
     df = df.drop(columns=['hora_inicio_str'])
 
@@ -186,14 +344,14 @@ def api_seatgeek(df_paradas):
         lambda cor: obtener_paradas_afectadas(cor, df_paradas)
     )
     df['paradas_afectadas'] = df['paradas_afectadas'].apply(fusionar_lista_estaciones)
-    df = df.drop(columns=["coordinates", "tipo"])
+    df = df.drop(columns=["coordinates"])
 
     return df
 
 
-# ─────────────────────────────────────────────
+
 #  NYC Open Data
-# ─────────────────────────────────────────────
+
 
 def desde_fecha(fecha_str):
     """Formatea la fecha como inicio del día para la query de NYC Open Data."""
@@ -288,9 +446,9 @@ def api_nycopendata(df_paradas):
     if df.empty:
         return df
 
-    # Convertimos las fechas a solo hora HH:MM
-    df['start_date_time'] = pd.to_datetime(df['start_date_time'], format='%Y-%m-%dT%H:%M:%S.%f', errors='coerce').dt.strftime('%H:%M')
-    df['end_date_time'] = pd.to_datetime(df['end_date_time'], errors='coerce', format='%Y-%m-%dT%H:%M:%S.%f').dt.strftime('%H:%M')
+    # Parseamos fechas completas para extraer fecha y hora
+    df['start_date_time'] = pd.to_datetime(df['start_date_time'], format='%Y-%m-%dT%H:%M:%S.%f', errors='coerce')
+    df['end_date_time'] = pd.to_datetime(df['end_date_time'], errors='coerce', format='%Y-%m-%dT%H:%M:%S.%f')
 
     # Eliminamos columnas que no aportan valor al pipeline
     df = df.drop(["event_id", "event_agency", "street_closure_type", 'community_board',
@@ -334,20 +492,27 @@ def api_nycopendata(df_paradas):
     )
     df['paradas_afectadas'] = df['paradas_afectadas'].apply(fusionar_lista_estaciones)
 
+    df['fecha_inicio'] = df['start_date_time'].dt.strftime('%Y-%m-%d')
+    df['fecha_final'] = df['end_date_time'].dt.strftime('%Y-%m-%d')
+
     # Limpiamos columnas intermedias y renombramos para unificar con el resto
-    df = df.drop(columns=["coordenadas", "event_location", "event_type", "event_borough"])
+    df = df.drop(columns=["coordenadas", "event_location", "event_borough"])
     df = df.rename(columns={
         'event_name': 'nombre_evento',
+        'event_type': 'tipo',
         'start_date_time': 'hora_inicio',
         'end_date_time': 'hora_salida_estimada',
     })
 
+    df['hora_inicio'] = pd.to_datetime(df['hora_inicio'], errors='coerce').dt.strftime('%H:%M')
+    df['hora_salida_estimada'] = pd.to_datetime(df['hora_salida_estimada'], errors='coerce').dt.strftime('%H:%M')
+
     return df
 
 
-# ─────────────────────────────────────────────
+
 #  ESPN (partidos de equipos NYC en casa)
-# ─────────────────────────────────────────────
+
 
 def extraer_scoreboard_espn(session, sport, fecha_gte, fecha_lte):
     """Llama al endpoint scoreboard de ESPN para un deporte y rango de fechas."""
@@ -433,7 +598,8 @@ def api_espn(df_paradas):
                     # Convertimos la fecha UTC del evento a hora local de NY
                     dt_ny = pd.to_datetime(ev.get("date")).tz_convert('America/New_York')
                     duracion = DURACIONES_ESPN.get(liga, 2.5)
-                    hora_salida = (dt_ny + pd.to_timedelta(duracion, unit='h')).strftime('%H:%M')
+                    dt_fin = dt_ny + pd.to_timedelta(duracion, unit='h')
+                    hora_salida = dt_fin.strftime('%H:%M')
 
                     coordinates = [longitud, latitud] if (longitud and latitud) else []
 
@@ -445,7 +611,10 @@ def api_espn(df_paradas):
 
                     filas.append({
                         'nombre_evento':        ev.get("name"),
+                        'tipo':                 liga,
+                        'fecha_inicio':         dt_ny.strftime('%Y-%m-%d'),
                         'hora_inicio':          dt_ny.strftime('%H:%M'),
+                        'fecha_final':          dt_fin.strftime('%Y-%m-%d'),
                         'hora_salida_estimada': hora_salida,
                         'score':                1.0,  # score fijo alto: partido en casa
                         'paradas_afectadas':    paradas,
@@ -486,10 +655,13 @@ def fusionar_dataframes(df_seat_geek, df_nyc, df_espn):
         dfs.append(df_espn)
 
     if not dfs:
-        return pd.DataFrame()
+        return pd.DataFrame(columns=COLUMNAS_ESTANDAR_EVENTOS)
 
     # Concatenamos solo las columnas comunes a las tres fuentes
-    cols_comunes = ['nombre_evento', 'hora_inicio', 'hora_salida_estimada', 'score', 'paradas_afectadas']
+    cols_comunes = [
+        'nombre_evento', 'tipo', 'fecha_inicio', 'hora_inicio',
+        'fecha_final', 'hora_salida_estimada', 'score', 'paradas_afectadas'
+    ]
     df_final = pd.concat([d[cols_comunes] for d in dfs], ignore_index=True)
 
     def fusionar_grupo(grupo):
@@ -504,7 +676,10 @@ def fusionar_dataframes(df_seat_geek, df_nyc, df_espn):
             if isinstance(p, list):
                 paradas_unidas.extend(p)
         return pd.Series({
+            'tipo':                 grupo['tipo'].iloc[0],
+            'fecha_inicio':         grupo['fecha_inicio'].iloc[0],
             'hora_salida_estimada': grupo['hora_salida_estimada'].iloc[0],
+            'fecha_final':          grupo['fecha_final'].max(),
             'score':                grupo['score'].max(),
             'paradas_afectadas':    fusionar_lista_estaciones(paradas_unidas),
         })
@@ -517,15 +692,20 @@ def fusionar_dataframes(df_seat_geek, df_nyc, df_espn):
         .reset_index(drop=True)
     )
 
+    # Eliminamos eventos sin paradas afectadas para mantener solo impacto real en metro.
+    df_final = df_final[
+        df_final['paradas_afectadas'].apply(lambda p: isinstance(p, list) and len(p) > 0)
+    ].reset_index(drop=True)
+
     # Ordenamos por score descendente para que los eventos más relevantes queden primero
     df_final = df_final.sort_values('score', ascending=False).reset_index(drop=True)
 
+    df_final = df_final[COLUMNAS_ESTANDAR_EVENTOS]
+
     return df_final
 
-
-# ─────────────────────────────────────────────
 #  Main
-# ─────────────────────────────────────────────
+
 if __name__ == "__main__":
     load_dotenv()
 
@@ -561,4 +741,11 @@ if __name__ == "__main__":
             print(f"  Error en ESPN: {e}")
 
         df_final = fusionar_dataframes(df_seat_geek, df_nyc, df_espn)
+
+        print("\nEventos actuales fusionados:")
         print(df_final)
+
+        print("\nTransformando eventos actuales (sin subida a MinIO)...")
+        df_cleaned_actual = transformar_eventos_actuales_sin_minio(df_final)
+        print(f"  {len(df_cleaned_actual)} filas en formato cleaned")
+        print(df_cleaned_actual)
