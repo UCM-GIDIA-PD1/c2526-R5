@@ -224,6 +224,26 @@ def main():
     )
     print(f"Modelo final DCRNN guardado en: {RUTA_MODELO}")
     print("NOTA: la evaluación sobre Test se realiza en 12_evaluacion_modelos.py")
+
+    # ── Subir modelo a W&B Artifacts ──────────────────────────────────────────
+    artifact = wandb.Artifact(
+        name="dcrnn-final",
+        type="model",
+        description="Entrenamiento final DCRNN sobre Train+Val",
+        metadata={
+            'subset_name':        subset_name,
+            'best_trainval_loss': best_loss,
+            'best_epoch':         best_epoch,
+            'n_features':         nf,
+            'hidden_channels':    hc,
+            'K':                  K,
+            'history_len':        hl,
+            'out_horizons':       OUT_HORIZONS,
+        },
+    )
+    artifact.add_file(str(RUTA_MODELO))
+    wandb.log_artifact(artifact)
+
     wandb.finish()
 
 

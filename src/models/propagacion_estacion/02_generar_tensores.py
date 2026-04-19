@@ -31,7 +31,10 @@ from sklearn.preprocessing import StandardScaler
 from src.common.minio_client import download_df_parquet
 
 # Params
-RUTA_DATASET = "grupo5/final/year=2025/month=01/dataset_final.parquet"
+RUTAS_DATASET = [
+    "grupo5/final/year=2025/month=09/dataset_final.parquet",
+    "grupo5/final/year=2025/month=10/dataset_final.parquet",
+]
 FREQ         = "15min"
 SPLIT_TRAIN  = 0.70
 SPLIT_VAL    = 0.10   # el resto test
@@ -70,8 +73,8 @@ def build_spatiotemporal_tensor(
     if not scheduled_nodes:
         raise ValueError("scheduled_nodes está vacío — no se puede construir el tensor.")
 
-    df = df[df['stop_id'].isin(scheduled_nodes)].copy()
-    df['time_bin'] = pd.to_datetime(df['merge_time']).dt.floor(freq)
+    df = df[df['stop_id'].isin(scheduled_nodes)]
+    df = df.assign(time_bin=pd.to_datetime(df['merge_time']).dt.floor(freq))
 
     agg_rules = {
         'delay_seconds':          'mean',
@@ -164,8 +167,24 @@ def main():
     print(f"Nodos del grafo: {len(nodes_list)}")
 
     print("Descargando dataset_final...")
-    df_final = download_df_parquet(access_key, secret_key, RUTA_DATASET)
+    partes = []
+    for ruta in RUTAS_DATASET:
+        print(f"  · {ruta}")
+        partes.append(download_df_parquet(access_key, secret_key, ruta))
+    df_final = pd.concat(partes, ignore_index=True)
+    del partes
+    gc.collect()
     print(f"Filas cargadas: {len(df_final):,}")
+
+    # Filtrar a columnas estrictamente necesarias para liberar memoria
+    COLS_NECESARIAS = ['stop_id', 'merge_time',
+                       'delay_seconds', 'lagged_delay_1', 'lagged_delay_2',
+                       'is_unscheduled', 'temp_extreme', 'n_eventos_afectando',
+                       'route_rolling_delay', 'actual_headway_seconds',
+                       'afecta_previo', 'afecta_durante', 'afecta_despues',
+                       'station_delay_10m', 'station_delay_20m', 'station_delay_30m']
+    df_final = df_final[COLS_NECESARIAS]
+    gc.collect()
 
     print("Construyendo tensor espaciotemporal...")
     X, Y, times, nodes = build_spatiotemporal_tensor(df_final, nodes_list)
