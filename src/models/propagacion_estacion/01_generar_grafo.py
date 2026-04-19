@@ -28,8 +28,8 @@ from torch_geometric.utils import add_self_loops, coalesce
 from src.common.minio_client import download_df_parquet
 
 # Params
-START_DATE = "2025-01-06"
-END_DATE   = "2025-01-19"   # 2 semanas capturan toda la topología del grafo
+START_DATE = "2026-02-06"
+END_DATE   = "2026-02-19"   # 2 semanas capturan toda la topología del grafo
 
 RUTA_GTFS_TEMPLATE = "grupo5/cleaned/gtfs_clean_scheduled/date={date}/gtfs_scheduled_{date}.parquet"
 RUTA_SALIDA        = Path(__file__).parent / "artefactos" / "grafo.pt"

@@ -24,6 +24,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+import wandb
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from torch.utils.data import DataLoader, Dataset
 
@@ -167,49 +168,67 @@ def mae_segmento(preds: np.ndarray, trues: np.ndarray,
     return float(mean_absolute_error(t, p))
 
 
-def evaluar_segmentos(resultados_modelos: dict, etiquetas: dict) -> None:
+def evaluar_segmentos(resultados_modelos: dict, etiquetas_por_modelo: dict) -> None:
     """
     Compara MAE para cada modelo en cuatro segmentos:
       · Fines de semana (dow ∈ {5, 6})  vs. Días de diario (dow ∈ {0..4})
       · Clima extremo (temp_extreme == 1) vs. Clima normal (temp_extreme == 0)
 
-    etiquetas : {
-        'dow'  : np.ndarray (M,) — day-of-week promediado sobre nodos,
-        'temp' : np.ndarray (M,) — temp_extreme promediado sobre nodos,
+    etiquetas_por_modelo : {
+        nombre: {
+            'dow'  : np.ndarray (M_nombre,) — day-of-week promediado sobre nodos,
+            'temp' : np.ndarray (M_nombre,) — temp_extreme promediado sobre nodos,
+        }, ...
     }
+    Cada modelo puede tener distinta longitud M si los test sets difieren (p.ej.
+    cuando los modelos se entrenaron con distinto número de meses de datos).
+    Las máscaras se calculan por modelo para que coincidan siempre con la forma
+    de sus predicciones.
     """
-    dow  = etiquetas['dow']    # (M,)
-    temp = etiquetas['temp']   # (M,)
-
-    mask_finde   = dow  >= 5.0
-    mask_diario  = dow  <  5.0
-    mask_extremo = temp >= 0.5
-    mask_normal  = temp <  0.5
-
     print("\n" + "=" * 70)
     print("TABLA 2 — EVALUACIÓN POR SEGMENTOS RELEVANTES")
     print("=" * 70)
     cabecera = f"{'Modelo':<10} {'FdS MAE':>10} {'Diario MAE':>12} {'Extremo MAE':>13} {'Normal MAE':>11}"
     print(cabecera)
     print("-" * 70)
+
+    maes_acum: dict[str, dict[str, float]] = {
+        'finde': {}, 'diario': {}, 'extremo': {}, 'normal': {}
+    }
     for nombre, (preds, trues) in resultados_modelos.items():
+        etiq = etiquetas_por_modelo[nombre]
+        dow  = etiq['dow']   # (M_nombre,)
+        temp = etiq['temp']  # (M_nombre,)
+
+        mask_finde   = dow  >= 5.0
+        mask_diario  = dow  <  5.0
+        mask_extremo = temp >= 0.5
+        mask_normal  = temp <  0.5
+
         fds  = mae_segmento(preds, trues, mask_finde)   if mask_finde.any()   else float('nan')
         dia  = mae_segmento(preds, trues, mask_diario)  if mask_diario.any()  else float('nan')
         ext  = mae_segmento(preds, trues, mask_extremo) if mask_extremo.any() else float('nan')
         nor  = mae_segmento(preds, trues, mask_normal)  if mask_normal.any()  else float('nan')
         print(f"{nombre:<10} {fds:>10.2f} {dia:>12.2f} {ext:>13.2f} {nor:>11.2f}")
+
+        maes_acum['finde'][nombre]   = fds
+        maes_acum['diario'][nombre]  = dia
+        maes_acum['extremo'][nombre] = ext
+        maes_acum['normal'][nombre]  = nor
+
     print("=" * 70)
     print("Unidades: MAE en segundos reales. FdS = Fines de semana.")
 
     # Indicar qué modelo es mejor en cada segmento
-    best = {}
-    for segmento, mask in [('Fin de semana', mask_finde), ('Diario', mask_diario),
-                            ('Clima extremo', mask_extremo), ('Clima normal', mask_normal)]:
-        if not mask.any():
+    for segmento, key in [('Fin de semana', 'finde'), ('Diario', 'diario'),
+                           ('Clima extremo', 'extremo'), ('Clima normal', 'normal')]:
+        maes = {n: v for n, v in maes_acum[key].items() if not np.isnan(v)}
+        if not maes:
             continue
-        maes = {n: mae_segmento(p, t, mask) for n, (p, t) in resultados_modelos.items()}
-        ganador = min(maes, key=maes.get)
-        print(f"  → Mejor en '{segmento}': {ganador} (MAE={maes[ganador]:.2f}s)")
+        mejor = min(maes, key=maes.get)
+        print(f"  → Mejor en '{segmento}': {mejor} (MAE={maes[mejor]:.2f}s)")
+
+    return maes_acum
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -334,6 +353,10 @@ def construir_grupos_pfi(feature_names: list[str]) -> dict[str, list[int]]:
 # main
 # ─────────────────────────────────────────────────────────────────────────────
 
+WANDB_PROJECT  = "pd1-c2526-team5"
+WANDB_RUN_NAME = "evaluacion-final-gnn"
+
+
 def main():
     device     = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
     batch_size = 32
@@ -342,6 +365,12 @@ def main():
     print("=== 12 Evaluación de Modelos GNN en Test ===")
     print(f"Device: {device}")
     print("=" * 60)
+
+    wandb.init(
+        project=WANDB_PROJECT,
+        name=WANDB_RUN_NAME,
+        config={'batch_size': batch_size, 'device': str(device)},
+    )
 
     # ══════════════════════════════════════════════════════════════════════════
     # 1. CARGAR MODELOS Y DATOS DE TEST
@@ -471,9 +500,21 @@ def main():
     }
     imprimir_tabla_metricas(metricas)
 
+    # Registrar métricas globales en W&B
+    tabla_metricas_wb = wandb.Table(columns=['Modelo', 'MAE (s)', 'RMSE (s)', 'R²'])
+    for nombre, m in metricas.items():
+        tabla_metricas_wb.add_data(nombre, m['MAE (s)'], m['RMSE (s)'], m['R²'])
+        wandb.log({
+            f'{nombre}/MAE_s':  m['MAE (s)'],
+            f'{nombre}/RMSE_s': m['RMSE (s)'],
+            f'{nombre}/R2':     m['R²'],
+        })
+    wandb.log({'tabla_metricas': tabla_metricas_wb})
+
     # Determinar el modelo ganador (menor MAE)
     ganador = min(metricas, key=lambda m: metricas[m]['MAE (s)'])
     print(f"\n→ Modelo con menor MAE global: {ganador} ({metricas[ganador]['MAE (s)']:.2f}s)")
+    wandb.log({'ganador': ganador})
 
     # ══════════════════════════════════════════════════════════════════════════
     # 3. EVALUACIÓN POR SEGMENTOS RELEVANTES
@@ -519,13 +560,32 @@ def main():
         'STGCN':  (preds_stgcn[max_hl - hl_stgcn:, :, :min_C],   trues_stgcn[max_hl - hl_stgcn:, :, :min_C]),
         'ASTGCN': (preds_astgcn[max_hl - hl_astgcn:, :, :min_C], trues_astgcn[max_hl - hl_astgcn:, :, :min_C]),
     }
-    # Etiquetas del ganador recortadas al mismo período común
-    trim_ganador = max_hl - hl_map[ganador]
-    etiq_ganador = {
-        'dow':  etiquetas_segmento[ganador]['dow'][trim_ganador:],
-        'temp': etiquetas_segmento[ganador]['temp'][trim_ganador:],
+    # Etiquetas de cada modelo recortadas al mismo desplazamiento que sus preds
+    # (max_hl - hl_modelo filas, para que coincidan con resultados_segmentos).
+    # Cada modelo puede tener distinta longitud total de test set, por lo que
+    # las máscaras se calculan por separado dentro de evaluar_segmentos.
+    etiquetas_trim = {
+        nombre: {
+            'dow':  etiquetas_segmento[nombre]['dow'][max_hl - hl_map[nombre]:],
+            'temp': etiquetas_segmento[nombre]['temp'][max_hl - hl_map[nombre]:],
+        }
+        for nombre in hl_map
     }
-    evaluar_segmentos(resultados_segmentos, etiq_ganador)
+    maes_segmentos = evaluar_segmentos(resultados_segmentos, etiquetas_trim)
+
+    # Registrar tabla de segmentos en W&B
+    tabla_segmentos_wb = wandb.Table(
+        columns=['Modelo', 'FdS MAE (s)', 'Diario MAE (s)', 'Extremo MAE (s)', 'Normal MAE (s)']
+    )
+    for nombre in hl_map:
+        tabla_segmentos_wb.add_data(
+            nombre,
+            maes_segmentos['finde'].get(nombre, float('nan')),
+            maes_segmentos['diario'].get(nombre, float('nan')),
+            maes_segmentos['extremo'].get(nombre, float('nan')),
+            maes_segmentos['normal'].get(nombre, float('nan')),
+        )
+    wandb.log({'tabla_segmentos': tabla_segmentos_wb})
 
     # ══════════════════════════════════════════════════════════════════════════
     # 4. PERMUTATION FEATURE IMPORTANCE (PFI) — sobre el modelo ganador
@@ -571,6 +631,14 @@ def main():
     )
     imprimir_ranking_pfi(importancias, ganador)
 
+    # Registrar PFI en W&B
+    tabla_pfi_wb = wandb.Table(columns=['Variable / Grupo', 'ΔMAE (s)'])
+    for nombre_feat, delta in sorted(importancias.items(), key=lambda x: x[1], reverse=True):
+        tabla_pfi_wb.add_data(nombre_feat, delta)
+    wandb.log({'tabla_pfi': tabla_pfi_wb})
+    wandb.log({f'pfi/{k.replace(" ", "_")}': v for k, v in importancias.items()})
+
+    wandb.finish()
     print("\n✓ Evaluación completada. Resultados listos para la memoria del proyecto.")
 
 

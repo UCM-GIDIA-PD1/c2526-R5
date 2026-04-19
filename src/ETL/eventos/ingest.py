@@ -13,9 +13,10 @@ Desde run_extraccion, se llama a:
 
 import sys
 
-from .conciertos  import ingest_conciertos
-from .deportes    import ingest_deportes
-from .eventos_nyc import ingest_eventos_nyc
+from .conciertos        import ingest_conciertos
+from .deportes          import ingest_deportes
+from .eventos_nyc       import ingest_eventos_nyc
+from .raw_to_processed  import run_transform as raw_to_processed
 
 
 #  Registro de subscripts
@@ -50,3 +51,7 @@ def ingest_eventos(start_date, end_date):
         raise RuntimeError(f"Fallaron los siguientes subscripts de eventos: {failed}")
 
     print("\n[eventos] Todos los subscripts completados correctamente.")
+
+    print("\n[eventos] ── START raw_to_processed ──────────────────────────")
+    raw_to_processed(start_date, end_date)
+    print("[eventos] ── OK    raw_to_processed")
