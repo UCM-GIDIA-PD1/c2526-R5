@@ -95,8 +95,8 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 # Montar las plantillas y archivos estáticos
-app.mount("/static", StaticFiles(directory="src/web/static"), name="static")
-templates = Jinja2Templates(directory="src/web/templates")
+app.mount("/static", StaticFiles(directory="app/static"), name="static")
+templates = Jinja2Templates(directory="app/templates")
 
 # --- MANEJADOR DE WEBSOCKETS ---
 class ConnectionManager:
