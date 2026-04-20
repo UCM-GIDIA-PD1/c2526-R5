@@ -18,6 +18,8 @@ Uso:
 import gc
 import numpy as np
 import pandas as pd
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 
 def agrupar_realtime(df: pd.DataFrame, tiempo: str = '30') -> pd.DataFrame:
@@ -39,7 +41,9 @@ def agrupar_realtime(df: pd.DataFrame, tiempo: str = '30') -> pd.DataFrame:
         return pd.DataFrame()
 
     df = df.copy()
-    df['merge_time'] = pd.to_datetime(df['merge_time'], utc=True, errors='coerce')
+    df['merge_time'] = pd.to_datetime(df['merge_time'], errors='coerce')
+    if df['merge_time'].dt.tz is not None:
+        df['merge_time'] = df['merge_time'].dt.tz_convert('America/New_York').dt.tz_localize(None)
 
     limite_segundos = 43200
     columnas_tiempo = [
@@ -117,9 +121,31 @@ def agrupar_realtime(df: pd.DataFrame, tiempo: str = '30') -> pd.DataFrame:
     df_grouped['delay_2_before'] = np.nan
     df_grouped['delay_3_before'] = np.nan
 
-    # Eliminar ventanas vacías
-    if 'delay_seconds_mean' in df_grouped.columns:
-        df_grouped = df_grouped[df_grouped['delay_seconds_mean'].notna()].reset_index(drop=True)
+
+    minutos_ventana = int(tiempo)
+    ahora_ny = datetime.now(ZoneInfo("America/New_York")).replace(tzinfo=None)
+
+    # Borde inferior de la ventana actual
+    ventana_actual = ahora_ny.replace(second=0, microsecond=0)
+    ventana_actual = ventana_actual.replace(
+        minute=(ventana_actual.minute // minutos_ventana) * minutos_ventana
+    )
+
+    # ¿Estamos en la primera o segunda mitad de la ventana?
+    minutos_transcurridos = (ahora_ny - ventana_actual).total_seconds() / 60
+
+    if minutos_transcurridos >= minutos_ventana / 2:
+        # Segunda mitad: asignamos la ventana en curso
+        ventana_asignada = ventana_actual
+    else:
+        # Primera mitad: asignamos la anterior (ya cerrada)
+        ventana_asignada = ventana_actual - timedelta(minutes=minutos_ventana)
+
+    antes = len(df_grouped)
+    df_grouped = df_grouped[df_grouped['merge_time'] == ventana_asignada].reset_index(drop=True)
+    print(f"  Ventana asignada: {ventana_asignada} "
+        f"({len(df_grouped)} filas de {antes} totales)")
+
 
     print(f"  Ventanas generadas: {len(df_grouped):,} | "
           f"Líneas: {df_grouped['route_id'].nunique()} | "

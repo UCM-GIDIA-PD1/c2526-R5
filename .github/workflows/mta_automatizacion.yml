@@ -1,9 +1,9 @@
 name: MTA Data Collector
 
 on:
-  #schedule:
+  schedule:
     # Se ejecuta cada 30 minutos
-    #- cron: '*/30 * * * *'
+    - cron: '25,55 * * * *'
   workflow_dispatch:
 
 jobs:
@@ -19,8 +19,7 @@ jobs:
           enable-cache: true
 
       - name: Ejecutar script de descarga
-        run: uv run 
+        run: uv run python src/ETL/pipelines/upload_realtime_window.py
         env:
-          MINIO_ENDPOINT: ${{ secrets.MINIO_ENDPOINT }}
           MINIO_ACCESS_KEY: ${{ secrets.MINIO_ACCESS_KEY }}
           MINIO_SECRET_KEY: ${{ secrets.MINIO_SECRET_KEY }}

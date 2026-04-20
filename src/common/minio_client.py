@@ -155,3 +155,29 @@ def download_json(
         resp.close()
         resp.release_conn()
     return json.loads(raw.decode("utf-8"))
+
+
+# Listar y borrar objetos
+
+def list_objects(
+    access_key: str,
+    secret_key: str,
+    prefix: str,
+    endpoint: str = DEFAULT_ENDPOINT,
+    bucket: str = DEFAULT_BUCKET
+) -> list[str]:
+    """Lista objetos en MinIO que empiezan por `prefix`. Devuelve lista de object_names."""
+    c = _client(access_key, secret_key, endpoint)
+    return [obj.object_name for obj in c.list_objects(bucket, prefix=prefix, recursive=True)]
+
+
+def delete_object(
+    access_key: str,
+    secret_key: str,
+    object_name: str,
+    endpoint: str = DEFAULT_ENDPOINT,
+    bucket: str = DEFAULT_BUCKET
+) -> None:
+    """Borra un objeto de MinIO."""
+    c = _client(access_key, secret_key, endpoint)
+    c.remove_object(bucket, object_name)
