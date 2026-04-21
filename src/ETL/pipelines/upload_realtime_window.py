@@ -1,46 +1,175 @@
 """
 Orquesta la ejecución del pipeline RT y sube la ventana agregada más reciente
-a MinIO, manteniendo solo las N ventanas más recientes (ventana deslizante).
+a Google Drive, manteniendo solo las N ventanas más recientes (ventana deslizante).
 
 Flujo:
-    1. Genera el dataset RT a nivel de parada (build_realtime_dataset).
-    2. Agrega en ventanas temporales de 30 min (aggregate_realtime).
-    3. Sube la ventana a MinIO con nombre ISO (orden cronológico).
-    4. Lista las ventanas en MinIO y borra las más antiguas si hay más de N.
+    La carpeta la crea y gestiona la cuenta de servicio en su propio Drive.
+    Se comparte automáticamente con los emails configurados en GDRIVE_SHARE_EMAILS.
 
 Uso:
     uv run python src/ETL/pipelines/upload_realtime_window.py
 
 Variables de entorno requeridas:
-    MINIO_ACCESS_KEY, MINIO_SECRET_KEY
+    GOOGLE_CREDENTIALS_JSON  ← contenido del JSON de la cuenta de servicio
+    GDRIVE_SHARE_EMAILS      ← emails separados por coma
 """
 
+import io
+import json
 import os
+from pathlib import Path
 
+import pandas as pd
 from dotenv import load_dotenv
+
+from google.oauth2.credentials import Credentials
+from google.auth.transport.requests import Request
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseUpload
 
 from src.ETL.pipelines.generate_realtime_dataset import build_realtime_dataset
 from src.ETL.pipelines.aggregate_realtime_dataset import aggregate_realtime
-from src.common.minio_client import (
-    upload_df_parquet,
-    list_objects,
-    delete_object,
-)
+
 
 load_dotenv()
 
 # Configuración
-MINIO_PREFIX = "grupo5/realtime_windows/"
-NUM_VENTANAS_A_MANTENER = 4
-TIEMPO_VENTANA = "30"  
+FOLDER_NAME = "MTA_Realtime_Windows"
+NUM_VENTANAS_A_MANTENER = 8 
+TIEMPO_VENTANA = "15"   
+SCOPES = ['https://www.googleapis.com/auth/drive']
+
+BASE_DIR = Path(__file__).resolve().parent.parent / "alertas_oficiales_tiempo_real"
+TOKEN_PATH = BASE_DIR / "token_drive.json"
+
+
+def get_drive_service():
+    """
+    Crea el cliente de Google Drive usando OAuth del usuario.
+    En GitHub Actions, reconstruye token_drive.json desde el secret
+    GDRIVE_TOKEN_JSON antes de crear el servicio.
+    """
+    # Si estamos en GitHub Actions, reconstruir el token desde el secret
+    token_json_content = os.getenv("GDRIVE_TOKEN_JSON")
+    if token_json_content:
+        TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
+        TOKEN_PATH.write_text(token_json_content)
+
+    if not TOKEN_PATH.exists():
+        raise RuntimeError(
+            "token_drive.json no encontrado. "
+            "Ejecuta generar_token_drive.py localmente para generarlo."
+        )
+
+    creds = Credentials.from_authorized_user_file(str(TOKEN_PATH), SCOPES)
+
+    # Refrescar si ha expirado
+    if not creds.valid and creds.expired and creds.refresh_token:
+        creds.refresh(Request())
+        TOKEN_PATH.write_text(creds.to_json())
+
+    return build('drive', 'v3', credentials=creds)
+
+
+def get_or_create_folder(service, folder_name: str) -> str:
+    """
+    Busca una carpeta con ese nombre en el Drive de la cuenta de servicio.
+    Si no existe, la crea y la comparte con los emails configurados.
+    Devuelve el folder_id.
+    """
+    query = (
+        f"name = '{folder_name}' "
+        f"and mimeType = 'application/vnd.google-apps.folder' "
+        f"and trashed = false"
+    )
+    result = service.files().list(
+        q=query,
+        fields='files(id, name)'
+    ).execute()
+
+    archivos = result.get('files', [])
+    if archivos:
+        folder_id = archivos[0]['id']
+        print(f"  Carpeta encontrada: {folder_name} (id={folder_id})")
+        return folder_id
+
+    # Crear la carpeta
+    file_metadata = {
+        'name': folder_name,
+        'mimeType': 'application/vnd.google-apps.folder'
+    }
+    folder = service.files().create(
+        body=file_metadata,
+        fields='id'
+    ).execute()
+    folder_id = folder.get('id')
+    print(f"  Carpeta creada: {folder_name} (id={folder_id})")
+
+    # Compartir con los emails configurados
+    emails_raw = os.getenv("GDRIVE_SHARE_EMAILS", "")
+    emails = [e.strip() for e in emails_raw.split(",") if e.strip()]
+    for email in emails:
+        try:
+            service.permissions().create(
+                fileId=folder_id,
+                body={
+                    'type': 'user',
+                    'role': 'writer',
+                    'emailAddress': email
+                },
+                sendNotificationEmail=False
+            ).execute()
+            print(f"  Carpeta compartida con: {email}")
+        except Exception as e:
+            print(f"  [WARN] No se pudo compartir con {email}: {e}")
+
+    return folder_id
+
+
+def listar_archivos_drive(service, folder_id: str) -> list[dict]:
+    """Lista archivos parquet en la carpeta de Drive, ordenados por fecha de creación."""
+    query = (
+        f"'{folder_id}' in parents "
+        f"and name contains 'ventana_' "
+        f"and name contains '.parquet' "
+        f"and trashed = false"
+    )
+    result = service.files().list(
+        q=query,
+        orderBy='createdTime',
+        fields='files(id, name, createdTime)'
+    ).execute()
+    return result.get('files', [])
+
+
+def subir_parquet_drive(service, folder_id: str, nombre: str, df: pd.DataFrame) -> str:
+    """Sube un DataFrame como parquet a Google Drive. Devuelve el file_id."""
+    buf = io.BytesIO()
+    df.to_parquet(buf, index=False)
+    buf.seek(0)
+
+    file_metadata = {
+        'name': nombre,
+        'parents': [folder_id],
+    }
+    media = MediaIoBaseUpload(buf, mimetype='application/octet-stream', resumable=False)
+    file = service.files().create(
+        body=file_metadata,
+        media_body=media,
+        fields='id'
+    ).execute()
+    return file.get('id')
+
+
+def borrar_archivo_drive(service, file_id: str) -> None:
+    """Borra un archivo de Google Drive por su ID."""
+    service.files().delete(fileId=file_id).execute()
 
 
 def main():
-    access_key = os.getenv("MINIO_ACCESS_KEY")
-    secret_key = os.getenv("MINIO_SECRET_KEY")
-
-    if not access_key or not secret_key:
-        raise RuntimeError("MINIO_ACCESS_KEY y MINIO_SECRET_KEY no están definidas.")
+    credentials_json = os.getenv("GOOGLE_CREDENTIALS_JSON")
+    if not credentials_json:
+        raise RuntimeError("GOOGLE_CREDENTIALS_JSON no está definida.")
 
     # 1) Generar dataset RT
     print("\n[1/3] Generando dataset RT...")
@@ -51,43 +180,35 @@ def main():
     df_agregado = aggregate_realtime(df_rt, tiempo=TIEMPO_VENTANA)
 
     if df_agregado.empty:
-        print("[WARN] Agregado vacío. No se sube nada a MinIO.")
+        print("[WARN] Agregado vacío. No se sube nada a Drive.")
         return
 
-    # 3) Subir a MinIO con nombre basado en la ventana del DataFrame
-    ventana = df_agregado['merge_time'].iloc[0]
-    nombre = ventana.strftime("%Y-%m-%d_%H-%M")
-    object_name = f"{MINIO_PREFIX}ventana_{nombre}.parquet"
+    # 3) Obtener o crear carpeta y subir
+    service = get_drive_service()
+    folder_id = get_or_create_folder(service, FOLDER_NAME)
 
-    print(f"\n[3/3] Subiendo a MinIO: {object_name}")
-    upload_df_parquet(access_key, secret_key, object_name, df_agregado)
-    print(f"  [OK] Subida: {len(df_agregado)} filas")
+    ventana = df_agregado['merge_time'].iloc[0]
+    nombre = f"ventana_{ventana.strftime('%Y-%m-%d_%H-%M')}.parquet"
+
+    print(f"\n[3/3] Subiendo a Google Drive: {nombre}")
+    file_id = subir_parquet_drive(service, folder_id, nombre, df_agregado)
+    print(f"  [OK] Subido: {len(df_agregado)} filas → file_id={file_id}")
 
     # 4) Mantener solo las N ventanas más recientes (ventana deslizante)
     print(f"\n[CLEANUP] Conservando solo las {NUM_VENTANAS_A_MANTENER} ventanas más recientes...")
-    objetos = list_objects(access_key, secret_key, prefix=MINIO_PREFIX)
+    archivos = listar_archivos_drive(service, folder_id)
 
-    # Filtrar solo parquets de ventana (por si hay otros archivos en la carpeta)
-    objetos = [o for o in objetos if o.endswith(".parquet") and "ventana_" in o]
-
-    # Ordenar cronológicamente (el nombre es ISO, orden alfabético = cronológico)
-    objetos.sort()
-
-    # Si hay más de N, borrar los más antiguos
-    if len(objetos) > NUM_VENTANAS_A_MANTENER:
-        a_borrar = objetos[:-NUM_VENTANAS_A_MANTENER]
-        for obj in a_borrar:
-            delete_object(access_key, secret_key, obj)
-            print(f"  [DEL] {obj}")
+    if len(archivos) > NUM_VENTANAS_A_MANTENER:
+        a_borrar = archivos[:-NUM_VENTANAS_A_MANTENER]
+        for f in a_borrar:
+            borrar_archivo_drive(service, f['id'])
+            print(f"  [DEL] {f['name']}")
 
     # Mostrar las ventanas conservadas
-    objetos_finales = sorted([
-        o for o in list_objects(access_key, secret_key, prefix=MINIO_PREFIX)
-        if o.endswith(".parquet")
-    ])
-    print(f"\n  Ventanas en MinIO ({len(objetos_finales)}):")
-    for o in objetos_finales:
-        print(f"    - {o}")
+    archivos_finales = listar_archivos_drive(service, folder_id)
+    print(f"\n  Ventanas en Drive ({len(archivos_finales)}):")
+    for f in archivos_finales:
+        print(f"    - {f['name']}")
 
 
 if __name__ == "__main__":
