@@ -16,6 +16,7 @@ Uso:
 
 import gc
 import os
+import tempfile
 import warnings
 from pathlib import Path
 
@@ -34,7 +35,7 @@ warnings.filterwarnings("ignore")
 ACCESS_KEY = os.environ.get("MINIO_ACCESS_KEY", "")
 SECRET_KEY = os.environ.get("MINIO_SECRET_KEY", "")
 
-TARGET_DELTA = "delta_delay_10m"   # cambiar a "delta_delay_20m" o "delta_delay_30m"
+TARGET_DELTA = "delta_delay_30m"   # elegir entre "delta_delay_10m", "delta_delay_20m" o "delta_delay_30m"
 TARGET       = "target_mejora"
 
 SEED         = 42
@@ -47,8 +48,6 @@ TEST_YEAR    = 2026
 TEST_MONTHS  = [1, 2]
 
 WANDB_PROJECT = "pd1-c2526-team5"
-
-RUTA_ARTEFACTOS = Path(__file__).parent / "artefactos"
 
 EXCLUDE_COLS = {
     "date", "match_key", "merge_time", "timestamp_start",
@@ -232,22 +231,6 @@ def main():
     del lgb_ds, df_train
     gc.collect()
 
-    # ── Guardar modelo ─────────────────────────────────────────────────────────
-    RUTA_ARTEFACTOS.mkdir(parents=True, exist_ok=True)
-    model_name  = f"lgbm_delta_{TARGET_DELTA}.joblib"
-    ruta_modelo = RUTA_ARTEFACTOS / model_name
-
-    joblib.dump(
-        {
-            "model":           model_final,
-            "features":        feats,
-            "target_delta":    TARGET_DELTA,
-            "num_boost_round": num_boost_round,
-        },
-        ruta_modelo,
-    )
-    print(f"\n  Modelo guardado en: {ruta_modelo}")
-
     # ── Subir a WandB Artifacts ───────────────────────────────────────────────
     print("\n  Subiendo a WandB Artifacts...")
     run = wandb.init(
@@ -263,23 +246,36 @@ def main():
         },
     )
 
-    artifact = wandb.Artifact(
-        name=f"lgbm-delta-{TARGET_DELTA}",
-        type="model",
-        description=f"LightGBM final entrenado sobre 2025 completo para {TARGET_DELTA}",
-        metadata={
-            "target_delta":    TARGET_DELTA,
-            "train_year":      TRAIN_YEAR,
-            "num_boost_round": num_boost_round,
-            "n_features":      len(feats),
-        },
-    )
-    artifact.add_file(str(ruta_modelo))
-    wandb.log_artifact(artifact)
+    model_name = f"lgbm_delta_{TARGET_DELTA}.joblib"
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ruta_modelo = Path(tmp_dir) / model_name
+        joblib.dump(
+            {
+                "model":           model_final,
+                "features":        feats,
+                "target_delta":    TARGET_DELTA,
+                "num_boost_round": num_boost_round,
+            },
+            ruta_modelo,
+        )
+
+        artifact = wandb.Artifact(
+            name=f"lgbm-delta-{TARGET_DELTA}",
+            type="model",
+            description=f"LightGBM final entrenado sobre 2025 completo para {TARGET_DELTA}",
+            metadata={
+                "target_delta":    TARGET_DELTA,
+                "train_year":      TRAIN_YEAR,
+                "num_boost_round": num_boost_round,
+                "n_features":      len(feats),
+            },
+        )
+        artifact.add_file(str(ruta_modelo))
+        wandb.log_artifact(artifact)
 
     run.finish()
     print(f"  Artefacto '{artifact.name}' subido a WandB.")
-    print(f"\nListo. Modelo: {ruta_modelo}")
+    print(f"\nListo.")
 
 
 if __name__ == "__main__":
