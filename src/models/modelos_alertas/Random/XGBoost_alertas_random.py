@@ -70,7 +70,7 @@ def main():
     X_test,  y_test  = test[feats],  test[TARGET]
  
  
-    X_train, X_val, X_test = encoding_categorias(X_train, X_val, X_test)
+    X_train, X_val, X_test, _ = encoding_categorias(X_train, X_val, X_test)
  
     metricas_baseline, y_prob_base = evaluar_baseline(X_train, y_train, X_test, y_test)
 

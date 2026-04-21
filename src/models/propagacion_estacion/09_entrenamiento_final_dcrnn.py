@@ -81,7 +81,9 @@ def main():
     Y_train  = datos['Y_train']
     X_val    = datos['X_val']
     Y_val    = datos['Y_val']
+    scaler_X = datos['scaler_X']
     scaler_Y = datos['scaler_Y']
+    nodes    = datos['nodes']
 
     grafo       = torch.load(RUTA_GRAFO, weights_only=False)
     edge_index  = grafo['edge_index'].to(device)
@@ -213,7 +215,9 @@ def main():
             'subset_name':         subset_name,
             'best_trainval_loss':  best_loss,
             'best_epoch':          best_epoch,
+            'scaler_X':            scaler_X,
             'scaler_Y':            scaler_Y,
+            'nodes':               nodes,
             'n_features':          nf,
             'out_horizons':        OUT_HORIZONS,
             'K':                   K,
@@ -242,6 +246,7 @@ def main():
         },
     )
     artifact.add_file(str(RUTA_MODELO))
+    artifact.add_file(str(RUTA_GRAFO))
     wandb.log_artifact(artifact)
 
     wandb.finish()
