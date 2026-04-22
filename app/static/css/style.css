@@ -1,279 +1,297 @@
-:root {
-    --bg-color: #0A0F15;
-    --text-primary: #FFFFFF;
-    --text-secondary: #94A3B8;
-    --accent: #3B82F6;
-    --danger: #EF4444;
-    --warning: #F59E0B;
-    --glass-bg: rgba(15, 23, 42, 0.7);
-    --glass-border: rgba(255, 255, 255, 0.1);
-}
+/* ============================================================
+   style.css — NYC Wayfinder completo
+   ============================================================ */
 
-* {
-    margin: 0;
-    padding: 0;
-    box-sizing: border-box;
-}
+/* ── Reset & Base ── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 body {
     font-family: 'Inter', sans-serif;
-    color: var(--text-primary);
-    background-color: var(--bg-color);
+    background: #0d0d0d;
+    color: #e5e7eb;
+    height: 100vh;
     overflow: hidden;
 }
 
+/* ── Mapa ── */
 #map {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100vw;
-    height: 100vh;
-    z-index: 1;
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 0;
 }
 
-/* Glassmorphism Panel Base */
-.glass-panel {
-    background: var(--glass-bg);
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
-    border: 1px solid var(--glass-border);
-    border-radius: 20px;
-    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
-}
-
+/* ── Paneles flotantes ── */
 .over-map {
+    position: fixed;
     z-index: 1000;
 }
 
-/* Route Planner Panel */
+.glass-panel {
+    background: rgba(13, 17, 28, 0.88);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 16px;
+    padding: 24px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+/* ── Panel de ruta (izquierda) ── */
 .route-panel {
-    position: absolute;
-    top: 2rem;
-    left: 2rem;
-    width: 380px;
-    padding: 1.5rem;
-    display: flex;
-    flex-direction: column;
+    top: 24px;
+    left: 24px;
+    width: 340px;
 }
 
 .route-panel header {
-    border-bottom: 1px solid var(--glass-border);
-    padding-bottom: 1rem;
-    margin-bottom: 1.5rem;
+    margin-bottom: 20px;
 }
 
 .header-title {
     display: flex;
-    justify-content: space-between;
     align-items: center;
-    margin-bottom: 0.5rem;
+    justify-content: space-between;
+    margin-bottom: 4px;
 }
 
 .header-title h1 {
-    font-size: 1.5rem;
+    font-size: 22px;
     font-weight: 800;
-    letter-spacing: -0.02em;
-    background: linear-gradient(135deg, #fff, #94A3B8);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
+    color: #ffffff;
+    letter-spacing: -0.5px;
 }
 
 .live-indicator {
     display: flex;
     align-items: center;
     gap: 6px;
-    font-size: 0.75rem;
+    font-size: 12px;
     font-weight: 600;
-    color: #10B981;
-    background: rgba(16, 185, 129, 0.1);
-    padding: 4px 8px;
-    border-radius: 12px;
+    color: #34d399;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
 }
 
 .pulse {
     width: 8px;
     height: 8px;
-    background-color: #10B981;
     border-radius: 50%;
-    animation: pulsar 1.5s infinite var(--pulse-curve, cubic-bezier(0.4, 0, 0.6, 1));
+    background: #34d399;
+    animation: pulse-anim 1.5s ease-in-out infinite;
 }
 
-@keyframes pulsar {
+@keyframes pulse-anim {
     0%, 100% { opacity: 1; transform: scale(1); }
-    50% { opacity: .5; transform: scale(1.2); }
+    50%       { opacity: 0.5; transform: scale(1.4); }
 }
 
-/* Search Box */
+.route-panel header p {
+    font-size: 13px;
+    color: #9ca3af;
+}
+
+/* ── Buscador ── */
 .search-box {
     display: flex;
     flex-direction: column;
-    gap: 0.5rem;
+    gap: 4px;
 }
 
 .input-group {
     position: relative;
     display: flex;
     flex-direction: column;
-    gap: 0.25rem;
+    gap: 6px;
 }
 
 .input-group label {
-    font-size: 0.75rem;
+    font-size: 11px;
     font-weight: 600;
-    color: var(--text-secondary);
-    margin-left: 0.5rem;
     text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: #6b7280;
 }
 
 .input-group input {
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid var(--glass-border);
-    border-radius: 12px;
-    padding: 0.75rem 1rem;
-    color: white;
-    font-family: inherit;
-    font-size: 0.9rem;
+    width: 100%;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-size: 14px;
+    color: #e5e7eb;
+    font-family: 'Inter', sans-serif;
     outline: none;
-    transition: all 0.2s;
+    transition: border-color 0.2s, background 0.2s;
 }
 
+.input-group input::placeholder { color: #4b5563; }
+
 .input-group input:focus {
-    background: rgba(255, 255, 255, 0.1);
-    border-color: var(--accent);
-    box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.1);
+    border-color: rgba(99, 102, 241, 0.6);
+    background: rgba(255, 255, 255, 0.09);
 }
 
 .input-divider {
     display: flex;
     align-items: center;
-    gap: 1rem;
-    margin: 0.25rem 0;
+    padding: 4px 14px;
+    color: #4b5563;
+    font-size: 16px;
 }
 
-.input-divider .line {
-    flex: 1;
-    height: 1px;
-    background: var(--glass-border);
-}
-
-.input-divider .icon {
-    font-size: 0.75rem;
-    color: var(--text-secondary);
-}
-
-/* Autocomplete Dropdown */
+/* ── Autocomplete dropdown ── */
 .autocomplete-dropdown {
     position: absolute;
-    top: 100%;
+    top: calc(100% + 4px);
     left: 0;
     right: 0;
-    background: #1A1F26;
-    border: 1px solid var(--glass-border);
-    border-radius: 12px;
-    margin-top: 0.5rem;
-    max-height: 200px;
-    overflow-y: auto;
-    z-index: 1010;
-    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+    background: rgba(17, 24, 39, 0.98);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+    overflow: hidden;
+    z-index: 2000;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
 }
-
-.autocomplete-dropdown.hidden { display: none; }
 
 .suggestion-item {
-    padding: 0.75rem 1rem;
+    padding: 10px 14px;
+    font-size: 13px;
+    color: #d1d5db;
     cursor: pointer;
-    font-size: 0.85rem;
-    transition: background 0.2s;
+    transition: background 0.15s;
 }
 
-.suggestion-item:hover {
-    background: rgba(255, 255, 255, 0.05);
-}
+.suggestion-item:hover { background: rgba(99, 102, 241, 0.2); }
 
-/* Route Prediction Card */
+.hidden { display: none !important; }
+
+/* ── Resultado de ruta ── */
 .route-result-container {
-    margin-top: 2rem;
-    animation: fadeIn 0.3s ease-out;
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid rgba(255,255,255,0.07);
 }
 
 .route-result-container h3 {
-    font-size: 0.85rem;
-    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 600;
     text-transform: uppercase;
-    margin-bottom: 0.75rem;
+    letter-spacing: 0.8px;
+    color: #6b7280;
+    margin-bottom: 10px;
 }
 
 .route-card {
-    background: linear-gradient(135deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.01) 100%);
-    border: 1px solid var(--glass-border);
-    border-radius: 16px;
-    padding: 1.25rem;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.07);
+    border-radius: 10px;
+    padding: 12px 14px;
     display: flex;
     justify-content: space-between;
     align-items: center;
 }
 
+.route-info {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
 .line-badge {
-    background: var(--accent);
-    color: white;
-    padding: 2px 8px;
-    border-radius: 6px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    font-size: 12px;
     font-weight: 800;
-    font-size: 0.8rem;
-    margin-right: 0.5rem;
+    color: white;
+    background: #3B82F6;
+    flex-shrink: 0;
+}
+
+.route-info span:last-child {
+    font-size: 13px;
+    color: #d1d5db;
 }
 
 .route-delay {
-    text-align: right;
     display: flex;
     flex-direction: column;
+    align-items: flex-end;
+    gap: 2px;
 }
 
 .route-delay .label {
-    font-size: 0.7rem;
-    color: var(--text-secondary);
+    font-size: 10px;
+    color: #6b7280;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
 }
 
-/* Station Detail Panel */
+/* ── Valores de retraso ── */
+.delay-val {
+    font-size: 14px;
+    font-weight: 700;
+}
+
+.delay-val.on-time    { color: #34d399; }
+.delay-val.minor-delay { color: #fbbf24; }
+.delay-val.delayed    { color: #f87171; }
+
+/* ── Panel de detalle de estación (derecha) ── */
 .detail-panel {
-    position: absolute;
-    top: 2rem;
-    right: 2rem;
+    top: 24px;
+    right: 24px;
     width: 340px;
-    padding: 1.5rem;
-    transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    max-height: calc(100vh - 48px);
+    overflow-y: auto;
 }
 
-.detail-panel.hidden {
-    transform: translateX(410px);
-    opacity: 0;
-    pointer-events: none;
-}
+.detail-panel::-webkit-scrollbar { width: 4px; }
+.detail-panel::-webkit-scrollbar-track { background: transparent; }
+.detail-panel::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
 
 .close-btn {
     position: absolute;
-    top: 1rem;
-    right: 1rem;
-    background: transparent;
+    top: 16px;
+    right: 16px;
+    background: rgba(255,255,255,0.08);
     border: none;
-    color: var(--text-secondary);
-    font-size: 1.5rem;
+    border-radius: 50%;
+    width: 28px;
+    height: 28px;
+    color: #9ca3af;
+    font-size: 16px;
     cursor: pointer;
-    transition: color 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s, color 0.2s;
+}
+
+.close-btn:hover { background: rgba(255,255,255,0.15); color: white; }
+
+.detail-header {
+    margin-bottom: 20px;
+    padding-right: 32px;
 }
 
 .detail-header h2 {
-    font-size: 1.25rem;
+    font-size: 20px;
     font-weight: 800;
-    margin-bottom: 1rem;
-    padding-right: 2rem;
+    color: #ffffff;
+    margin-bottom: 12px;
 }
 
 .line-selectors {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.75rem;
-    margin-bottom: 1.5rem;
+    gap: 8px;
 }
 
 .line-bubble {
@@ -283,104 +301,101 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
+    font-size: 13px;
     font-weight: 800;
-    font-size: 0.85rem;
     color: white;
     cursor: pointer;
     border: 2px solid transparent;
-    transition: all 0.2s ease;
+    transition: transform 0.15s, border-color 0.15s;
+    flex-shrink: 0;
 }
 
-.line-bubble.active {
-    border-color: white;
-    transform: scale(1.1);
-}
+.line-bubble:hover { transform: scale(1.1); }
+.line-bubble.active { border-color: white; transform: scale(1.1); }
 
-/* Alert Indicator */
-.alert-section {
-    margin-bottom: 1.5rem;
-    animation: shake 0.5s ease-in-out;
-}
+/* ── Alerta de estación ── */
+.alert-section { margin-bottom: 16px; }
 
 .alert-banner {
-    background: rgba(239, 68, 68, 0.1);
-    border: 1px solid rgba(239, 68, 68, 0.3);
-    padding: 0.75rem 1rem;
-    border-radius: 12px;
     display: flex;
     align-items: center;
-    gap: 0.75rem;
+    gap: 8px;
+    background: rgba(251, 191, 36, 0.12);
+    border: 1px solid rgba(251, 191, 36, 0.3);
+    border-radius: 10px;
+    padding: 10px 14px;
 }
 
-.alert-text {
-    font-size: 0.85rem;
+.alert-icon { font-size: 16px; }
+.alert-text { font-size: 13px; color: #fbbf24; font-weight: 500; }
+
+/* ── Forecast grid ── */
+.detail-body h3 {
+    font-size: 12px;
     font-weight: 600;
-    color: #F87171;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: #6b7280;
+    margin-bottom: 12px;
 }
 
-.alert-icon {
-    font-size: 1rem;
-    animation: alertPulse 1s infinite alternate;
-}
-
-@keyframes alertPulse {
-    from { opacity: 0.5; transform: scale(0.9); }
-    to { opacity: 1; transform: scale(1.1); }
-}
-
-@keyframes shake {
-    0%, 100% { transform: translateX(0); }
-    25% { transform: translateX(-5px); }
-    75% { transform: translateX(5px); }
-}
-
-/* Forecast Grid */
 .forecast-grid {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 0.75rem;
-    margin-bottom: 1.5rem;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 16px;
 }
 
 .forecast-card {
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid var(--glass-border);
-    padding: 0.75rem;
-    border-radius: 12px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.07);
+    border-radius: 10px;
+    padding: 12px;
     display: flex;
     flex-direction: column;
     align-items: center;
+    gap: 6px;
 }
 
-.delay-val {
-    font-size: 1.1rem;
-    font-weight: 800;
+.time-label {
+    font-size: 11px;
+    color: #6b7280;
+    font-weight: 500;
 }
 
-.delay-val.on-time { color: #10B981; }
-.delay-val.minor-delay { color: var(--warning); }
-.delay-val.delayed { color: var(--danger); }
+.forecast-card .delay-val { font-size: 16px; }
 
-.hidden { display: none !important; }
-
-@keyframes fadeIn {
-    from { opacity: 0; transform: translateY(10px); }
-    to { opacity: 1; transform: translateY(0); }
+/* ── Info de línea ── */
+.line-info {
+    font-size: 13px;
+    color: #9ca3af;
+    line-height: 1.6;
 }
 
-/* Marker Animations */
-.station-marker {
-    border-radius: 50%;
-    border: 1px solid white;
-    transition: all 0.3s ease;
+.line-info strong { color: #e5e7eb; }
+
+/* ============================================================
+   Marcadores y líneas metro
+   ============================================================ */
+
+.metro-marker {
+    background: transparent !important;
+    border: none !important;
+    cursor: pointer;
+    transition: transform 0.15s ease;
 }
 
-.station-marker.delayed {
-    animation: markerPulse 1.5s infinite;
+.metro-marker:hover { transform: scale(1.3); z-index: 9999 !important; }
+.metro-marker:hover svg { transform: scale(1.2); transform-origin: center; overflow: visible; }
+
+.metro-delayed { animation: metro-pulse 1.4s ease-in-out infinite; }
+
+@keyframes metro-pulse {
+    0%, 100% { filter: drop-shadow(0 0 4px #FF3B30cc); }
+    50%       { filter: drop-shadow(0 0 12px #FF3B30ff); }
 }
 
-@keyframes markerPulse {
-    0% { transform: scale(1); opacity: 1; }
-    50% { transform: scale(1.6); opacity: 0.8; }
-    100% { transform: scale(1); opacity: 1; }
-}
+.metro-line { transition: opacity 0.2s ease; }
+.metro-line:hover { opacity: 1 !important; filter: brightness(1.3); }
+.metro-line-L { stroke-dasharray: 8 4; }
+.metro-line-S { stroke-dasharray: 6 6; }
