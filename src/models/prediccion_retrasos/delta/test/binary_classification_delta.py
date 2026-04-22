@@ -122,14 +122,16 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
 
 def encode_categoricals(df_train, df_val, df_test):
     """Convierte las columnas categoricas a enteros usando el vocabulario del conjunto de entrenamiento."""
+    vocabs: dict = {}
     for col in CAT_FEATURES:
         if col not in df_train.columns:
             continue
         vocab = {v: i for i, v in enumerate(df_train[col].astype(str).unique())}
+        vocabs[col] = vocab
         df_train[col] = df_train[col].astype(str).map(vocab).astype(int)
         df_val[col]   = df_val[col].astype(str).map(vocab).fillna(-1).astype(int)
         df_test[col]  = df_test[col].astype(str).map(vocab).fillna(-1).astype(int)
-    return df_train, df_val, df_test
+    return df_train, df_val, df_test, vocabs
 
 
 def get_features(df: pd.DataFrame) -> list:
@@ -199,7 +201,7 @@ def train():
     del df
     gc.collect()
 
-    df_train, df_val, df_test = encode_categoricals(df_train, df_val, df_test)
+    df_train, df_val, df_test, vocabs = encode_categoricals(df_train, df_val, df_test)
 
     feats = get_features(df_train)
     print(f"Features ({len(feats)}): {feats}\n")
@@ -296,6 +298,27 @@ def train():
     print(importance.head(20).to_string(index=False))
 
     wandb.log({"feature_importance": wandb.Table(dataframe=importance.head(30))})
+
+    # Guardar modelo y metadatos de inferencia
+    import joblib, json
+    model_file  = f"lgbm_delta_{TARGET_DELTA}.joblib"
+    prep_file   = f"preprocessing_delta_{TARGET_DELTA}.json"
+
+    joblib.dump(model, model_file)
+    with open(prep_file, "w") as f:
+        json.dump({
+            "vocabs":         vocabs,
+            "best_threshold": round(best_threshold, 4),
+            "features":       feats,
+            "target_delta":   TARGET_DELTA,
+        }, f)
+
+    artifact_name = f"lgbm-delta_{TARGET_DELTA}"
+    artifact = wandb.Artifact(artifact_name, type="model")
+    artifact.add_file(model_file)
+    artifact.add_file(prep_file)
+    run.log_artifact(artifact)
+    print(f"\nArtifact '{artifact_name}' subido a W&B.")
 
     run.finish()
 
