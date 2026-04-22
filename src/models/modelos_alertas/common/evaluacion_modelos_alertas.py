@@ -53,7 +53,7 @@ def main():
     X_val,   y_val   = val[feats],   val[TARGET]
     X_test,  y_test  = test[feats],  test[TARGET]
 
-    X_train, X_val, X_test = encoding_categorias(X_train, X_val, X_test)
+    X_train, X_val, X_test, _ = encoding_categorias(X_train, X_val, X_test)
 
     ratio = (y_train == 0).sum() / (y_train == 1).sum()
     print(f"Ratio desbalance: {ratio:.1f}:1")

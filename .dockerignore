@@ -1,0 +1,13 @@
+**/.*
+**/__pycache__
+**/*.pyc
+data/
+tmp/
+artifacts/
+wandb/
+notebooks/
+docs/
+.env
+*.env
+.claude/
+CLAUDE.md

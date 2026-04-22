@@ -2,10 +2,6 @@
 Búsqueda nocturna: ventana temporal + esquema de pesos — delay_30m
 ==================================================================
 
-Optimizaciones vs versión anterior:
-  - Todos los meses se descargan UNA SOLA VEZ al inicio (caché en memoria)
-  - Iteraciones reducidas a 2000 (vs 4260 óptimas) — suficiente para comparar
-  - SAMPLE_FRAC=0.5 opcional para acelerar aún más
 
 Combina:
   • 7 ventanas  (inicio en ene/abr/jul/sep/oct/nov/dic 2025 → ene 2026)
@@ -24,6 +20,7 @@ Variables de entorno:
 import os
 import time
 import warnings
+import gc
 
 import lightgbm as lgb
 import numpy as np
@@ -35,6 +32,14 @@ from src.common.minio_client import download_df_parquet
 
 warnings.filterwarnings("ignore")
 
+try:
+    import psutil
+    def _ram_pct() -> float:
+        return psutil.virtual_memory().percent
+except ImportError:
+    def _ram_pct() -> float:
+        return -1.0
+
 ACCESS_KEY = os.environ["MINIO_ACCESS_KEY"]
 SECRET_KEY = os.environ["MINIO_SECRET_KEY"]
 
@@ -45,11 +50,12 @@ TEST_YEAR   = 2026
 TEST_MONTH  = 2
 
 # Meses a pre-cargar: todos los de 2025 + ene 2026
-CACHE_2025  = list(range(1, 13))
+CACHE_2025  = list(range(4, 13))
 CACHE_2026  = [1]
 
 # Ventanas: cada entrada indica qué meses de 2025 usar (+ ene2026 siempre)
 WINDOW_CONFIGS = [
+    ("desde_ene25", list(range(1, 13))),
     ("desde_abr25", list(range(4, 13))),
     ("desde_jul25", list(range(7, 13))),
     ("desde_sep25", list(range(9, 13))),
@@ -174,6 +180,8 @@ def add_derived_features(df):
     return df
 
 
+
+
 def get_features(df):
     return [c for c in df.columns if c not in EXCLUDE_COLS and c != TARGET]
 
@@ -239,39 +247,58 @@ def run_search():
         print(f"\n{'─'*60}")
         print(f"Ventana: {win_label}  ({len(dfs_2025)} meses 2025 + ene26 = {sum(sizes):,} filas)")
 
+        # Preprocesar una sola vez por ventana para evitar repetir trabajo pesado.
+        t_prep = time.time()
+        df_train = pd.concat(dfs_2025 + [df_ene26], ignore_index=True)
+        # shallow copy: comparte arrays de columnas no modificadas con df_test_raw
+        df_test  = df_test_raw.copy(deep=False)
+
+        df_train, df_test = encode_categoricals(df_train, df_test)
+        df_train, df_test = add_target_encoding(df_train, df_test)
+        df_train = add_derived_features(df_train)
+        df_test  = add_derived_features(df_test)
+
+        feats = get_features(df_train)
+        X_tr = df_train[feats].copy()
+        y_tr = df_train[TARGET].copy()
+        X_te = df_test[feats].copy()
+        y_te = df_test[TARGET].copy()
+        n_train = len(X_tr)
+        n_test  = len(X_te)
+
+        del df_train, df_test, dfs_2025
+        gc.collect()
+
+        prep_elapsed = time.time() - t_prep
+        print(f"  Preprocesado ventana: {prep_elapsed/60:.1f} min  |  RAM: {_ram_pct():.0f}%")
+
         for scheme in WEIGHT_SCHEMES:
             n_done += 1
             run_name = f"win_{win_label}__w_{scheme}"
-            print(f"\n  [{n_done}/{n_total}] {run_name}")
+            print(f"\n  [{n_done}/{n_total}] {run_name}  |  RAM: {_ram_pct():.0f}%")
             t0 = time.time()
 
-            df_train = pd.concat(dfs_2025 + [df_ene26], ignore_index=True)
-            df_test  = df_test_raw.copy()
-
             weights = build_weights(sizes, scheme)
-
-            df_train, df_test = encode_categoricals(df_train, df_test)
-            df_train, df_test = add_target_encoding(df_train, df_test)
-            df_train = add_derived_features(df_train)
-            df_test  = add_derived_features(df_test)
-
-            feats = get_features(df_train)
-            X_tr, y_tr = df_train[feats], df_train[TARGET]
-            X_te, y_te = df_test[feats],  df_test[TARGET]
+            train_set = lgb.Dataset(
+                X_tr,
+                label=y_tr,
+                weight=weights,
+                free_raw_data=True,
+            )
 
             run = wandb.init(
                 project=WANDB_PROJECT, name=run_name,
                 group="window-weight-search-30m",
                 config={**LGBM_PARAMS, "target": TARGET, "window": win_label,
                         "weight_scheme": scheme, "n_months": len(sizes),
-                        "n_train": len(df_train), "n_test": len(df_test),
+                        "n_train": n_train, "n_test": n_test,
                         "num_boost_round": NUM_BOOST_ROUND, "sample_frac": SAMPLE_FRAC},
                 reinit=True,
             )
 
             model = lgb.train(
                 LGBM_PARAMS,
-                lgb.Dataset(X_tr, label=y_tr, weight=weights),
+                train_set,
                 num_boost_round=NUM_BOOST_ROUND,
                 callbacks=[lgb.log_evaluation(500)],
             )
@@ -281,16 +308,22 @@ def run_search():
             elapsed = time.time() - t0
 
             print(f"    train MAE={m_tr['train_mae_s']}s  test MAE={m_te['test_mae_s']}s  "
-                  f"R²={m_te['test_r2']}  ({elapsed/60:.1f} min)")
+                  f"R²={m_te['test_r2']}  ({elapsed/60:.1f} min)  RAM: {_ram_pct():.0f}%")
 
             wandb.log({**m_tr, **m_te, "elapsed_s": elapsed})
             run.finish()
 
             results.append({"window": win_label, "weight_scheme": scheme,
-                            "n_months": len(sizes), "n_train": len(df_train),
+                            "n_months": len(sizes), "n_train": n_train,
                             **m_tr, **m_te, "elapsed_s": round(elapsed, 1)})
 
+            del model, train_set, weights
+            gc.collect()
+
             pd.DataFrame(results).sort_values("test_mae_s").to_csv(OUTPUT_CSV, index=False)
+
+        del X_tr, y_tr, X_te, y_te
+        gc.collect()
 
     df_res = pd.DataFrame(results).sort_values("test_mae_s")
     df_res.to_csv(OUTPUT_CSV, index=False)
