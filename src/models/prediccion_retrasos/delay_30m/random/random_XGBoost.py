@@ -146,6 +146,12 @@ def XGBoost():
     # CIERRE WANDB
     # Registramos la métrica final y cerramos la ejecución
     wandb.log({"test_mae": mae})
+
+    modelo_xgb.save_model("xgb_delay_30m.json")
+    artifact = wandb.Artifact("xgb-delay-30m", type="model")
+    artifact.add_file("xgb_delay_30m.json")
+    wandb.log_artifact(artifact)
+
     wandb.finish()
 
 if __name__ == "__main__":

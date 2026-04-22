@@ -253,7 +253,7 @@ def get_features(cat_cols: list[str], df: pd.DataFrame) -> list[str]:
 
 
 def encoding_categorias(X_train, X_val, X_test):
-    cols_ordinal_enc = ['route_id', 'direction']   
+    cols_ordinal_enc = ['route_id', 'direction']
 
     enc = OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1)
     X_train[cols_ordinal_enc] = enc.fit_transform(X_train[cols_ordinal_enc])
@@ -261,7 +261,7 @@ def encoding_categorias(X_train, X_val, X_test):
     X_test[cols_ordinal_enc]  = enc.transform(X_test[cols_ordinal_enc])
 
     print("✓ Encoding completado")
-    return X_train, X_val, X_test
+    return X_train, X_val, X_test, enc
 
 
 def split_temporal(df_linea, train_frac=0.70, val_frac=0.15):
