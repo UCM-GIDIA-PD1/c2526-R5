@@ -71,7 +71,7 @@ def main():
     X_test,  y_test  = test[feats],  test[TARGET]
 
 
-    X_train, X_val, X_test = encoding_categorias(X_train, X_val, X_test)
+    X_train, X_val, X_test, encoder = encoding_categorias(X_train, X_val, X_test)
 
     metricas_baseline, y_prob_base = evaluar_baseline(X_train, y_train, X_test, y_test)
 
@@ -194,9 +194,12 @@ def main():
         ),
     })
 
+    import joblib
     modelo_agregado.save_model("modelo_agregado_30min.json")
+    joblib.dump(encoder, "encoder_alertas.pkl")
     artifact = wandb.Artifact("modelo_agregado_30min", type="model")
     artifact.add_file("modelo_agregado_30min.json")
+    artifact.add_file("encoder_alertas.pkl")
     run.log_artifact(artifact)
 
     run.finish()
