@@ -16,32 +16,90 @@
 <body>
     <div id="map"></div>
     
-    <div class="glass-panel dashboard over-map">
+    <!-- Route Planner Panel -->
+    <div id="route-planner" class="glass-panel route-panel over-map">
         <header>
             <div class="header-title">
-                <h1>NYC Live Subway</h1>
-                <span class="live-indicator"><span class="pulse"></span> ONLINE</span>
+                <h1>NYC Wayfinder</h1>
+                <span class="live-indicator"><span class="pulse"></span> LIVE</span>
             </div>
-            <p>Monitoreo inteligente con modelos predictivos</p>
+            <p>Calcula tu ruta y evita retrasos</p>
         </header>
         
         <div class="panel-content">
-            <div class="stats-grid">
-                <div class="stat-card">
-                    <h3>Alertas Activas</h3>
-                    <p id="alert-count">0</p>
+            <div class="search-box">
+                <div class="input-group">
+                    <label>Origen</label>
+                    <input type="text" id="origin-input" placeholder="¿De dónde sales?" autocomplete="off">
+                    <div id="origin-results" class="autocomplete-dropdown hidden"></div>
                 </div>
-                <div class="stat-card">
-                    <h3>Actualización</h3>
-                    <p id="next-update">T-60s</p>
+                <div class="input-divider">
+                    <div class="line"></div>
+                    <div class="icon">↓</div>
+                </div>
+                <div class="input-group">
+                    <label>Destino</label>
+                    <input type="text" id="destination-input" placeholder="¿A dónde vas?" autocomplete="off">
+                    <div id="destination-results" class="autocomplete-dropdown hidden"></div>
                 </div>
             </div>
-            
-            <div class="delays-list">
-                <h2>Retrasos Detectados (MinIO Buffer)</h2>
-                <ul id="delay-items">
-                    <li class="empty-state">Esperando predicciones de los modelos...</li>
-                </ul>
+
+            <div id="route-prediction" class="route-result-container hidden">
+                <h3>Próximo Tren</h3>
+                <div class="route-card">
+                    <div class="route-info">
+                        <span id="result-line" class="line-badge">--</span>
+                        <span id="result-station">--</span>
+                    </div>
+                    <div class="route-delay">
+                        <span class="label">Retraso estimado</span>
+                        <span id="result-delay-val" class="delay-val">--</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Station Detail Panel -->
+    <div id="station-detail-panel" class="glass-panel detail-panel over-map hidden">
+        <button id="close-detail" class="close-btn">&times;</button>
+        <div class="detail-header">
+            <h2 id="detail-station-name">Nombre Estación</h2>
+            <div id="detail-line-selectors" class="line-selectors">
+                <!-- Line bubbles injected by JS -->
+            </div>
+        </div>
+        
+        <div class="detail-body">
+            <!-- Alert Indicator Placeholder -->
+            <div id="station-alert" class="alert-section hidden">
+                <div class="alert-banner">
+                    <span class="alert-icon">⚠️</span>
+                    <span class="alert-text">Posible alerta próximamente</span>
+                </div>
+            </div>
+
+            <h3>Forecast (Próximos 30m)</h3>
+            <div class="forecast-grid">
+                <div class="forecast-card">
+                    <span class="time-label">Ahora</span>
+                    <span id="forecast-now" class="delay-val">--</span>
+                </div>
+                <div class="forecast-card">
+                    <span class="time-label">+10m</span>
+                    <span id="forecast-10" class="delay-val">--</span>
+                </div>
+                <div class="forecast-card">
+                    <span class="time-label">+20m</span>
+                    <span id="forecast-20" class="delay-val">--</span>
+                </div>
+                <div class="forecast-card">
+                    <span class="time-label">+30m</span>
+                    <span id="forecast-30" class="delay-val">--</span>
+                </div>
+            </div>
+            <div id="line-detail-info" class="line-info">
+                <p>Selecciona una línea para ver retrasos específicos.</p>
             </div>
         </div>
     </div>
