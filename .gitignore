@@ -27,6 +27,7 @@ data/processed/*
 
 # Google OAuth secrets
 src/ETL/alertas_oficiales_tiempo_real/token.json
+src/ETL/alertas_oficiales_tiempo_real/token_drive.json
 src/ETL/alertas_oficiales_tiempo_real/credentials.json
 
 # Dataset local

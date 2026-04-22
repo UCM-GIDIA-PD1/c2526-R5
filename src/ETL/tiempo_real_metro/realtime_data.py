@@ -36,7 +36,6 @@ import zipfile
 import io
 import math
 import time
-from src.ETL.tiempo_real_metro.aggregations import agregar_por_ventana
 
 
 # ─────────────────────────────────────────────

@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NYC Subway Dashboard - Predicciones en Tiempo Real</title>
+    <!-- Google Fonts: Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    <!-- Vanilla CSS -->
+    <link rel="stylesheet" href="{{ url_for('static', path='css/style.css') }}">
+</head>
+<body>
+    <div id="map"></div>
+    
+    <!-- Route Planner Panel -->
+    <div id="route-planner" class="glass-panel route-panel over-map">
+        <header>
+            <div class="header-title">
+                <h1>NYC Wayfinder</h1>
+                <span class="live-indicator"><span class="pulse"></span> LIVE</span>
+            </div>
+            <p>Calcula tu ruta y evita retrasos</p>
+        </header>
+        
+        <div class="panel-content">
+            <div class="search-box">
+                <div class="input-group">
+                    <label>Origen</label>
+                    <input type="text" id="origin-input" placeholder="¿De dónde sales?" autocomplete="off">
+                    <div id="origin-results" class="autocomplete-dropdown hidden"></div>
+                </div>
+                <div class="input-divider">
+                    <div class="line"></div>
+                    <div class="icon">↓</div>
+                </div>
+                <div class="input-group">
+                    <label>Destino</label>
+                    <input type="text" id="destination-input" placeholder="¿A dónde vas?" autocomplete="off">
+                    <div id="destination-results" class="autocomplete-dropdown hidden"></div>
+                </div>
+            </div>
+
+            <div id="route-prediction" class="route-result-container hidden">
+                <h3>Próximo Tren</h3>
+                <div class="route-card">
+                    <div class="route-info">
+                        <span id="result-line" class="line-badge">--</span>
+                        <span id="result-station">--</span>
+                    </div>
+                    <div class="route-delay">
+                        <span class="label">Retraso estimado</span>
+                        <span id="result-delay-val" class="delay-val">--</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Station Detail Panel -->
+    <div id="station-detail-panel" class="glass-panel detail-panel over-map hidden">
+        <button id="close-detail" class="close-btn">&times;</button>
+        <div class="detail-header">
+            <h2 id="detail-station-name">Nombre Estación</h2>
+            <div id="detail-line-selectors" class="line-selectors">
+                <!-- Line bubbles injected by JS -->
+            </div>
+        </div>
+        
+        <div class="detail-body">
+            <!-- Alert Indicator Placeholder -->
+            <div id="station-alert" class="alert-section hidden">
+                <div class="alert-banner">
+                    <span class="alert-icon">⚠️</span>
+                    <span class="alert-text">Posible alerta próximamente</span>
+                </div>
+            </div>
+
+            <h3>Forecast (Próximos 30m)</h3>
+            <div class="forecast-grid">
+                <div class="forecast-card">
+                    <span class="time-label">Ahora</span>
+                    <span id="forecast-now" class="delay-val">--</span>
+                </div>
+                <div class="forecast-card">
+                    <span class="time-label">+10m</span>
+                    <span id="forecast-10" class="delay-val">--</span>
+                </div>
+                <div class="forecast-card">
+                    <span class="time-label">+20m</span>
+                    <span id="forecast-20" class="delay-val">--</span>
+                </div>
+                <div class="forecast-card">
+                    <span class="time-label">+30m</span>
+                    <span id="forecast-30" class="delay-val">--</span>
+                </div>
+            </div>
+            <div id="line-detail-info" class="line-info">
+                <p>Selecciona una línea para ver retrasos específicos.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <script src="{{ url_for('static', path='js/main.js') }}"></script>
+</body>
+</html>

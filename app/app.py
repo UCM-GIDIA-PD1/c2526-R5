@@ -18,21 +18,44 @@ class SystemManager:
         self.load_stations()
         
     def load_stations(self):
-        csv_path = os.path.join(os.path.dirname(__file__), "MTA_Subway_Stations.csv")
+        remote_url = "https://data.ny.gov/api/views/39hk-dx4f/rows.csv?accessType=DOWNLOAD"
+        local_csv_path = os.path.join(os.path.dirname(__file__), "MTA_Subway_Stations.csv")
+        
+        df = None
+        
+        # Intentamos cargar desde la API remota
+        print(f"[LOADER] Intentando cargar estaciones desde la API remota...")
         try:
-            df = pd.read_csv(csv_path)
-            # Limpiamos y preparamos los datos
-            for _, row in df.iterrows():
-                self.stations.append({
-                    "id": str(row["Station ID"]),
-                    "name": row["Stop Name"],
-                    "lat": float(row["GTFS Latitude"]),
-                    "lon": float(row["GTFS Longitude"]),
-                    "routes": row["Daytime Routes"] if pd.notna(row["Daytime Routes"]) else ""
-                })
-            print(f"[LOADER] {len(self.stations)} estaciones cargadas correctamente.")
+            df = pd.read_csv(remote_url)
+            print("[LOADER] Datos descargados correctamente desde la API remota.")
         except Exception as e:
-            print(f"[ERROR] No se pudo cargar el CSV de estaciones: {e}")
+            print(f"[WARNING] No se pudo cargar desde la API remota: {e}")
+            print(f"[LOADER] Intentando cargar desde el archivo local: {local_csv_path}")
+            try:
+                if os.path.exists(local_csv_path):
+                    df = pd.read_csv(local_csv_path)
+                    print("[LOADER] Datos cargados correctamente desde el archivo local.")
+                else:
+                    print(f"[ERROR] El archivo local no existe: {local_csv_path}")
+            except Exception as e_local:
+                print(f"[ERROR] Error al cargar el CSV local: {e_local}")
+
+        if df is not None:
+            try:
+                # Limpiamos y preparamos los datos
+                for _, row in df.iterrows():
+                    self.stations.append({
+                        "id": str(row["Station ID"]),
+                        "name": row["Stop Name"],
+                        "lat": float(row["GTFS Latitude"]),
+                        "lon": float(row["GTFS Longitude"]),
+                        "routes": row["Daytime Routes"] if pd.notna(row["Daytime Routes"]) else ""
+                    })
+                print(f"[LOADER] {len(self.stations)} estaciones cargadas correctamente.")
+            except Exception as e_parse:
+                print(f"[ERROR] Error al procesar los datos del CSV: {e_parse}")
+        else:
+            print("[ERROR] No se pudo cargar ninguna fuente de datos para las estaciones.")
         
     def generate_mock_prediction(self):
         # Simulamos un modelo que predice si hay retraso en paradas reales
@@ -95,8 +118,8 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 # Montar las plantillas y archivos estáticos
-app.mount("/static", StaticFiles(directory="src/web/static"), name="static")
-templates = Jinja2Templates(directory="src/web/templates")
+app.mount("/static", StaticFiles(directory="app/static"), name="static")
+templates = Jinja2Templates(directory="app/templates")
 
 # --- MANEJADOR DE WEBSOCKETS ---
 class ConnectionManager:
