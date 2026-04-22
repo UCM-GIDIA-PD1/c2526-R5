@@ -1,0 +1,273 @@
+import asyncio
+import logging
+from datetime import datetime, timezone
+from typing import Optional
+
+from fastapi import APIRouter, HTTPException, Query, Request
+
+from app.config import settings
+from app.data.drive import download_windows
+from app.models.alertas_infer import run_alerts
+from app.models.delay_infer import run_delays
+from app.models.delta_infer import run_delta
+from app.models.dcrnn_infer import run_propagation
+from app.schemas import (
+    AlertResponse,
+    AllPredictionsResponse,
+    DeltaResponse,
+    DelayResponse,
+    PropagationResponse,
+)
+
+router = APIRouter(prefix="/predict")
+logger = logging.getLogger(__name__)
+
+
+async def _get_windows(request: Request) -> list:
+    """Return cached windows or download fresh ones from Drive."""
+    cache = request.app.state.cache
+    cached = cache.get("windows")
+    if cached is not None:
+        return cached
+
+    windows = await asyncio.to_thread(
+        download_windows,
+        n_windows=settings.n_windows,
+        token_path=settings.drive_token_path,
+        folder_name=settings.google_drive_folder_name,
+    )
+    cache.set("windows", windows)
+    return windows
+
+
+# ── Propagation (DCRNN) ───────────────────────────────────────────────────────
+
+@router.get("/propagation", response_model=PropagationResponse)
+async def predict_propagation(
+    request: Request,
+    stop_id: Optional[str] = Query(default=None),
+    route_id: Optional[str] = Query(default=None),
+) -> PropagationResponse:
+    registry = request.app.state.registry
+    if registry.dcrnn is None:
+        raise HTTPException(503, detail=f"DCRNN not available: {registry.errors.get('dcrnn', 'not loaded')}")
+    windows = await _get_windows(request)
+    return await asyncio.to_thread(
+        run_propagation,
+        entry=registry.dcrnn,
+        windows=windows,
+        stations_meta=request.app.state.stations_meta,
+        stop_id_filter=stop_id,
+        route_id_filter=route_id,
+    )
+
+
+# ── Delay (LightGBM) ─────────────────────────────────────────────────────────
+
+@router.get("/delay/30m", response_model=DelayResponse)
+async def predict_delay_30m(
+    request: Request,
+    route_id: Optional[str] = Query(default=None),
+    stop_id: Optional[str] = Query(default=None),
+    min_delay: float = Query(default=0.0, ge=0),
+) -> DelayResponse:
+    registry = request.app.state.registry
+    if registry.lgbm_delay_30m is None:
+        raise HTTPException(503, detail=f"delay/30m not available: {registry.errors.get('lgbm_delay_30m', 'not loaded')}")
+    windows = await _get_windows(request)
+    return await asyncio.to_thread(
+        run_delays,
+        entry=registry.lgbm_delay_30m,
+        windows=windows,
+        route_id_filter=route_id,
+        stop_id_filter=stop_id,
+        min_delay_seconds=min_delay,
+    )
+
+
+@router.get("/delay/end", response_model=DelayResponse)
+async def predict_delay_end(
+    request: Request,
+    route_id: Optional[str] = Query(default=None),
+    stop_id: Optional[str] = Query(default=None),
+    min_delay: float = Query(default=0.0, ge=0),
+) -> DelayResponse:
+    registry = request.app.state.registry
+    if registry.lgbm_delay_end is None:
+        raise HTTPException(503, detail=f"delay/end not available: {registry.errors.get('lgbm_delay_end', 'not loaded')}")
+    windows = await _get_windows(request)
+    return await asyncio.to_thread(
+        run_delays,
+        entry=registry.lgbm_delay_end,
+        windows=windows,
+        route_id_filter=route_id,
+        stop_id_filter=stop_id,
+        min_delay_seconds=min_delay,
+    )
+
+
+# ── Delta (LightGBM binary) ───────────────────────────────────────────────────
+
+@router.get("/delta/10m", response_model=DeltaResponse)
+async def predict_delta_10m(
+    request: Request,
+    route_id: Optional[str] = Query(default=None),
+    stop_id: Optional[str] = Query(default=None),
+    threshold: Optional[float] = Query(default=None, ge=0.0, le=1.0),
+) -> DeltaResponse:
+    registry = request.app.state.registry
+    if registry.delta_10m is None:
+        raise HTTPException(503, detail=f"delta/10m not available: {registry.errors.get('delta_10m', 'not loaded')}")
+    windows = await _get_windows(request)
+    return await asyncio.to_thread(
+        run_delta,
+        entry=registry.delta_10m,
+        windows=windows,
+        horizon="delta_delay_10m",
+        threshold=threshold,
+        route_id_filter=route_id,
+        stop_id_filter=stop_id,
+    )
+
+
+@router.get("/delta/20m", response_model=DeltaResponse)
+async def predict_delta_20m(
+    request: Request,
+    route_id: Optional[str] = Query(default=None),
+    stop_id: Optional[str] = Query(default=None),
+    threshold: Optional[float] = Query(default=None, ge=0.0, le=1.0),
+) -> DeltaResponse:
+    registry = request.app.state.registry
+    if registry.delta_20m is None:
+        raise HTTPException(503, detail=f"delta/20m not available: {registry.errors.get('delta_20m', 'not loaded')}")
+    windows = await _get_windows(request)
+    return await asyncio.to_thread(
+        run_delta,
+        entry=registry.delta_20m,
+        windows=windows,
+        horizon="delta_delay_20m",
+        threshold=threshold,
+        route_id_filter=route_id,
+        stop_id_filter=stop_id,
+    )
+
+
+@router.get("/delta/30m", response_model=DeltaResponse)
+async def predict_delta_30m(
+    request: Request,
+    route_id: Optional[str] = Query(default=None),
+    stop_id: Optional[str] = Query(default=None),
+    threshold: Optional[float] = Query(default=None, ge=0.0, le=1.0),
+) -> DeltaResponse:
+    registry = request.app.state.registry
+    if registry.delta_30m is None:
+        raise HTTPException(503, detail=f"delta/30m not available: {registry.errors.get('delta_30m', 'not loaded')}")
+    windows = await _get_windows(request)
+    return await asyncio.to_thread(
+        run_delta,
+        entry=registry.delta_30m,
+        windows=windows,
+        horizon="delta_delay_30m",
+        threshold=threshold,
+        route_id_filter=route_id,
+        stop_id_filter=stop_id,
+    )
+
+
+# ── Alerts (XGBoost) ─────────────────────────────────────────────────────────
+
+@router.get("/alerts", response_model=AlertResponse)
+async def predict_alerts(
+    request: Request,
+    route_id: Optional[str] = Query(default=None),
+    min_prob: float = Query(default=0.0, ge=0.0, le=1.0),
+    threshold: Optional[float] = Query(default=None, ge=0.0, le=1.0),
+) -> AlertResponse:
+    registry = request.app.state.registry
+    if registry.alertas is None:
+        raise HTTPException(503, detail=f"alerts not available: {registry.errors.get('alertas', 'not loaded')}")
+    windows = await _get_windows(request)
+    return await asyncio.to_thread(
+        run_alerts,
+        entry=registry.alertas,
+        windows=windows,
+        threshold=threshold,
+        route_id_filter=route_id,
+        min_prob=min_prob,
+    )
+
+
+# ── All ───────────────────────────────────────────────────────────────────────
+
+@router.get("/all", response_model=AllPredictionsResponse)
+async def predict_all(request: Request) -> AllPredictionsResponse:
+    """Run all available models concurrently."""
+    registry = request.app.state.registry
+    windows = await _get_windows(request)
+    predicted_at = datetime.now(timezone.utc).isoformat()
+    errors: dict[str, str] = {}
+
+    async def _safe(name: str, coro):
+        try:
+            return await coro
+        except Exception as exc:
+            logger.error("Model %s failed: %s", name, exc, exc_info=True)
+            errors[name] = str(exc)
+            return None
+
+    def _thread(fn, **kw):
+        return asyncio.to_thread(fn, **kw)
+
+    tasks = {
+        "propagation": (
+            _safe("propagation", _thread(run_propagation, entry=registry.dcrnn, windows=windows, stations_meta=request.app.state.stations_meta))
+            if registry.dcrnn else asyncio.sleep(0, result=None)
+        ),
+        "delay_30m": (
+            _safe("delay_30m", _thread(run_delays, entry=registry.lgbm_delay_30m, windows=windows))
+            if registry.lgbm_delay_30m else asyncio.sleep(0, result=None)
+        ),
+        "delay_end": (
+            _safe("delay_end", _thread(run_delays, entry=registry.lgbm_delay_end, windows=windows))
+            if registry.lgbm_delay_end else asyncio.sleep(0, result=None)
+        ),
+        "delta_10m": (
+            _safe("delta_10m", _thread(run_delta, entry=registry.delta_10m, windows=windows, horizon="delta_delay_10m"))
+            if registry.delta_10m else asyncio.sleep(0, result=None)
+        ),
+        "delta_20m": (
+            _safe("delta_20m", _thread(run_delta, entry=registry.delta_20m, windows=windows, horizon="delta_delay_20m"))
+            if registry.delta_20m else asyncio.sleep(0, result=None)
+        ),
+        "delta_30m": (
+            _safe("delta_30m", _thread(run_delta, entry=registry.delta_30m, windows=windows, horizon="delta_delay_30m"))
+            if registry.delta_30m else asyncio.sleep(0, result=None)
+        ),
+        "alerts": (
+            _safe("alerts", _thread(run_alerts, entry=registry.alertas, windows=windows, threshold=settings.alert_threshold))
+            if registry.alertas else asyncio.sleep(0, result=None)
+        ),
+    }
+
+    for name, entry_attr in [
+        ("propagation", "dcrnn"), ("delay_30m", "lgbm_delay_30m"), ("delay_end", "lgbm_delay_end"),
+        ("delta_10m", "delta_10m"), ("delta_20m", "delta_20m"), ("delta_30m", "delta_30m"),
+        ("alerts", "alertas"),
+    ]:
+        if getattr(registry, entry_attr) is None:
+            errors[name] = registry.errors.get(entry_attr, "model not loaded")
+
+    results = await asyncio.gather(*tasks.values())
+    result_map = dict(zip(tasks.keys(), results))
+
+    return AllPredictionsResponse(
+        predicted_at=predicted_at,
+        propagation=result_map["propagation"],
+        delay_30m=result_map["delay_30m"],
+        delay_end=result_map["delay_end"],
+        delta_10m=result_map["delta_10m"],
+        delta_20m=result_map["delta_20m"],
+        delta_30m=result_map["delta_30m"],
+        alerts=result_map["alerts"],
+        errors=errors,
+    )
