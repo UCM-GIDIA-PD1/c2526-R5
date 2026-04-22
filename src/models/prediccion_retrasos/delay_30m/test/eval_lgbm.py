@@ -28,6 +28,7 @@ import json
 import os
 import warnings
 
+import joblib
 import lightgbm as lgb
 import numpy as np
 import pandas as pd
@@ -51,7 +52,6 @@ TEST_YEAR         = 2026
 TEST_MONTHS       = range(2, 3)   # febrero 2026
 TARGET            = "target_delay_30m"
 DATA_TEMPLATE     = "grupo5/final/year={year}/month={month:02d}/dataset_final.parquet"
-MODEL_PATH_OUT    = "grupo5/models/lgbm_stop_delay30m_final.txt"
 
 WANDB_PROJECT  = "pd1-c2526-team5"
 WANDB_RUN_NAME = "lgbm-delay30m-entrega4-feb-sliding"
@@ -299,9 +299,9 @@ def main():
     print(f"\nTop 15 features:\n{importance.head(15).to_string(index=False)}")
     wandb.log({"feature_importance": wandb.Table(dataframe=importance.head(20))})
 
-    model_filename = "lgbm_delay_30m.txt"
+    model_filename = "lgbm_delay_30m.joblib"
     preprocessing_filename = "preprocessing_delay_30m.json"
-    model.save_model(model_filename)
+    joblib.dump(model, model_filename)
     preprocessing = {
         "label_encoders": label_vocabs,
         "target_encoder_stop_id": stop_means,
