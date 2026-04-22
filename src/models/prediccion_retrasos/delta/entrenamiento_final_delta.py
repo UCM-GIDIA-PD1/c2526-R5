@@ -15,6 +15,7 @@ Uso:
 """
 
 import gc
+import json
 import os
 import tempfile
 import warnings
@@ -35,7 +36,7 @@ warnings.filterwarnings("ignore")
 ACCESS_KEY = os.environ.get("MINIO_ACCESS_KEY", "")
 SECRET_KEY = os.environ.get("MINIO_SECRET_KEY", "")
 
-TARGET_DELTA = "delta_delay_30m"   # elegir entre "delta_delay_10m", "delta_delay_20m" o "delta_delay_30m"
+TARGET_DELTA = "delta_delay_10m"   # elegir entre "delta_delay_10m", "delta_delay_20m" o "delta_delay_30m"
 TARGET       = "target_mejora"
 
 SEED         = 42
@@ -168,15 +169,17 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def encode_categoricals(df_train: pd.DataFrame, *others: pd.DataFrame):
+    vocabs: dict = {}
     for col in CAT_FEATURES:
         if col not in df_train.columns:
             continue
         vocab = {v: i for i, v in enumerate(df_train[col].astype(str).unique())}
+        vocabs[col] = vocab
         df_train[col] = df_train[col].astype(str).map(vocab).astype(int)
         for df in others:
             if col in df.columns:
                 df[col] = df[col].astype(str).map(vocab).fillna(-1).astype(int)
-    return (df_train,) + others
+    return (df_train,) + others + (vocabs,)
 
 
 def get_features(df: pd.DataFrame) -> list:
@@ -214,7 +217,7 @@ def main():
     df_train = df_train.dropna(subset=[TARGET_DELTA])
     df_train[TARGET] = (df_train[TARGET_DELTA] < 0).astype(np.int8)
 
-    df_train, = encode_categoricals(df_train)
+    df_train, vocabs = encode_categoricals(df_train)
     feats = get_features(df_train)
 
     class_ratio = df_train[TARGET].mean()
@@ -247,6 +250,7 @@ def main():
     )
 
     model_name = f"lgbm_delta_{TARGET_DELTA}.joblib"
+    prep_name  = f"preprocessing_delta_{TARGET_DELTA}.json"
     with tempfile.TemporaryDirectory() as tmp_dir:
         ruta_modelo = Path(tmp_dir) / model_name
         joblib.dump(
@@ -258,6 +262,17 @@ def main():
             },
             ruta_modelo,
         )
+
+        ruta_prep = Path(tmp_dir) / prep_name
+        with open(ruta_prep, "w") as f:
+            json.dump(
+                {
+                    "vocabs":       vocabs,
+                    "features":     feats,
+                    "target_delta": TARGET_DELTA,
+                },
+                f,
+            )
 
         artifact = wandb.Artifact(
             name=f"lgbm-delta-{TARGET_DELTA}",
@@ -271,6 +286,7 @@ def main():
             },
         )
         artifact.add_file(str(ruta_modelo))
+        artifact.add_file(str(ruta_prep))
         wandb.log_artifact(artifact)
 
     run.finish()
