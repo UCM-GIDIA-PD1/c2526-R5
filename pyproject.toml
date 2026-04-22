@@ -61,20 +61,10 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src"]
 
-# Torch por plataforma:
-#   macOS (MPS)  → PyPI estándar (incluye soporte MPS de serie)
-#   Linux/Win    → índice pytorch-cpu (contenedor ligero)
-# En máquinas Linux con GPU CUDA, sobrescribir tras el sync:
-#   uv pip install torch==2.10.0+cu124 --index-url https://download.pytorch.org/whl/cu124
-[[tool.uv.indexes]]
-name = "pytorch-cpu"
-url = "https://download.pytorch.org/whl/cpu"
-explicit = true
-
-[tool.uv.sources]
-torch = [
-  { index = "pytorch-cpu", marker = "sys_platform != 'darwin'" },
-]
+# Torch: CPU por defecto (contenedor y macOS con MPS).
+# En máquinas con GPU CUDA: UV_TORCH_BACKEND=cu126 uv sync
+[tool.uv]
+torch-backend = "cpu"
 
 [tool.uv.extra-build-dependencies]
 torch-scatter = ["torch"]
