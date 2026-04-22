@@ -63,18 +63,9 @@ packages = ["src"]
 
 # Torch: CPU por defecto (contenedor y macOS con MPS).
 # En máquinas con GPU CUDA: UV_TORCH_BACKEND=cu126 uv sync
-#
-# find-links apunta al índice de wheels precompilados de PyG para la versión
-# concreta de torch. Sin esto uv intenta compilar torch-scatter/sparse desde
-# fuente y falla en el contenedor por falta de CUDA toolkit.
-# Si se cambia la versión de torch hay que actualizar esta URL.
 [tool.uv]
 torch-backend = "cpu"
-find-links = ["https://data.pyg.org/whl/torch-2.10.0+cpu.html"]
 
-# Si find-links no tiene wheel precompilado para la combinación exacta
-# (Python 3.13 + torch 2.10.0 + CPU), uv cae a compilar desde fuente.
-# extra-build-dependencies hace torch disponible en ese caso.
 [tool.uv.extra-build-dependencies]
 torch-scatter = ["torch"]
 torch-sparse = ["torch"]
