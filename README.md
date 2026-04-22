@@ -420,7 +420,7 @@ models/
 
 ---
 
-## 📊 Resultados de los mejores modelos
+## Resultados de los mejores modelos
 
 ### 1. Anticipación de alertas
 
@@ -446,7 +446,7 @@ Los modelos seleccionados para producción son:
 
 Los modelos por intervalos se descartaron por su escasa mejora respecto al baseline.
 
-#### 📈 Regresión por horizonte temporal
+#### Regresión por horizonte temporal
 
 | Modelo                 | MAE delay_30m (s) | MAE delay_end (s) | R² delay_end |
 |-----------------------|------------------:|------------------:|-------------:|
@@ -455,7 +455,7 @@ Los modelos por intervalos se descartaron por su escasa mejora respecto al basel
 | **LightGBM**          | **134**           | **109**           | **0.696**    |
 | MLP                   | 137               | 121               | 0.686        |
 
-#### 🔁 Clasificación binaria del `delta_delay` (media entre horizontes 10–60 min)
+#### Clasificación binaria del `delta_delay` (media entre horizontes 10–60 min)
 
 | Modelo               | ROC-AUC |
 |---------------------|--------:|

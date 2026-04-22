@@ -37,6 +37,3 @@ wandb
 # Artefactos generados por los scripts de modelos (tensores, pesos, etc.)
 src/models/prediccion_propagacion/artefactos/
 
-# Claude
-.claude/
-CLAUDE.md
