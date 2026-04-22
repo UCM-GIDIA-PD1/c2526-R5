@@ -5,4 +5,4 @@ COPY pyproject.toml README.md ./
 RUN uv sync --no-cache --no-dev
 COPY . .
 EXPOSE 8000
-CMD ["/app/.venv/bin/fastapi", "run", "src/web/app.py", "--port", "8000"]
+CMD ["/app/.venv/bin/fastapi", "run", "app/app.py", "--port", "8000"]
