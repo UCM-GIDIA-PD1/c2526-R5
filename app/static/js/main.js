@@ -45,7 +45,7 @@ function getStationColor(routes) {
 // ============================================================
 let markersMap = {};
 let allStations = [];
-let currentPredictions = [];
+let currentAlerts = [];    // AlertPrediction[] del WebSocket (por route_id)
 let routePolylines = {};   // lineCode -> L.polyline
 let stationRouteIndex = {}; // stationId -> [lineCode, lineCode, ...]
 
@@ -264,8 +264,8 @@ socket.onclose = () => console.log("WebSocket desconectado");
 socket.onmessage = (event) => {
     const payload = JSON.parse(event.data);
     if (payload.type === 'update' || payload.type === 'initial') {
-        currentPredictions = payload.data;
-        updateMapMarkers(currentPredictions);
+        currentAlerts = payload.alerts?.predictions || [];
+        updateMapWithAlerts(currentAlerts);
         if (!detailPanel.classList.contains('hidden')) {
             checkActiveAlerts();
         }
@@ -273,45 +273,42 @@ socket.onmessage = (event) => {
 };
 
 // ============================================================
-// 9. Actualización de marcadores con retrasos
+// 9. Actualización de marcadores con alertas
 // ============================================================
 
-function updateDashboard(predictions) {
-    const list  = document.getElementById('delay-items');
-    const count = document.getElementById('alert-count');
-    list.innerHTML = '';
-    count.textContent = predictions.length;
-
-    if (predictions.length === 0) {
-        list.innerHTML = '<li class="empty-state">No hay retrasos reportados.</li>';
+function renderDelayCard(id, delaySeconds) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (delaySeconds === null || delaySeconds === undefined) {
+        el.textContent = '--';
+        el.className = 'delay-val';
         return;
     }
-
-    predictions.forEach(p => {
-        const li = document.createElement('li');
-        const isDanger = p.status === 'delayed';
-        li.className = `delay-item ${isDanger ? 'danger' : 'warning'}`;
-        li.innerHTML = `
-            <span class="station-id">Parada ID #${p.station_id}</span>
-            <span class="delay-time ${isDanger ? 'danger-text' : 'warn-text'}">+${p.delay_minutes} min</span>`;
-        list.appendChild(li);
-    });
+    const s = Math.round(delaySeconds);
+    let text;
+    if (s < 60) {
+        text = `${s} s`;
+    } else {
+        const m = Math.floor(s / 60);
+        const r = s % 60;
+        text = r > 0 ? `${m} min ${r} s` : `${m} min`;
+    }
+    const cls = s <= 30 ? 'on-time' : (s < 120 ? 'minor-delay' : 'delayed');
+    el.textContent = text;
+    el.className = `delay-val ${cls}`;
 }
 
-function updateMapMarkers(predictions) {
-    // Limpiar clase delayed de todos
-    Object.values(markersMap).forEach(marker => {
-        const el = marker.getElement();
-        if (el) el.classList.remove('metro-delayed');
-    });
+function updateMapWithAlerts(alertPredictions) {
+    // Conjunto de route_ids con alerta activa
+    const alertedRoutes = new Set(
+        alertPredictions.filter(a => a.alert_predicted).map(a => a.route_id)
+    );
 
-    // Marcar las estaciones con retraso: añadir halo pulsante via CSS
-    predictions.forEach(p => {
-        const marker = markersMap[p.station_id];
-        if (marker) {
-            const el = marker.getElement();
-            if (el) el.classList.add('metro-delayed');
-        }
+    Object.entries(markersMap).forEach(([stationId, marker]) => {
+        const routes = stationRouteIndex[stationId] || [];
+        const hasAlert = routes.some(r => alertedRoutes.has(r));
+        const el = marker.getElement();
+        if (el) el.classList.toggle('metro-delayed', hasAlert);
     });
 }
 
@@ -352,27 +349,98 @@ function openStationDetails(station) {
     if (routes.length > 0) updateForecast(routes[0]);
 }
 
-function updateForecast(lineCode) {
-    const cards = ['forecast-now', 'forecast-10', 'forecast-20', 'forecast-30'];
+async function updateForecast(lineCode) {
     detailPanel.currentLine = lineCode;
+    const station = detailPanel.currentStation;
 
-    cards.forEach(cardId => {
-        const el    = document.getElementById(cardId);
-        const delay = Math.floor(Math.random() * 8);
-        el.textContent = delay === 0 ? 'ON TIME' : `+${delay} min`;
-        el.className   = 'delay-val ' + (delay === 0 ? 'on-time' : (delay < 4 ? 'minor-delay' : 'delayed'));
+    ['forecast-now', 'forecast-10', 'forecast-20', 'forecast-30'].forEach(id => {
+        const el = document.getElementById(id);
+        el.textContent = '…';
+        el.className = 'delay-val';
     });
 
-    checkActiveAlerts();
+    const stopParam = encodeURIComponent(station.id);
+
+    // Lanzar las tres peticiones en paralelo
+    const [nowResp, propResp, alertResp] = await Promise.allSettled([
+        fetch(`/api/predict/current?stop_id=${stopParam}`),
+        fetch(`/api/predict/propagation?stop_id=${stopParam}`),
+        fetch(`/api/predict/alerts?route_id=${encodeURIComponent(lineCode)}`),
+    ]);
+
+    // Ahora: último delay observado en la ventana más reciente (en segundos)
+    try {
+        if (nowResp.status === 'fulfilled' && nowResp.value.ok) {
+            const d = await nowResp.value.json();
+            renderDelayCard('forecast-now', d.delay_seconds);
+        } else {
+            renderDelayCard('forecast-now', null);
+        }
+    } catch { renderDelayCard('forecast-now', null); }
+
+    // +10/+20/+30 min: predicción DCRNN (valores en segundos)
+    try {
+        if (propResp.status === 'fulfilled' && propResp.value.ok) {
+            const d = await propResp.value.json();
+            const pred = d.predictions?.find(p => p.stop_id === station.id);
+            if (pred) {
+                renderDelayCard('forecast-10', pred.delay_10m);
+                renderDelayCard('forecast-20', pred.delay_20m);
+                renderDelayCard('forecast-30', pred.delay_30m);
+            } else {
+                ['forecast-10', 'forecast-20', 'forecast-30'].forEach(id => renderDelayCard(id, null));
+            }
+        } else {
+            ['forecast-10', 'forecast-20', 'forecast-30'].forEach(id => renderDelayCard(id, null));
+        }
+    } catch { ['forecast-10', 'forecast-20', 'forecast-30'].forEach(id => renderDelayCard(id, null)); }
+
+    // Probabilidad de alerta para la línea seleccionada
+    try {
+        if (alertResp.status === 'fulfilled' && alertResp.value.ok) {
+            const d = await alertResp.value.json();
+            renderAlertProbability(lineCode, d.predictions);
+        } else {
+            renderAlertProbability(lineCode, []);
+        }
+    } catch { renderAlertProbability(lineCode, []); }
 
     document.getElementById('line-detail-info').innerHTML =
-        `<p>Estado actual de la línea <strong>${lineCode}</strong> en esta estación.</p>`;
+        `<p>Línea <strong>${lineCode}</strong> · predicción DCRNN a 10, 20 y 30 min</p>`;
+}
+
+function renderAlertProbability(lineCode, predictions) {
+    const section = document.getElementById('station-alert');
+    const textEl  = section.querySelector('.alert-text');
+    const iconEl  = section.querySelector('.alert-icon');
+
+    if (!predictions || predictions.length === 0) {
+        section.classList.add('hidden');
+        return;
+    }
+
+    // Tomar la probabilidad máxima entre todas las direcciones de la línea
+    const maxProb = Math.max(...predictions.map(p => p.alert_probability));
+    const pct = Math.round(maxProb * 100);
+    const predicted = predictions.some(p => p.alert_predicted);
+
+    section.classList.remove('hidden');
+    if (predicted) {
+        iconEl.textContent = '⚠️';
+        textEl.textContent = `Alerta probable en línea ${lineCode} (${pct}%)`;
+        section.querySelector('.alert-banner').style.background = 'rgba(239,68,68,0.15)';
+    } else {
+        iconEl.textContent = '✓';
+        textEl.textContent = `Sin alerta en línea ${lineCode} (${pct}% prob.)`;
+        section.querySelector('.alert-banner').style.background = 'rgba(34,197,94,0.1)';
+    }
 }
 
 function checkActiveAlerts() {
     const alertSection = document.getElementById('station-alert');
     if (!detailPanel.currentStation || !detailPanel.currentLine) return;
-    const hasAlert = currentPredictions.some(p => p.station_id === detailPanel.currentStation.id);
+    const stationRoutes = stationRouteIndex[detailPanel.currentStation.id] || [];
+    const hasAlert = currentAlerts.some(a => a.alert_predicted && stationRoutes.includes(a.route_id));
     alertSection.classList.toggle('hidden', !hasAlert);
 }
 
@@ -424,29 +492,35 @@ function setupAutocomplete(input, dropdown) {
     });
 }
 
-function calculateRoute() {
+async function calculateRoute() {
     const originId  = document.getElementById('origin-input').dataset.stationId;
     const destId    = document.getElementById('destination-input').dataset.stationId;
     const resultPanel = document.getElementById('route-prediction');
 
-    if (originId && destId) {
-        const origin      = allStations.find(s => s.id === originId);
-        const destination = allStations.find(s => s.id === destId);
+    if (!originId || !destId) return;
 
-        resultPanel.classList.remove('hidden');
+    const origin      = allStations.find(s => s.id === originId);
+    const destination = allStations.find(s => s.id === destId);
 
-        const commonLines  = findCommonLines(origin, destination);
-        const displayLine  = commonLines.length > 0 ? commonLines[0] : origin.routes.split(' ')[0];
+    resultPanel.classList.remove('hidden');
 
-        document.getElementById('result-line').textContent = displayLine;
-        document.getElementById('result-line').style.backgroundColor = ROUTE_COLORS[displayLine] || '#3B82F6';
-        document.getElementById('result-station').textContent = origin.name;
+    const commonLines = findCommonLines(origin, destination);
+    const displayLine = commonLines.length > 0 ? commonLines[0] : origin.routes.split(' ')[0];
 
-        const realPrediction = currentPredictions.find(p => p.station_id === originId);
-        const delay          = realPrediction ? realPrediction.delay_minutes : Math.floor(Math.random() * 5);
-        const delayValEl     = document.getElementById('result-delay-val');
-        delayValEl.textContent = delay === 0 ? 'ON TIME' : `+${delay} min`;
-        delayValEl.className   = 'delay-val ' + (delay === 0 ? 'on-time' : (delay < 4 ? 'minor-delay' : 'delayed'));
+    document.getElementById('result-line').textContent = displayLine;
+    document.getElementById('result-line').style.backgroundColor = ROUTE_COLORS[displayLine] || '#3B82F6';
+    document.getElementById('result-station').textContent = origin.name;
+
+    renderDelayCard('result-delay-val', null);
+
+    try {
+        const resp = await fetch(`/api/predict/delay/30m?stop_id=${encodeURIComponent(originId)}`);
+        if (!resp.ok) throw new Error(resp.statusText);
+        const data = await resp.json();
+        const pred = data.predictions?.[0];
+        renderDelayCard('result-delay-val', pred ? pred.delay_minutes * 60 : null);
+    } catch (e) {
+        console.error('Error al obtener retraso de ruta:', e);
     }
 }
 

@@ -40,7 +40,8 @@ def run_delta(
     if route_id_filter and "route_id" in df.columns:
         df = df[df["route_id"].astype(str) == route_id_filter]
     if stop_id_filter and "stop_id" in df.columns:
-        df = df[df["stop_id"].astype(str) == stop_id_filter]
+        base = df["stop_id"].astype(str).str.rstrip("NS")
+        df = df[(df["stop_id"].astype(str) == stop_id_filter) | (base == stop_id_filter)]
 
     if df.empty:
         return DeltaResponse(

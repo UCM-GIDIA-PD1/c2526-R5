@@ -23,7 +23,7 @@ from googleapiclient.http import MediaIoBaseDownload
 
 logger = logging.getLogger(__name__)
 
-_SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
+_SCOPES = ["https://www.googleapis.com/auth/drive"]
 _FOLDER_NAME = "MTA_Realtime_Windows"
 
 # Default token path matches upload_realtime_window.py

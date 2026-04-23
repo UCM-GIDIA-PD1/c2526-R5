@@ -98,7 +98,7 @@ def _load_stations_meta() -> dict:
     meta = {}
     try:
         for _, row in df.iterrows():
-            meta[str(row["Station ID"])] = {
+            meta[str(row["GTFS Stop ID"])] = {
                 "name": row.get("Stop Name", ""),
                 "lat": float(row["GTFS Latitude"]),
                 "lon": float(row["GTFS Longitude"]),

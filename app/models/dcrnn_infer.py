@@ -49,26 +49,42 @@ def run_propagation(
     nodes_sorted = sorted(entry.nodes)
     predictions: list[PropagationPrediction] = []
 
-    for i, stop_id in enumerate(nodes_sorted):
-        if stop_id_filter and stop_id != stop_id_filter:
-            continue
-        if route_id_filter and stations_meta:
-            meta = stations_meta.get(stop_id, {})
-            routes = str(meta.get("routes", ""))
-            if route_id_filter not in routes:
-                continue
+    # GTFS nodes carry a directional suffix (N/S); the base ID (without suffix)
+    # matches the GTFS Stop ID used in station metadata and in the JS.
+    def _base(sid: str) -> str:
+        return sid[:-1] if sid and sid[-1] in ("N", "S") else sid
 
-        meta = (stations_meta or {}).get(stop_id, {})
-        predictions.append(
-            PropagationPrediction(
+    if stop_id_filter:
+        # Collect N and S variants for this base GTFS stop ID and average them.
+        matched = [i for i, sid in enumerate(nodes_sorted)
+                   if sid == stop_id_filter or _base(sid) == stop_id_filter]
+        if matched:
+            avg = y_sec[matched].mean(axis=0)
+            base_meta = (stations_meta or {}).get(stop_id_filter, {})
+            predictions.append(PropagationPrediction(
+                stop_id=stop_id_filter,
+                lat=base_meta.get("lat"),
+                lon=base_meta.get("lon"),
+                delay_10m=float(np.clip(avg[0], 0, None)),
+                delay_20m=float(np.clip(avg[1], 0, None)),
+                delay_30m=float(np.clip(avg[2], 0, None)),
+            ))
+    else:
+        for i, stop_id in enumerate(nodes_sorted):
+            base = _base(stop_id)
+            if route_id_filter and stations_meta:
+                meta = stations_meta.get(base, {})
+                if route_id_filter not in str(meta.get("routes", "")):
+                    continue
+            meta = (stations_meta or {}).get(base, {})
+            predictions.append(PropagationPrediction(
                 stop_id=stop_id,
                 lat=meta.get("lat"),
                 lon=meta.get("lon"),
                 delay_10m=float(np.clip(y_sec[i, 0], 0, None)),
                 delay_20m=float(np.clip(y_sec[i, 1], 0, None)),
                 delay_30m=float(np.clip(y_sec[i, 2], 0, None)),
-            )
-        )
+            ))
 
     return PropagationResponse(
         predicted_at=datetime.now(timezone.utc).isoformat(),
