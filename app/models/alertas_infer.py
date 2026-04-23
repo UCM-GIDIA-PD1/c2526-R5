@@ -37,7 +37,8 @@ def run_alerts(
         df_linea = df_linea[df_linea["route_id"].astype(str) == route_id_filter]
 
     model = entry.model
-    known_features = list(getattr(model, "feature_names_in_", None) or [])
+    feat_attr = getattr(model, "feature_names_in_", None)
+    known_features = list(feat_attr) if feat_attr is not None else []
     if not known_features:
         try:
             known_features = model.get_booster().feature_names or []
@@ -45,6 +46,11 @@ def run_alerts(
             known_features = []
 
     df_feat = df_linea.copy()
+    # OrdinalEncoder used during training → encode categoricals as integer codes
+    for col in ("route_id", "direction"):
+        if col in df_feat.columns:
+            df_feat[col] = df_feat[col].astype("category").cat.codes
+
     if known_features:
         for col in known_features:
             if col not in df_feat.columns:

@@ -36,5 +36,5 @@ src/ETL/alertas_oficiales_tiempo_real/mta_dataset.csv
 wandb
 
 # Artefactos generados por los scripts de modelos (tensores, pesos, etc.)
-src/models/prediccion_propagacion/artefactos/
+src/models/propagacion_estacion/artefactos/
 
