@@ -40,6 +40,29 @@ async def _get_windows(request: Request) -> list:
     return windows
 
 
+# ── Current observed delay (latest window) ───────────────────────────────────
+
+@router.get("/current")
+async def get_current_delay(
+    request: Request,
+    stop_id: Optional[str] = Query(default=None),
+) -> dict:
+    """Return the last observed delay_seconds from the most recent Drive window."""
+    windows = await _get_windows(request)
+    df = windows[-1].copy()
+
+    if stop_id and "stop_id" in df.columns:
+        base = df["stop_id"].astype(str).str.rstrip("NS")
+        df = df[(df["stop_id"].astype(str) == stop_id) | (base == stop_id)]
+
+    if df.empty or "delay_seconds_mean" not in df.columns:
+        return {"stop_id": stop_id, "delay_seconds": None}
+
+    import numpy as np
+    delay = float(np.clip(df["delay_seconds_mean"].mean(), 0, None))
+    return {"stop_id": stop_id, "delay_seconds": delay}
+
+
 # ── Propagation (DCRNN) ───────────────────────────────────────────────────────
 
 @router.get("/propagation", response_model=PropagationResponse)

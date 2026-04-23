@@ -201,11 +201,11 @@ class ModelRegistry:
             import joblib
 
             path = self._download(entity, project, artifact_ref)
-            pkl_file = next(path.glob("*.pkl"), None)
-            if not pkl_file:
-                raise FileNotFoundError(f"No .pkl file in artifact {artifact_ref}")
+            model_file = next(path.glob("*.joblib"), None)
+            if not model_file:
+                raise FileNotFoundError(f"No .joblib file in artifact {artifact_ref}")
 
-            data = joblib.load(pkl_file)
+            data = joblib.load(model_file)
 
             # Handle multiple possible pkl formats
             if isinstance(data, dict):
