@@ -16,6 +16,9 @@ import gc
 import os
 
 import joblib
+from dotenv import load_dotenv
+
+load_dotenv()
 import numpy as np
 import pandas as pd
 import wandb
