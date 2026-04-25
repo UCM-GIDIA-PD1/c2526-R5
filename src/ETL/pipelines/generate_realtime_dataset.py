@@ -238,6 +238,7 @@ def load_realtime_weather() -> pd.DataFrame:
             "rain", "snowfall", "cloud_cover",
         ],
         "timezone": "America/New_York",
+        "forecast_days": 1,
     }
 
     responses = openmeteo.weather_api(url, params=params)

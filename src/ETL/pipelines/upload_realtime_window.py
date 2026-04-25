@@ -18,6 +18,7 @@ import io
 import json
 import os
 from pathlib import Path
+from time import time
 
 import pandas as pd
 from dotenv import load_dotenv
@@ -193,6 +194,16 @@ def main():
     print(f"\n[3/3] Subiendo a Google Drive: {nombre}")
     file_id = subir_parquet_drive(service, folder_id, nombre, df_agregado)
     print(f"  [OK] Subido: {len(df_agregado)} filas → file_id={file_id}")
+
+    # Esperar a que Drive indexe el archivo recién subido
+    max_intentos = 5
+    for intento in range(max_intentos):
+        archivos = listar_archivos_drive(service, folder_id)
+        nombres = [f['name'] for f in archivos]
+        if nombre in nombres:
+            break
+        print(f"  Esperando indexación Drive... ({intento+1}/{max_intentos})")
+        time.sleep(3)
 
     # 4) Mantener solo las N ventanas más recientes (ventana deslizante)
     print(f"\n[CLEANUP] Conservando solo las {NUM_VENTANAS_A_MANTENER} ventanas más recientes...")
