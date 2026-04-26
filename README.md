@@ -289,6 +289,12 @@ Los entrenamientos y evaluación se almacenan en
 common/
 ```
 
+El análisis de desempeño de los nuevos datos se alamcena en 
+
+```
+analytics/
+```
+
 ### 2. Modelos de predicción de retrasos a nivel de tren
 
 Se almacenan en la carpeta
@@ -328,6 +334,11 @@ Todos ellos a su vez se organizan en carpetas análogas a las anteriores.
 optuna/
 random/
 test/
+```
+Los análisis de desempeño con los nuevos datos se almacenan en
+
+```
+analtyics/
 ```
 
 ### 3. Modelos de propagación de retrasos
@@ -378,7 +389,8 @@ models/
 ├── common/                          # Utilidades compartidas entre modelos
 │
 ├── modelos_alertas/                 # 1. Modelos de anticipación de alertas
-│   ├── common/                      # Entrenamiento y evaluación compartidos
+│   ├── common/                      # Entrenamiento, evaluación y reevaluación compartidos
+│   ├── analytics/                   # Notebooks de análisis de desempeño (fase 4)
 │   ├── Optuna/                      # Búsquedas de hiperparámetros con Optuna
 │   └── Random/                      # Búsquedas con Random Search
 │
@@ -395,10 +407,14 @@ models/
 │   │   ├── optuna/
 │   │   ├── random/
 │   │   └── test/
-│   └── prediccion_por_intervalos/   # Predicción por intervalos
-│       ├── optuna/
-│       ├── random/
-│       └── test/
+│   ├── prediccion_por_intervalos/   # Predicción por intervalos
+│   │   ├── optuna/
+│   │   ├── random/
+│   │   └── test/
+│   └── analytics/                   # Notebooks de análisis de desempeño (fase 4)
+│       ├── analisis_mae_por_segmentos.ipynb
+│       ├── analisis_roc_auc_por_segmentos_delta.ipynb
+│       └── diagnostico_delay30m_feb_mar_2026.ipynb
 │
 └── propagacion_estacion/            # 3. Modelos de propagación de retrasos (GNN)
     ├── 01_generar_grafo.py          # Construye el grafo de la red desde GTFS
