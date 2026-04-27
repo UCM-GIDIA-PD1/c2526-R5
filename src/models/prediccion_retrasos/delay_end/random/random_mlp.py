@@ -58,6 +58,7 @@ EXCLUDE_COLS = {
     "alert_in_next_15m", "alert_in_next_30m", "seconds_to_next_alert",
     "delay_minutes", "scheduled_time", "actual_time",
     "station_delay_10m", "station_delay_20m", "station_delay_30m",
+    "delay_vs_station", "station_trend",
 }
 
 # Espacio de busqueda

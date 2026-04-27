@@ -69,6 +69,7 @@ EXCLUDE_COLS = {
     "delay_minutes", "scheduled_time", "actual_time",
     TARGET_CONT, TARGET_CLASS,
     "station_delay_10m", "station_delay_20m", "station_delay_30m",
+    "delay_vs_station", "station_trend",
 }
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
