@@ -62,7 +62,7 @@ CAT_FEATURES = [
     "route_id", "direction", "category", "tipo_referente",
     "stop_id", "is_weekend", "is_unscheduled", "temp_extreme",
     "afecta_previo", "afecta_durante", "afecta_despues",
-    "is_alert_just_published", "has_alert",
+    "is_alert_just_published",
 ]
 
 # Configuración de Random Search
@@ -100,8 +100,6 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
         df["delay_x_stops_remaining"] = df["delay_seconds"] * df["stops_to_end"]
     if "delay_seconds" in df.columns and "scheduled_time_to_end" in df.columns:
         df["delay_ratio"] = df["delay_seconds"] / (df["scheduled_time_to_end"] + 1)
-    if "n_eventos_afectando" in df.columns:
-        df["has_alert"] = (df["n_eventos_afectando"] > 0).astype(np.int8)
     return df
 
 
