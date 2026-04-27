@@ -8,10 +8,13 @@ Run from project root:
     uv run fastapi run app/app.py        # production
 """
 import asyncio
+import io
 import json
 import logging
 import os
 import random
+import urllib.request
+import zipfile
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
@@ -68,6 +71,7 @@ async def lifespan(app: FastAPI):
     app.state.registry = registry
     app.state.cache = TTLCache(ttl_seconds=settings.data_cache_ttl)
     app.state.stations_meta = _load_stations_meta()
+    app.state.gtfs_shapes = await asyncio.to_thread(_load_gtfs_shapes)
     app.state.ws_manager = _ConnectionManager()
     app.state.bg_task = asyncio.create_task(_live_broadcast(app))
 
@@ -107,6 +111,48 @@ def _load_stations_meta() -> dict:
     except Exception as exc:
         logger.warning("Error parsing station CSV: %s", exc)
     return meta
+
+
+def _load_gtfs_shapes() -> dict:
+    """Download MTA GTFS static feed and extract one representative shape per route."""
+    url = "http://web.mta.info/developers/data/nyct/subway/google_transit.zip"
+    try:
+        logger.info("Downloading MTA GTFS static feed from %s …", url)
+        with urllib.request.urlopen(url, timeout=60) as resp:  # noqa: S310
+            content = resp.read()
+        logger.info("GTFS zip downloaded (%d bytes), parsing…", len(content))
+
+        zf = zipfile.ZipFile(io.BytesIO(content))
+
+        trips = pd.read_csv(zf.open("trips.txt"))
+        shapes_df = pd.read_csv(zf.open("shapes.txt"))
+        shapes_df = shapes_df.sort_values(["shape_id", "shape_pt_sequence"])
+
+        # Number of points per shape (proxy for "completeness")
+        shape_len = shapes_df.groupby("shape_id").size()
+
+        # For each route pick the shape with the most points (full-length run)
+        route_shapes: dict[str, str] = {}
+        for route_id, grp in trips.groupby("route_id"):
+            best = max(grp["shape_id"].unique(), key=lambda s: shape_len.get(s, 0))
+            route_shapes[str(route_id)] = best
+
+        shapes_by_id = {
+            sid: sub[["shape_pt_lat", "shape_pt_lon"]].values.tolist()
+            for sid, sub in shapes_df.groupby("shape_id")
+        }
+
+        result = {}
+        for route_id, shape_id in route_shapes.items():
+            pts = shapes_by_id.get(shape_id, [])
+            if len(pts) >= 2:
+                result[route_id] = pts
+
+        logger.info("GTFS shapes loaded for %d routes", len(result))
+        return result
+    except Exception as exc:
+        logger.warning("Could not load GTFS shapes (non-fatal): %s", exc)
+        return {}
 
 
 async def _live_broadcast(app: FastAPI) -> None:
@@ -226,17 +272,37 @@ _ROUTE_ORDER: dict[str, list[str]] = {
 @app.get("/api/routes")
 def get_routes(request: Request):
     meta = request.app.state.stations_meta
-    name_to_id: dict[str, str] = {}
+
+    # Build an index: lowercase_name -> list of (sid, routes_set)
+    name_to_candidates: dict[str, list[tuple[str, set[str]]]] = {}
     for sid, data in meta.items():
         name = str(data.get("name", "")).strip().lower()
-        name_to_id[name] = sid
+        routes_set = set(str(data.get("routes", "")).split())
+        name_to_candidates.setdefault(name, []).append((sid, routes_set))
+
+    def lookup(stop_name: str, line: str) -> str | None:
+        candidates = name_to_candidates.get(stop_name.lower(), [])
+        if not candidates:
+            return None
+        # Prefer a station that actually serves this line
+        for sid, routes_set in candidates:
+            if line in routes_set:
+                return sid
+        # Fallback: first match by name (better than nothing)
+        return candidates[0][0]
 
     result = {}
     for line, stop_names in _ROUTE_ORDER.items():
-        ids = [name_to_id[n.lower()] for n in stop_names if n.lower() in name_to_id]
+        ids = [sid for n in stop_names if (sid := lookup(n, line)) is not None]
         if len(ids) >= 2:
             result[line] = ids
     return result
+
+
+@app.get("/api/shapes")
+def get_shapes(request: Request):
+    """Return GTFS shape geometry per route: { routeId: [[lat, lon], ...] }"""
+    return request.app.state.gtfs_shapes
 
 
 @app.websocket("/ws/live-updates")

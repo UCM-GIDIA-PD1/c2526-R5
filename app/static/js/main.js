@@ -31,8 +31,8 @@ const ROUTE_COLORS = {
     'S': '#808183', 'SIR': '#0039A6'
 };
 
-// Offset en píxeles para separar líneas que comparten paradas
-const LINE_OFFSET_PX = 4;
+// Separación entre líneas paralelas que comparten vía (en píxeles fijos de pantalla)
+const OFFSET_PX = 4;
 
 function getStationColor(routes) {
     if (!routes) return '#3B82F6';
@@ -57,26 +57,59 @@ const SUBWAY_ROUTES_URL   = '/api/routes';  // Nuevo endpoint: devuelve { lineCo
 // ============================================================
 
 /**
- * Aplica un offset perpendicular en píxeles a una polilínea
- * para que dos líneas compartiendo paradas no se solapen.
+ * Posición de cada línea dentro de su trunk line.
+ * idx: índice 0-based dentro del grupo
+ * total: número de rutas en el grupo
+ * El offset centrado es: (idx - (total-1)/2) * OFFSET_METERS
  */
-function offsetLatLngs(latlngs, offsetPx) {
-    if (offsetPx === 0 || latlngs.length < 2) return latlngs;
-    return latlngs.map((pt, i) => {
-        const prev = latlngs[Math.max(0, i - 1)];
-        const next = latlngs[Math.min(latlngs.length - 1, i + 1)];
-        // Vector dirección del segmento (en píxeles de mapa)
-        const p1 = map.latLngToLayerPoint(prev);
-        const p2 = map.latLngToLayerPoint(next);
+const ROUTE_PARALLEL_INDEX = {
+    // IRT Broadway-7th Ave
+    '1': { idx: 0, total: 3 }, '2': { idx: 1, total: 3 }, '3': { idx: 2, total: 3 },
+    // IRT Lexington Ave
+    '4': { idx: 0, total: 3 }, '5': { idx: 1, total: 3 }, '6': { idx: 2, total: 3 },
+    // IND 8th Ave
+    'A': { idx: 0, total: 3 }, 'C': { idx: 1, total: 3 }, 'E': { idx: 2, total: 3 },
+    // IND 6th Ave
+    'B': { idx: 0, total: 4 }, 'D': { idx: 1, total: 4 }, 'F': { idx: 2, total: 4 }, 'M': { idx: 3, total: 4 },
+    // BMT Broadway
+    'N': { idx: 0, total: 4 }, 'Q': { idx: 1, total: 4 }, 'R': { idx: 2, total: 4 }, 'W': { idx: 3, total: 4 },
+    // BMT Nassau
+    'J': { idx: 0, total: 2 }, 'Z': { idx: 1, total: 2 },
+    // Single-trunk routes
+    '7':   { idx: 0, total: 1 },
+    'G':   { idx: 0, total: 1 },
+    'L':   { idx: 0, total: 1 },
+    'S':   { idx: 0, total: 1 },
+    'GS':  { idx: 0, total: 1 },
+    'FS':  { idx: 0, total: 1 },
+    'H':   { idx: 0, total: 1 },
+    'SIR': { idx: 0, total: 1 },
+};
+
+/**
+ * Aplica un offset perpendicular en píxeles de pantalla a una
+ * lista de puntos [[lat, lon], ...]. El cálculo es dependiente del zoom.
+ */
+function offsetLatLngsPx(points, offsetPx) {
+    if (offsetPx === 0 || points.length < 2) return points;
+
+    return points.map((pt, i) => {
+        const prevLatLng = points[Math.max(0, i - 1)];
+        const nextLatLng = points[Math.min(points.length - 1, i + 1)];
+
+        const p1 = map.latLngToLayerPoint(prevLatLng);
+        const p2 = map.latLngToLayerPoint(nextLatLng);
+        const curr = map.latLngToLayerPoint(pt);
+
         const dx = p2.x - p1.x;
         const dy = p2.y - p1.y;
         const len = Math.sqrt(dx * dx + dy * dy) || 1;
+
         // Perpendicular normalizado
         const nx = -dy / len;
         const ny =  dx / len;
-        // Punto original en píxeles
-        const ppt = map.latLngToLayerPoint(pt);
-        const shifted = L.point(ppt.x + nx * offsetPx, ppt.y + ny * offsetPx);
+
+        const shifted = L.point(curr.x + nx * offsetPx, curr.y + ny * offsetPx);
         return map.layerPointToLatLng(shifted);
     });
 }
@@ -131,83 +164,83 @@ function createMetroMarker(routes) {
 // ============================================================
 
 /**
- * Dibuja las polilíneas de cada línea de metro.
- * Requiere que el backend devuelva /api/routes:
- *   { "1": ["sta_id_1", "sta_id_2", ...], "A": [...], ... }
+ * El backend devuelve los IDs en el orden oficial de la línea (via _ROUTE_ORDER).
+ * Construimos segmentos continuos cortando:
+ *   a) cuando una estación no se encuentra en el CSV, o
+ *   b) cuando la distancia entre dos paradas consecutivas supera MAX_SEGMENT_KM
+ *      (indica que hay paradas intermedias no resueltas → evita líneas diagonales largas).
  */
-function haversineKm(a, b) {
+const MAX_SEGMENT_KM = 3.0;
+
+function haversineKm(lat1, lon1, lat2, lon2) {
     const R = 6371;
-    const dLat = (b.lat - a.lat) * Math.PI / 180;
-    const dLon = (b.lon - a.lon) * Math.PI / 180;
-    const s = Math.sin(dLat/2) * Math.sin(dLat/2) +
-              Math.cos(a.lat * Math.PI/180) * Math.cos(b.lat * Math.PI/180) *
-              Math.sin(dLon/2) * Math.sin(dLon/2);
-    return R * 2 * Math.atan2(Math.sqrt(s), Math.sqrt(1-s));
-}
-
-/**
- * Ordena las estaciones de una línea usando el algoritmo de vecino más cercano
- * empezando desde la estación más al norte. Esto evita los zigzags.
- */
-function sortByNearestNeighbor(ids, stationsById) {
-    if (ids.length <= 2) return ids;
-    const remaining = [...ids];
-    // Empezar desde la estación más al norte
-    remaining.sort((a, b) => stationsById[b].lat - stationsById[a].lat);
-    const ordered = [remaining.shift()];
-
-    while (remaining.length > 0) {
-        const last = stationsById[ordered[ordered.length - 1]];
-        let bestIdx = 0;
-        let bestDist = Infinity;
-        remaining.forEach((id, i) => {
-            const dist = haversineKm(last, stationsById[id]);
-            if (dist < bestDist) { bestDist = dist; bestIdx = i; }
-        });
-        // Solo conectar si la distancia es razonable (< 3 km entre paradas)
-        if (bestDist > 3) break;
-        ordered.push(remaining.splice(bestIdx, 1)[0]);
-    }
-    return ordered;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) ** 2 +
+              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+              Math.sin(dLon / 2) ** 2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
 function drawRouteLines(routeData, stationsById) {
     const lineList = Object.keys(routeData);
 
-    lineList.forEach((lineCode, lineIndex) => {
+    lineList.forEach((lineCode) => {
         const rawIds = routeData[lineCode];
-        // Ordenar por vecino más cercano para evitar zigzags
-        const stationIds = sortByNearestNeighbor(rawIds, stationsById);
-
-        const latlngs = stationIds
-            .map(id => stationsById[id])
-            .filter(Boolean)
-            .map(st => [st.lat, st.lon]);
-
-        if (latlngs.length < 2) return;
-
         const color = ROUTE_COLORS[lineCode] || '#3B82F6';
 
-        // Borde oscuro debajo para dar profundidad
-        L.polyline(latlngs, {
-            color: darkenColor(color, 0.4),
-            weight: 7,
-            opacity: 0.6,
-            lineJoin: 'round',
-            lineCap: 'round'
-        }).addTo(map);
+        // Construir lista de segmentos continuos con doble corte:
+        // (1) estación no encontrada, (2) salto geográfico > MAX_SEGMENT_KM
+        const segments = [];
+        let currentSegment = [];
 
-        // Línea principal
-        const polyline = L.polyline(latlngs, {
-            color: color,
-            weight: 4,
-            opacity: 0.9,
-            lineJoin: 'round',
-            lineCap: 'round',
-            className: `metro-line metro-line-${lineCode}`
-        }).addTo(map);
+        rawIds.forEach(id => {
+            const st = stationsById[id];
+            if (!st) {
+                // Estación sin datos: cerrar segmento
+                if (currentSegment.length >= 2) segments.push(currentSegment);
+                currentSegment = [];
+                return;
+            }
+            if (currentSegment.length > 0) {
+                const prev = currentSegment[currentSegment.length - 1];
+                const dist = haversineKm(prev[0], prev[1], st.lat, st.lon);
+                if (dist > MAX_SEGMENT_KM) {
+                    // Salto demasiado grande → hay paradas no resueltas entre medias
+                    if (currentSegment.length >= 2) segments.push(currentSegment);
+                    currentSegment = [];
+                }
+            }
+            currentSegment.push([st.lat, st.lon]);
+        });
+        if (currentSegment.length >= 2) segments.push(currentSegment);
 
-        routePolylines[lineCode] = polyline;
+        // Dibujar cada segmento continuo
+        segments.forEach(latlngs => {
+            // Borde oscuro debajo para dar profundidad
+            L.polyline(latlngs, {
+                color: darkenColor(color, 0.4),
+                weight: 7,
+                opacity: 0.6,
+                lineJoin: 'round',
+                lineCap: 'round'
+            }).addTo(map);
+
+            // Línea principal
+            L.polyline(latlngs, {
+                color: color,
+                weight: 4,
+                opacity: 0.9,
+                lineJoin: 'round',
+                lineCap: 'round',
+                className: `metro-line metro-line-${lineCode}`
+            }).addTo(map);
+        });
+
+        // Guardar referencia al primer segmento para uso posterior
+        if (segments.length > 0) {
+            routePolylines[lineCode] = segments[0];
+        }
     });
 }
 
@@ -222,10 +255,71 @@ function darkenColor(hex, factor) {
 // 7. Carga de datos y renderizado
 // ============================================================
 
+/**
+ * Dibuja las líneas usando la geometría oficial GTFS (shapes).
+ * Cada ruta tiene un trazo lat/lon que sigue el carril real de la MTA.
+ * No depende de matching de nombres de estación.
+ */
+let rawShapesDataCache = null;
+
+function redrawShapes() {
+    if (!rawShapesDataCache) return;
+    
+    // Limpiar polilíneas viejas
+    Object.values(routePolylines).forEach(p => map.removeLayer(p));
+    routePolylines = {};
+
+    Object.entries(rawShapesDataCache).forEach(([routeCode, points]) => {
+        const color = ROUTE_COLORS[routeCode] || '#3B82F6';
+
+        // Calcular offset de pantalla para separar líneas paralelas
+        const parallel = ROUTE_PARALLEL_INDEX[routeCode] || { idx: 0, total: 1 };
+        const centerOffset = (parallel.total - 1) / 2;
+        const offsetPixels = (parallel.idx - centerOffset) * OFFSET_PX;
+
+        const latlngs = offsetPixels !== 0 ? offsetLatLngsPx(points, offsetPixels) : points;
+
+        // Borde oscuro unificado (una sola línea más gruesa sirve de sombra si está centrado)
+        if (offsetPixels === 0) {
+            L.polyline(points, {
+                color: darkenColor(color, 0.4),
+                weight: 7,
+                opacity: 0.5,
+                lineJoin: 'round',
+                lineCap: 'round'
+            }).addTo(map);
+        }
+
+        // Línea principal
+        const poly = L.polyline(latlngs, {
+            color: color,
+            weight: 3.5,
+            opacity: 0.88,
+            lineJoin: 'round',
+            lineCap: 'round',
+            className: `metro-line metro-line-${routeCode}`
+        }).addTo(map);
+
+        routePolylines[routeCode] = poly;
+    });
+}
+
+function drawShapeLines(shapesData) {
+    rawShapesDataCache = shapesData;
+    redrawShapes();
+    
+    // Redibujar al hacer zoom para mantener la separación en píxeles fijos
+    map.on('zoomend', redrawShapes);
+    
+    console.log(`Shapes GTFS dibujados para ${Object.keys(shapesData).length} rutas con offsets de píxeles.`);
+}
+
+
 Promise.all([
     fetch(SUBWAY_STATIONS_URL).then(r => r.json()),
+    fetch('/api/shapes').then(r => r.json()).catch(() => ({})),
     fetch('/api/routes').then(r => r.json()).catch(() => ({}))
-]).then(([stations, routeData]) => {
+]).then(([stations, shapesData, routeData]) => {
     allStations = stations;
 
     const stationsById = {};
@@ -234,8 +328,13 @@ Promise.all([
         stationRouteIndex[st.id] = st.routes ? st.routes.split(' ') : [];
     });
 
-    // Dibujar líneas con orden oficial del backend
-    drawRouteLines(routeData, stationsById);
+    // GTFS shapes: geometría exacta del carril. Fallback: conexión entre paradas.
+    if (Object.keys(shapesData).length > 0) {
+        drawShapeLines(shapesData);
+    } else {
+        console.warn('GTFS shapes no disponibles, usando conexión entre estaciones.');
+        drawRouteLines(routeData, stationsById);
+    }
 
     // Dibujar marcadores encima
     stations.forEach(station => {
@@ -251,6 +350,7 @@ Promise.all([
     console.log(`${stations.length} estaciones renderizadas con estilo metro.`);
     initRoutePlanner();
 }).catch(err => console.error("Error al cargar datos:", err));
+
 
 // ============================================================
 // 8. WebSocket para predicciones en tiempo real
