@@ -99,15 +99,19 @@ def load_months(months: range) -> pd.DataFrame:
 
 def add_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
-    df["delay_change"]      = df["delay_seconds"] - df["lagged_delay_1"]
-    df["delay_change_prev"] = df["lagged_delay_1"] - df["lagged_delay_2"]
-    df["delay_accel"]       = df["delay_change"] - df["delay_change_prev"]
-    df["delay_vs_route"]    = df["delay_seconds"] - df["route_rolling_delay"]
-    df["delay_vs_station"]  = df["delay_seconds"] - df["station_delay_10m"].fillna(df["delay_seconds"])
-    df["station_trend"]     = df["station_delay_10m"] - df["station_delay_20m"]
-    df["delay_time_ratio"]  = df["delay_seconds"] / (df["scheduled_time_to_end"] + 1.0)
-    df["has_alert"]         = (df["n_eventos_afectando"] > 0).astype(np.int8)
-    df["alert_impact"]      = df["afecta_previo"] + df["afecta_durante"] + df["afecta_despues"]
+    if "lagged_delay_1" in df.columns and "delay_seconds" in df.columns:
+        df["delay_velocity"] = df["delay_seconds"] - df["lagged_delay_1"]
+    if "lagged_delay_1" in df.columns and "lagged_delay_2" in df.columns:
+        df["delay_acceleration"] = (
+            (df["delay_seconds"] - df["lagged_delay_1"])
+            - (df["lagged_delay_1"] - df["lagged_delay_2"])
+        )
+    if "delay_seconds" in df.columns and "stops_to_end" in df.columns:
+        df["delay_x_stops_remaining"] = df["delay_seconds"] * df["stops_to_end"]
+    if "delay_seconds" in df.columns and "scheduled_time_to_end" in df.columns:
+        df["delay_ratio"] = df["delay_seconds"] / (df["scheduled_time_to_end"] + 1)
+    if "n_eventos_afectando" in df.columns:
+        df["has_alert"] = (df["n_eventos_afectando"] > 0).astype(np.int8)
     return df
 
 
