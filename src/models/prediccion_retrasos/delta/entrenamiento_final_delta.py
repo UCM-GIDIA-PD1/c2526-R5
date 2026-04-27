@@ -57,6 +57,7 @@ EXCLUDE_COLS = {
     "delta_delay_10m", "delta_delay_20m", "delta_delay_30m",
     "delta_delay_45m", "delta_delay_60m", "delta_delay_end",
     "seconds_to_next_alert", "alert_in_next_15m", "alert_in_next_30m",
+    "station_delay_10m", "station_delay_20m", "station_delay_30m",
 }
 
 CAT_FEATURES = [
