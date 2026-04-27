@@ -104,9 +104,17 @@ def extraccion_linea(url, linea, reintentos=3):
                                 'viaje_id': trayecto.trip.trip_id,
                                 'linea_id': trayecto.trip.route_id,
                                 'parada_id': stop.stop_id,
-                                'hora_llegada': datetime.fromtimestamp(stop.arrival.time, tz=timezone.utc) if stop.HasField('arrival') else None,
-                                'hora_partida': datetime.fromtimestamp(stop.departure.time, tz=timezone.utc) if stop.HasField('departure') else None,
-                                'timestamp': datetime.now(tz=timezone.utc),                       
+                                'hora_llegada': (
+                                    datetime.fromtimestamp(stop.arrival.time, tz=timezone.utc)
+                                    if stop.HasField('arrival') and stop.arrival.time > 0
+                                    else None
+                                ),
+                                'hora_partida': (
+                                    datetime.fromtimestamp(stop.departure.time, tz=timezone.utc)
+                                    if stop.HasField('departure') and stop.departure.time > 0
+                                    else None
+                                ),
+                                'timestamp': datetime.now(tz=timezone.utc),
                             }
 
                             datos_linea.append(campos)
@@ -336,10 +344,15 @@ def calcular_features_rt(df):
     if df.empty:
         return df
 
-    # 1) Lagged delays dentro del mismo viaje
+    # 1) Lagged delays dentro del mismo viaje.
+    # Se hace forward-fill del delay por viaje antes del shift para que una
+    # parada no-matched (delay=NaN) no rompa la cadena de lags de las siguientes.
     df = df.sort_values(['viaje_id', 'segundos_reales']).reset_index(drop=True)
-    df['lagged_delay_1'] = df.groupby('viaje_id')['delay'].shift(1)
-    df['lagged_delay_2'] = df.groupby('viaje_id')['delay'].shift(2)
+    _delay_filled = df.groupby('viaje_id')['delay'].transform('ffill')
+    same_trip_1 = df['viaje_id'] == df['viaje_id'].shift(1)
+    same_trip_2 = df['viaje_id'] == df['viaje_id'].shift(2)
+    df['lagged_delay_1'] = _delay_filled.shift(1).where(same_trip_1, np.nan)
+    df['lagged_delay_2'] = _delay_filled.shift(2).where(same_trip_2, np.nan)
 
     # 2) Rolling delay por línea (ventana temporal 30 min sobre hora_llegada)
     df_sorted = (
@@ -417,6 +430,28 @@ def union_dataframes(df1, df2):
     # Ajuste para viajes que cruzan medianoche
     df.loc[df['delay'] > 43200, 'delay'] -= 86400
     df.loc[df['delay'] < -43200, 'delay'] += 86400
+
+    # El GTFS suplementado repite cada (trip_id, stop_id) una vez por período de
+    # calendario (WKD, SAT, SUN, etc.), multiplicando las filas. Se eliminan
+    # duplicados conservando la entrada cuyo horario programado más se acerca a
+    # la llegada real (menor |delay|), que es la del período activo hoy.
+    if df.duplicated(subset=['viaje_id', 'parada_id']).any():
+        df['_abs_delay'] = df['delay'].abs().fillna(np.inf)
+        df = (
+            df.sort_values('_abs_delay')
+              .drop_duplicates(subset=['viaje_id', 'parada_id'], keep='first')
+              .drop(columns=['_abs_delay'])
+        )
+
+    # Si el mejor match de calendario tiene |delay| > 1h, es casi seguro un
+    # falso match (trip_id colisionado de otro servicio). Se trata como no programado.
+    MAX_DELAY_MATCH = 3600
+    bad_match = (~df['is_unscheduled']) & (df['delay'].abs() > MAX_DELAY_MATCH)
+    if bad_match.any():
+        cols_to_null = [c for c in ['delay', 'segundos_previstos', 'stop_sequence'] if c in df.columns]
+        df.loc[bad_match, cols_to_null] = np.nan
+        df.loc[bad_match, 'is_unscheduled'] = True
+        print(f"  [WARN] {bad_match.sum()} filas marcadas unscheduled (|delay|>{MAX_DELAY_MATCH}s)")
 
     # Mantenemos todas las paradas (pasadas y futuras). Para paradas pasadas el
     # delay es real; para futuras es la predicción actual del tren.
