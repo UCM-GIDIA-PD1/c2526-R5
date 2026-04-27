@@ -163,20 +163,6 @@ def encode_categoricals(df_train: pd.DataFrame, df_test: pd.DataFrame) -> tuple[
     return df_train, df_test, vocabs
 
 
-def add_derived_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Añade features derivadas: velocidad, aceleración, interacciones y hora punta."""
-    if "lagged_delay_1" in df.columns and "delay_seconds" in df.columns:
-        df["delay_velocity"] = df["delay_seconds"] - df["lagged_delay_1"]
-    if "lagged_delay_1" in df.columns and "lagged_delay_2" in df.columns:
-        df["delay_acceleration"] = (
-            (df["delay_seconds"] - df["lagged_delay_1"])
-            - (df["lagged_delay_1"] - df["lagged_delay_2"])
-        )
-    if "delay_seconds" in df.columns and "stops_to_end" in df.columns:
-        df["delay_x_stops_remaining"] = df["delay_seconds"] * df["stops_to_end"]
-    if "delay_seconds" in df.columns and "scheduled_time_to_end" in df.columns:
-        df["delay_ratio"] = df["delay_seconds"] / (df["scheduled_time_to_end"] + 1)
-    return df
 
 
 def add_target_encoding(df_train: pd.DataFrame, df_test: pd.DataFrame,
@@ -189,6 +175,22 @@ def add_target_encoding(df_train: pd.DataFrame, df_test: pd.DataFrame,
     df_train[f"{col}_target_enc"] = df_train[col].map(means)
     df_test[f"{col}_target_enc"]  = df_test[col].map(means).fillna(global_mean)
     return df_train, df_test, means.to_dict(), global_mean
+
+
+def add_derived_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Calcula variables derivadas del retraso como velocidad, aceleracion e interacciones."""
+    if "lagged_delay_1" in df.columns and "delay_seconds" in df.columns:
+        df["delay_velocity"] = df["delay_seconds"] - df["lagged_delay_1"]
+    if "lagged_delay_1" in df.columns and "lagged_delay_2" in df.columns:
+        df["delay_acceleration"] = (
+            (df["delay_seconds"] - df["lagged_delay_1"])
+            - (df["lagged_delay_1"] - df["lagged_delay_2"])
+        )
+    if "delay_seconds" in df.columns and "stops_to_end" in df.columns:
+        df["delay_x_stops_remaining"] = df["delay_seconds"] * df["stops_to_end"]
+    if "delay_seconds" in df.columns and "scheduled_time_to_end" in df.columns:
+        df["delay_ratio"] = df["delay_seconds"] / (df["scheduled_time_to_end"] + 1)
+    return df
 
 
 def get_features(df: pd.DataFrame) -> list[str]:
