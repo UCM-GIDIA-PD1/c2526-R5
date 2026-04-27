@@ -273,13 +273,13 @@ def creacion_df_tiempo_real():
     df = conversion_hora_NYC(df)
     df = dia_segun_fecha_y_formato(df)
     df = direccion_tren(df)
-    df = df.dropna()
 
-    #Eliminación de filas con nulos en alguna columna
-    df = df.dropna()
+    # Solo descartamos filas sin hora_llegada (necesaria para calcular delay).
+    # hora_partida puede ser None en primera/última parada del viaje.
+    df = df.dropna(subset=['hora_llegada', 'viaje_id', 'parada_id', 'linea_id'])
 
-    df['segundos_reales'] = (df['hora_llegada'].dt.hour * 3600 + 
-                             df['hora_llegada'].dt.minute * 60 + 
+    df['segundos_reales'] = (df['hora_llegada'].dt.hour * 3600 +
+                             df['hora_llegada'].dt.minute * 60 +
                              df['hora_llegada'].dt.second)
     print(f"  DataFrame tiempo real: {len(df)} filas, {df['linea_id'].nunique()} líneas")
 
@@ -401,23 +401,25 @@ def union_dataframes(df1, df2):
     y aplica las transformaciones finales.
     """
 
-    df = pd.merge(df1, df2, left_on=['viaje_id', 'parada_id', 'dia'], 
-              right_on=['trip_id', 'stop_id', 'day'], 
+    # La clave de join es (viaje_id, parada_id). No se usa 'dia'/'day' porque el
+    # campo 'day' del GTFS suplementado contiene IDs de calendario arbitrarios
+    # además de 'Weekday'/'Saturday'/'Sunday', lo que destruye el 89% de los matches.
+    df = pd.merge(df1, df2, left_on=['viaje_id', 'parada_id'],
+              right_on=['trip_id', 'stop_id'],
               how='left')
 
     # Marcar trenes no programados: no encontraron match en el schedule
     df['is_unscheduled'] = df['trip_id'].isna()
 
-    
-    #Calcula el retraso de los trenes restando el tiempo de llegada actual menos el tiempo de llegada previsto
-    df['delay'] = df['segundos_reales']-df['segundos_previstos']
+    # Calcula el retraso: tiempo de llegada predicho/real menos el tiempo programado
+    df['delay'] = df['segundos_reales'] - df['segundos_previstos']
 
-    #Ajuste para viajes que deberían llegar al final del día (23:00) pero por retraso llega al día siguiente
+    # Ajuste para viajes que cruzan medianoche
     df.loc[df['delay'] > 43200, 'delay'] -= 86400
     df.loc[df['delay'] < -43200, 'delay'] += 86400
 
-    # Descartar predicciones futuras (tanto programadas como no programadas)
-    df = df[df['timestamp'] >= df['hora_llegada']].copy()
+    # Mantenemos todas las paradas (pasadas y futuras). Para paradas pasadas el
+    # delay es real; para futuras es la predicción actual del tren.
 
     #Filtro para delays con valores masivos y transformacion del día de la semana a valor numérico
     df = filter_delay_outliers(df)
@@ -463,4 +465,7 @@ if __name__ == "__main__":
         print(f"  [ERROR] Unión de DataFrames: {e}")
         exit(1)
 
-    print(df_final)
+    import os
+    ruta = "/tmp/realtime_data.parquet"
+    df_final.to_parquet(ruta, index=False)
+    print(f"\nGuardado en {ruta} ({os.path.getsize(ruta) / 1024:.1f} KB, {len(df_final)} filas)")
