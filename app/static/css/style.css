@@ -397,5 +397,4 @@ body {
 
 .metro-line { transition: opacity 0.2s ease; }
 .metro-line:hover { opacity: 1 !important; filter: brightness(1.3); }
-.metro-line-L { stroke-dasharray: 8 4; }
-.metro-line-S { stroke-dasharray: 6 6; }
+/* líneas L y S — continuas, sin dasharray */
