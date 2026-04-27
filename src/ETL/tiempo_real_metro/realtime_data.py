@@ -418,8 +418,11 @@ def union_dataframes(df1, df2):
     df.loc[df['delay'] > 43200, 'delay'] -= 86400
     df.loc[df['delay'] < -43200, 'delay'] += 86400
 
-    # Mantenemos todas las paradas (pasadas y futuras). Para paradas pasadas el
-    # delay es real; para futuras es la predicción actual del tren.
+    # Descartar paradas futuras: solo nos interesan las ya pasadas o en curso.
+    # La API GTFS-RT incluye predicciones para todas las paradas del viaje,
+    # pero para el mapa se usa vehicle_positions.py y para inferencia solo
+    # necesitamos el historial real de delays, no predicciones.
+    df = df[df['timestamp'] >= df['hora_llegada']].copy()
 
     #Filtro para delays con valores masivos y transformacion del día de la semana a valor numérico
     df = filter_delay_outliers(df)
