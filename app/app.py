@@ -116,6 +116,31 @@ def _load_stations_meta() -> dict:
 def _load_gtfs_shapes() -> dict:
     """Download MTA GTFS static feed and extract one representative shape per route."""
     url = "http://web.mta.info/developers/data/nyct/subway/google_transit.zip"
+
+    # Rutas válidas MTA — filtramos cualquier route_id que no sea conocido
+    VALID_ROUTES = {
+        '1','2','3','4','5','6','7',
+        'A','C','E','B','D','F','M',
+        'G','J','Z','L','N','Q','R','W',
+        'S','GS','FS','H','SIR'
+    }
+
+    def normalize_route_id(rid: str) -> str | None:
+        """Extrae la letra/número base de un route_id GTFS de la MTA.
+        Ejemplos: 'M-Weekday' -> 'M', '6X' -> '6', 'SI' -> 'SIR'
+        Devuelve None si no es una ruta conocida."""
+        rid = rid.strip()
+        if rid in VALID_ROUTES:
+            return rid
+        # Variantes con sufijo tipo 'M-Weekday', 'A-Lefferts', 'J-Jamaica'
+        base = rid.split('-')[0].split('_')[0]
+        if base in VALID_ROUTES:
+            return base
+        # 'SI' es el Staten Island Railway
+        if base == 'SI':
+            return 'SIR'
+        return None
+
     try:
         logger.info("Downloading MTA GTFS static feed from %s …", url)
         with urllib.request.urlopen(url, timeout=60) as resp:  # noqa: S310
@@ -128,12 +153,16 @@ def _load_gtfs_shapes() -> dict:
         shapes_df = pd.read_csv(zf.open("shapes.txt"))
         shapes_df = shapes_df.sort_values(["shape_id", "shape_pt_sequence"])
 
+        # Normalizar route_id en trips y descartar los no reconocidos
+        trips["route_id_norm"] = trips["route_id"].astype(str).map(normalize_route_id)
+        trips = trips[trips["route_id_norm"].notna()]
+
         # Number of points per shape (proxy for "completeness")
         shape_len = shapes_df.groupby("shape_id").size()
 
-        # For each route pick the shape with the most points (full-length run)
+        # Para cada ruta normalizada, elegir la shape con más puntos (recorrido completo)
         route_shapes: dict[str, str] = {}
-        for route_id, grp in trips.groupby("route_id"):
+        for route_id, grp in trips.groupby("route_id_norm"):
             best = max(grp["shape_id"].unique(), key=lambda s: shape_len.get(s, 0))
             route_shapes[str(route_id)] = best
 
@@ -148,7 +177,7 @@ def _load_gtfs_shapes() -> dict:
             if len(pts) >= 2:
                 result[route_id] = pts
 
-        logger.info("GTFS shapes loaded for %d routes", len(result))
+        logger.info("GTFS shapes loaded for %d routes: %s", len(result), sorted(result.keys()))
         return result
     except Exception as exc:
         logger.warning("Could not load GTFS shapes (non-fatal): %s", exc)

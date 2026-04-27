@@ -119,30 +119,42 @@ function offsetLatLngsPx(points, offsetPx) {
 // 5. Crear marcador SVG estilo metro con burbujas por línea
 // ============================================================
 
+// Radio de burbuja según nivel de zoom
+function markerRadiusForZoom(zoom) {
+    if (zoom >= 16) return 10;
+    if (zoom >= 14) return 8;
+    if (zoom >= 13) return 6;
+    if (zoom >= 12) return 4;
+    return 3;
+}
+
 /**
  * Genera un L.divIcon con una o varias burbujas coloreadas
  * (una por línea que pasa por la parada), alineadas horizontalmente.
  */
-function createMetroMarker(routes) {
+function createMetroMarker(routes, zoom) {
     const routeList = routes ? routes.split(' ') : [];
-    const R = 7;          // radio de burbuja
-    const GAP = 2;        // separación entre burbujas
+    const R = markerRadiusForZoom(zoom ?? map.getZoom());
+    const GAP = Math.max(1, Math.round(R * 0.25));
     const n = routeList.length;
     const totalW = n * (R * 2) + (n - 1) * GAP;
-    const totalH = R * 2 + 4; // algo de padding vertical
+    const totalH = R * 2 + 4;
 
     const circles = routeList.map((route, i) => {
         const color = ROUTE_COLORS[route] || '#3B82F6';
         const cx = i * (R * 2 + GAP) + R;
         const cy = R + 2;
+        const fontSize = Math.max(5, R - 1);
+        // Ocultar letra si el radio es muy pequeño
+        const label = R >= 5 ? (route.length <= 2 ? route : '') : '';
         return `<circle cx="${cx}" cy="${cy}" r="${R}"
                     fill="${color}"
-                    stroke="white" stroke-width="1.5"
+                    stroke="white" stroke-width="${R >= 6 ? 1.5 : 1}"
                     style="filter:drop-shadow(0 0 3px ${color}88)"/>
                 <text x="${cx}" y="${cy}"
                     dominant-baseline="central" text-anchor="middle"
-                    font-family="Arial,sans-serif" font-size="${R < 7 ? 6 : 7}"
-                    font-weight="bold" fill="white">${route.length <= 2 ? route : ''}</text>`;
+                    font-family="Arial,sans-serif" font-size="${fontSize}"
+                    font-weight="bold" fill="white">${label}</text>`;
     }).join('');
 
     const svg = `<svg xmlns="http://www.w3.org/2000/svg"
@@ -347,6 +359,16 @@ Promise.all([
         marker.on('click', () => openStationDetails(station));
         markersMap[station.id] = marker.addTo(map);
     });
+
+    // Redibujar marcadores al cambiar zoom para escalar su tamaño
+    function redrawMarkers() {
+        const zoom = map.getZoom();
+        allStations.forEach(station => {
+            const marker = markersMap[station.id];
+            if (marker) marker.setIcon(createMetroMarker(station.routes, zoom));
+        });
+    }
+    map.on('zoomend', redrawMarkers);
 
     console.log(`${stations.length} estaciones renderizadas con estilo metro.`);
     initRoutePlanner();
