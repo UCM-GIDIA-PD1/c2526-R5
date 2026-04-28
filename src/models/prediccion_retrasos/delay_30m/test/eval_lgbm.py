@@ -26,6 +26,7 @@ Variables de entorno necesarias:
 import gc
 import json
 import os
+import time
 import warnings
 
 import joblib
@@ -211,6 +212,35 @@ def compute_metrics(y_true, y_pred, prefix="") -> dict:
     }
 
 
+def make_progress_callback(total_rounds: int, update_every: int = 50):
+    """Muestra una barra de progreso simple durante el entrenamiento de LightGBM."""
+    start_time = time.time()
+    bar_width = 30
+
+    def _callback(env):
+        current = env.iteration + 1
+        if current == 1 or current % update_every == 0 or current == total_rounds:
+            progress = min(current / total_rounds, 1.0)
+            filled = int(bar_width * progress)
+            bar = "#" * filled + "-" * (bar_width - filled)
+            elapsed = time.time() - start_time
+            speed = current / elapsed if elapsed > 0 else 0.0
+            eta = (total_rounds - current) / speed if speed > 0 else 0.0
+
+            print(
+                f"\rTrain [{bar}] {current}/{total_rounds} ({progress * 100:5.1f}%) "
+                f"| elapsed {elapsed:6.1f}s | eta {eta:6.1f}s",
+                end="",
+                flush=True,
+            )
+            if current == total_rounds:
+                print()
+
+    _callback.order = 10
+    _callback.before_iteration = False
+    return _callback
+
+
 def main():
     """Funcion principal que orquesta la carga de datos, el entrenamiento y el registro de resultados."""
     print(f"\nCargando datos de entrenamiento (año {TRAIN_YEAR_2025}, meses {list(TRAIN_MONTHS_2025)})...")
@@ -271,19 +301,25 @@ def main():
     )
 
     weights = build_weights(month_sizes, WEIGHT_SCHEME)
-    print(f"Entrenando LightGBM (target={TARGET}, iteraciones fijas={NUM_BOOST_ROUND}, pesos={WEIGHT_SCHEME})...")
+    print(f"Construyendo lgb.Dataset (pesos={WEIGHT_SCHEME})...")
     lgb_train = lgb.Dataset(X_train, label=y_train, weight=weights, free_raw_data=True)
+    print(f"lgb.Dataset listo. Iniciando entrenamiento ({NUM_BOOST_ROUND} iteraciones, log cada 500)...\n")
 
     model = lgb.train(
         LGBM_PARAMS,
         lgb_train,
         num_boost_round=NUM_BOOST_ROUND,
-        callbacks=[lgb.log_evaluation(500)],
+        callbacks=[
+            make_progress_callback(NUM_BOOST_ROUND, update_every=25),
+            lgb.log_evaluation(500),
+        ],
     )
 
     print(f"\nIteraciones completadas: {NUM_BOOST_ROUND}")
 
+    print("Generando predicciones sobre train...")
     y_pred_train = model.predict(X_train)
+    print("Generando predicciones sobre test...")
     y_pred_test  = model.predict(X_test)
 
     metrics_train = compute_metrics(y_train, y_pred_train, prefix="train_")

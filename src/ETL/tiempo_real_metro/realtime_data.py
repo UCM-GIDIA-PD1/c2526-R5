@@ -327,7 +327,7 @@ def creacion_df_previsto():
     return df
 
 
-def calcular_features_rt(df):
+def calcular_features_rt(df, df_schedule=None):
     """
     Calcula features derivados de la secuencia del viaje y del histórico
     reciente por línea, necesarios para inferencia en tiempo real.
@@ -340,6 +340,13 @@ def calcular_features_rt(df):
         la misma parada y dirección.
       - stops_to_end: paradas restantes hasta el final del viaje.
       - scheduled_time_to_end: segundos programados hasta la última parada.
+    
+    Parámetros:
+      - df: DataFrame filtrado con paradas ya pasadas
+      - df_schedule: DataFrame del schedule completo (sin filtrar). Si se proporciona,
+        se usa para calcular max_seq desde el schedule completo en lugar de usar
+        solo las paradas pasadas en df. Esto corrige el bug donde max_seq era solo
+        el máximo de las paradas pasadas observadas en el feed RT.
     """
     if df.empty:
         return df
@@ -393,11 +400,29 @@ def calcular_features_rt(df):
     )
 
     # 4) stops_to_end y scheduled_time_to_end por viaje
-    # Último stop_sequence y último segundos_previstos de cada viaje
-    final_por_viaje = df.groupby('viaje_id').agg(
-        max_seq=('stop_sequence', 'max'),
-        final_secs=('segundos_previstos', 'max'),
-    )
+    # BUG FIX: Si df_schedule está disponible, usar el schedule completo para calcular
+    # max_seq en lugar de usar solo el df filtrado (que solo contiene paradas pasadas).
+    # De lo contrario, max_seq sería solo el máximo de las paradas pasadas observadas
+    # en el feed RT, no el final real del viaje.
+    
+    if df_schedule is not None and not df_schedule.empty:
+        # Calcular desde el schedule completo (df_schedule), usando trip_id como viaje_id
+        final_por_viaje = (
+            df_schedule.groupby('trip_id').agg(
+                max_seq=('stop_sequence', 'max'),
+                final_secs=('segundos_previstos', 'max'),
+            )
+            .reset_index()
+            .rename(columns={'trip_id': 'viaje_id'})
+            .set_index('viaje_id')
+        )
+    else:
+        # Fallback: usar df (método anterior, pero con los datos filtrados)
+        final_por_viaje = df.groupby('viaje_id').agg(
+            max_seq=('stop_sequence', 'max'),
+            final_secs=('segundos_previstos', 'max'),
+        )
+    
     df = df.merge(final_por_viaje, left_on='viaje_id', right_index=True, how='left')
     df['stops_to_end'] = df['max_seq'] - df['stop_sequence']
     df['scheduled_time_to_end'] = df['final_secs'] - df['segundos_previstos']
@@ -459,7 +484,7 @@ def union_dataframes(df1, df2):
     #Filtro para delays con valores masivos y transformacion del día de la semana a valor numérico
     df = filter_delay_outliers(df)
     df = hora_ciclica(df)
-    df = calcular_features_rt(df)
+    df = calcular_features_rt(df, df_schedule=df2)
 
     columnas_a_eliminar = [
         'dia', 'hora_partida', 'timestamp',
