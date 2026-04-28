@@ -511,13 +511,10 @@ El análisis de importancia (*Permutation Feature Importance*) confirma que las 
 
 
 ## Autores
-- Alex García
-- David Rodríguez
-- Iván García
-- Chiara Gómez
-- Julia Huergo
-- Mario González
-- Sergio Dueñas
-- Juan Jurado
+
+| | | | | | | | |
+|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| [<img src="https://github.com/34maario.png" width="100" height="100">](https://github.com/34maario) | [<img src="https://github.com/alexgar12.png" width="100" height="100">](https://github.com/alexgar12) | [<img src="https://github.com/chiaralg06.png" width="100" height="100">](https://github.com/chiaralg06) | [<img src="https://github.com/davidr210.png" width="100" height="100">](https://github.com/davidr210) | [<img src="https://github.com/IvanGavaaaa.png" width="100" height="100">](https://github.com/IvanGavaaaa) | [<img src="https://github.com/juannjurado.png" width="100" height="100">](https://github.com/juannjurado) | [<img src="https://github.com/juliahuergoucm.png" width="100" height="100">](https://github.com/juliahuergoucm) | [<img src="https://github.com/sergioduenas10.png" width="100" height="100">](https://github.com/sergioduenas10) |
+| [Mario González](https://github.com/34maario) | [Alex García](https://github.com/alexgar12) | [Chiara Gómez](https://github.com/chiaralg06) | [David Rodríguez](https://github.com/davidr210) | [Iván García](https://github.com/IvanGavaaaa) | [Juan Jurado](https://github.com/juannjurado) | [Julia Huergo](https://github.com/juliahuergoucm) | [Sergio Dueñas](https://github.com/sergioduenas10) |
 
 Curso 2025-2026
