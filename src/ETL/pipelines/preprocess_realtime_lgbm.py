@@ -8,10 +8,9 @@ Las únicas llamadas en tiempo real son:
   - Alertas  : Gmail MTA
 
 Uso desde otro módulo:
-    from src.ETL.pipelines.preprocess_realtime_lgbm import build_index, get_trip_features
+    from src.ETL.pipelines.preprocess_realtime_lgbm import get_single_trip_features
 
-    index    = build_index()
-    features = get_trip_features(index, "033150_2..N08R")
+    features = get_single_trip_features("033150_2..N08R")
 
 Uso standalone (un único trip):
     uv run python src/ETL/pipelines/preprocess_realtime_lgbm.py <trip_id>
@@ -139,12 +138,10 @@ def _apply_and_update_lags(df: pd.DataFrame, update_cache: bool = False) -> pd.D
 
         if update_cache:
             new_state[mk] = {
-                "stop_id":               current_stop,
-                "delay":                 current_delay,
-                "lag1":                  lag1,
-                "lag2":                  lag2,
-                "route_rolling_delay":   float(row.get("route_rolling_delay")  or 0),
-                "actual_headway_seconds": float(row.get("actual_headway_seconds") or 0),
+                "stop_id": current_stop,
+                "delay":   current_delay,
+                "lag1":    lag1,
+                "lag2":    lag2,
             }
 
     df["lagged_delay_1"] = pd.array(lag1_vals, dtype=float)
@@ -152,14 +149,6 @@ def _apply_and_update_lags(df: pd.DataFrame, update_cache: bool = False) -> pd.D
 
     if update_cache:
         _save_lagged_state(new_state)
-    else:
-        # Leer route_rolling_delay y actual_headway_seconds del estado MinIO
-        df["route_rolling_delay"]    = df["match_key"].map(
-            lambda k: prev_state.get(k, {}).get("route_rolling_delay")
-        ).astype(float)
-        df["actual_headway_seconds"] = df["match_key"].map(
-            lambda k: prev_state.get(k, {}).get("actual_headway_seconds")
-        ).astype(float)
 
     return df
 
@@ -169,36 +158,36 @@ def _apply_and_update_lags(df: pd.DataFrame, update_cache: bool = False) -> pd.D
 def _add_line_features(df: pd.DataFrame) -> pd.DataFrame:
     """
     Calcula route_rolling_delay y actual_headway_seconds sobre el snapshot
-    completo (todos los trips activos). Solo tiene sentido llamarlo cuando
-    df contiene múltiples trips (ej. en update_lag_state).
+    colapsado (1 fila por trip), usando scheduled_time_to_end como eje de
+    posición en la ruta (trenes más adelantados = menos tiempo restante):
 
-    - route_rolling_delay   : media móvil del delay de los trenes en la misma
-                              línea+dirección ordenados por actual_seconds.
-                              Sin shift para evitar NaN en el tren más reciente.
-    - actual_headway_seconds: diferencia de actual_seconds entre trenes
-                              consecutivos en la misma línea+dirección.
+    - route_rolling_delay   : media móvil del delay de los trenes que van
+                              DELANTE (shift(1)), igual que el histórico.
+    - actual_headway_seconds: diff de scheduled_time_to_end entre trenes
+                              consecutivos → tiempo de separación en ruta.
     """
     if df.empty:
         return df
 
+    needed = {"delay_seconds", "route_id", "direction", "scheduled_time_to_end"}
+    if not needed.issubset(df.columns):
+        return df
+
     df = df.copy()
+    df_s = (
+        df[["route_id", "direction", "scheduled_time_to_end", "delay_seconds"]]
+        .sort_values(["route_id", "direction", "scheduled_time_to_end"])
+        .reset_index().rename(columns={"index": "_idx"})
+    )
+    grp = df_s.groupby(["route_id", "direction"])
+    df_s["route_rolling_delay"]    = grp["delay_seconds"].transform(
+        lambda x: x.rolling(window=5, min_periods=1).mean().shift(1)
+    )
+    df_s["actual_headway_seconds"] = grp["scheduled_time_to_end"].transform("diff")
 
-    needed = {"delay_seconds", "route_id", "direction", "actual_seconds"}
-    if needed.issubset(df.columns):
-        df_s = (
-            df[["route_id", "direction", "actual_seconds", "delay_seconds"]]
-            .sort_values(["route_id", "direction", "actual_seconds"])
-            .reset_index().rename(columns={"index": "_idx"})
-        )
-        grp = df_s.groupby(["route_id", "direction"])
-        df_s["route_rolling_delay"] = grp["delay_seconds"].transform(
-            lambda x: x.rolling(window=5, min_periods=1).mean()
-        )
-        df_s["actual_headway_seconds"] = grp["actual_seconds"].transform("diff")
-
-        df["route_rolling_delay"]    = df_s.set_index("_idx")["route_rolling_delay"].reindex(df.index)
-        df["actual_headway_seconds"] = df_s.set_index("_idx")["actual_headway_seconds"].reindex(df.index)
-
+    idx = df_s.set_index("_idx")
+    df["route_rolling_delay"]    = idx["route_rolling_delay"].reindex(df.index)
+    df["actual_headway_seconds"] = idx["actual_headway_seconds"].reindex(df.index)
     return df
 
 
@@ -393,7 +382,6 @@ def update_lag_state() -> None:
         .copy()
     )
 
-    df = _add_line_features(df)
     _apply_and_update_lags(df, update_cache=True)
     log.info("Estado de lags actualizado: %d trips.", len(df))
 
@@ -421,17 +409,23 @@ def get_single_trip_features(trip_id: str) -> dict | None:
 
     df_gtfs = _gtfs_rt_to_features(df_real, df_previsto)
 
-    # Filtrar al trip y quedarse con la parada más inminente
-    df = df_gtfs[df_gtfs["match_key"] == trip_id].copy()
-    if df.empty:
-        return None
-
-    if "stops_to_end" in df.columns:
-        df = (
-            df[df["stops_to_end"] > 0]
+    # Colapsar a parada más inminente por trip para que _add_line_features
+    # opere con un tren por fila
+    if "stops_to_end" in df_gtfs.columns:
+        df_collapsed = (
+            df_gtfs[df_gtfs["stops_to_end"] > 0]
             .sort_values("stops_to_end", ascending=False)
             .drop_duplicates(subset=["match_key"], keep="first")
+            .copy()
         )
+    else:
+        df_collapsed = df_gtfs.copy()
+
+    # Rolling delay y headway calculados sobre todos los trips de la línea
+    df_collapsed = _add_line_features(df_collapsed)
+
+    # Filtrar al trip pedido
+    df = df_collapsed[df_collapsed["match_key"] == trip_id].copy()
     if df.empty:
         return None
 
@@ -488,6 +482,92 @@ if __name__ == "__main__":
                     print(f"  stop anterior : {prev[mk]['stop_id']}  delay={prev[mk]['delay']:.0f}s")
                     print(f"  stop actual   : {curr[mk]['stop_id']}  delay={curr[mk]['delay']:.0f}s")
                     print(f"  lag1={curr[mk]['lag1']:.0f}s  lag2={curr[mk]['lag2']:.0f}s")
+
+            if i < ciclos - 1:
+                print(f"\nEsperando {pausa}s hasta el siguiente ciclo...")
+                _time.sleep(pausa)
+
+        print("\nTest completado.")
+        sys.exit(0)
+
+    if sys.argv[1] == "--test":
+        import time as _time
+        import math as _math
+        ciclos = int(sys.argv[2]) if len(sys.argv) > 2 else 3
+        pausa  = int(sys.argv[3]) if len(sys.argv) > 3 else 90
+        estados = []
+        trip_fijo = None  # mismo trip seguido en todos los ciclos
+
+        for i in range(ciclos):
+            print(f"\n{'='*60}")
+            print(f"  CICLO {i+1}/{ciclos}")
+            print(f"{'='*60}")
+
+            # 1. Actualizar estado MinIO
+            update_lag_state()
+            estado = _get_lagged_state()
+            estados.append(estado)
+            print(f"\nTrips en MinIO: {len(estado)}")
+
+            # 2. Verificar que el JSON no tiene campos eliminados
+            ELIMINADOS = {"route_rolling_delay", "actual_headway_seconds"}
+            muestra = next(iter(estado), None)
+            if muestra:
+                sobrantes = ELIMINADOS & estado[muestra].keys()
+                if sobrantes:
+                    print(f"  [ERROR] JSON aún contiene: {sobrantes}")
+                else:
+                    print(f"  [OK] JSON limpio — campos: {list(estado[muestra].keys())}")
+
+            # 3. Cambios de parada entre ciclos
+            if i > 0:
+                prev, curr = estados[-2], estados[-1]
+                trips_comunes = set(prev) & set(curr)
+                cambios = [
+                    mk for mk in trips_comunes
+                    if prev[mk].get("stop_id") != curr[mk].get("stop_id")
+                ]
+                print(f"  Trips que cambiaron de parada: {len(cambios)}/{len(trips_comunes)}")
+                if cambios:
+                    mk = cambios[0]
+                    print(f"  Ejemplo lag shift — {mk}:")
+                    print(f"    stop anterior : {prev[mk]['stop_id']}  delay={prev[mk]['delay']:.0f}s")
+                    print(f"    stop actual   : {curr[mk]['stop_id']}  delay={curr[mk]['delay']:.0f}s")
+                    print(f"    lag1={curr[mk]['lag1']:.0f}s  lag2={curr[mk]['lag2']:.0f}s")
+
+            # 4. Fijar el trip en el ciclo 1 y seguirlo en los siguientes
+            if i == 0 and estado:
+                for _tid in list(estado.keys())[:20]:
+                    _f = get_single_trip_features(_tid)
+                    if _f is None:
+                        continue
+                    ahs = _f.get("actual_headway_seconds")
+                    if ahs is not None and not (isinstance(ahs, float) and _math.isnan(ahs)):
+                        trip_fijo = _tid
+                        break
+
+            if trip_fijo is None:
+                print("  [WARN] No se encontró trip válido.")
+            elif trip_fijo not in estado:
+                print(f"  [WARN] '{trip_fijo}' ya no está en el feed (terminó su viaje).")
+            else:
+                features = get_single_trip_features(trip_fijo)
+                if features is None:
+                    print(f"  [WARN] '{trip_fijo}' no encontrado en RT.")
+                else:
+                    rrd = features.get("route_rolling_delay")
+                    ahs = features.get("actual_headway_seconds")
+                    rrd_ok = rrd is not None and not (isinstance(rrd, float) and _math.isnan(rrd))
+                    ahs_ok = ahs is not None and not (isinstance(ahs, float) and _math.isnan(ahs))
+                    lag1  = features.get("lagged_delay_1")
+                    lag2  = features.get("lagged_delay_2")
+                    delay = features.get("delay_seconds")
+                    print(f"\n  Trip fijo: '{trip_fijo}'")
+                    print(f"  [{'OK' if rrd_ok else 'WARN'}] route_rolling_delay    = {rrd}")
+                    print(f"  [{'OK' if ahs_ok else 'WARN'}] actual_headway_seconds = {ahs}")
+                    print(f"  delay={delay}  lag1={lag1}  lag2={lag2}  stop_id={features.get('stop_id')}")
+                    if i > 0 and lag1 != delay:
+                        print(f"  [OK] Lags divergen del delay actual — historial funcionando")
 
             if i < ciclos - 1:
                 print(f"\nEsperando {pausa}s hasta el siguiente ciclo...")
