@@ -66,6 +66,14 @@ packages = ["src"]
 [tool.uv]
 torch-backend = "cpu"
 
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
 [tool.uv.extra-build-dependencies]
 torch-scatter = ["torch"]
 torch-sparse = ["torch"]
