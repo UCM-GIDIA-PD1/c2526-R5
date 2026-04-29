@@ -319,6 +319,22 @@ def get_stations(request: Request):
     ]
 
 
+@app.get("/api/warmup")
+async def warmup(request: Request):
+    """Pre-warm the Drive window cache so the first prediction has no extra latency."""
+    from app.data.drive import download_windows
+    cache = request.app.state.cache
+    if cache.get("windows") is None:
+        windows = await asyncio.to_thread(
+            download_windows,
+            n_windows=settings.n_windows,
+            token_path=settings.drive_token_path,
+            folder_name=settings.google_drive_folder_name,
+        )
+        cache.set("windows", windows)
+    return {"status": "ready"}
+
+
 _ROUTE_ORDER: dict[str, list[str]] = {
     "1": ["Van Cortlandt Park-242 St","238 St","231 St","Marble Hill-225 St","215 St","207 St","Dyckman St","191 St","181 St","168 St-Washington Hts","157 St","145 St","137 St-City College","125 St","116 St-Columbia University","Cathedral Pkwy (110 St)","103 St","96 St","86 St","79 St","72 St","66 St-Lincoln Center","59 St-Columbus Circle","50 St","Times Sq-42 St","34 St-Penn Station","28 St","23 St","18 St","14 St","Christopher St-Stonewall","Houston St","Canal St","Franklin St","Chambers St","WTC Cortlandt","Rector St","South Ferry"],
     "2": ["Wakefield-241 St","Nereid Av","233 St","225 St","219 St","Gun Hill Rd","Burke Av","Allerton Av","Pelham Pkwy","Bronx Park East","E 180 St","West Farms Sq-E Tremont Av","174 St","Freeman St","Simpson St","Intervale Av","Prospect Av","Jackson Av","3 Av-149 St","149 St-Grand Concourse","135 St","125 St","116 St","110 St-Malcolm X Plaza","103 St","96 St","86 St","72 St","Times Sq-42 St","34 St-Penn Station","28 St","23 St","14 St","Chambers St","Fulton St","Wall St","Clark St","Borough Hall","Nevins St","Atlantic Av-Barclays Ctr","Bergen St","Carroll St","Smith-9 Sts","4 Av-9 St","Prospect Av","25 St","36 St","53 St","59 St"],

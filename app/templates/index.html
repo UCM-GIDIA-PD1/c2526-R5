@@ -14,6 +14,15 @@
     <link rel="stylesheet" href="{{ url_for('static', path='css/style.css') }}">
 </head>
 <body>
+    <!-- Initial loading overlay -->
+    <div id="loading-overlay">
+        <div class="loading-box">
+            <div class="loading-ring"></div>
+            <div class="loading-title">NYC Wayfinder</div>
+            <div class="loading-sub">Cargando estaciones y datos en tiempo real…</div>
+        </div>
+    </div>
+
     <div id="map"></div>
     
     <!-- Route Planner Panel -->
@@ -62,6 +71,7 @@
 
     <!-- Station Detail Panel -->
     <div id="station-detail-panel" class="glass-panel detail-panel over-map hidden">
+        <div id="detail-loading-bar" class="detail-loading-bar"></div>
         <button id="close-detail" class="close-btn">&times;</button>
         <div class="detail-header">
             <h2 id="detail-station-name">Nombre Estación</h2>
