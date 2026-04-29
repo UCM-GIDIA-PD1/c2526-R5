@@ -332,7 +332,8 @@ function drawShapeLines(shapesData) {
 Promise.all([
     fetch(SUBWAY_STATIONS_URL).then(r => r.json()),
     fetch('/api/shapes').then(r => r.json()).catch(() => ({})),
-    fetch('/api/routes').then(r => r.json()).catch(() => ({}))
+    fetch('/api/routes').then(r => r.json()).catch(() => ({})),
+    fetch('/api/warmup').catch(() => null),
 ]).then(([stations, shapesData, routeData]) => {
     allStations = stations;
 
@@ -373,7 +374,21 @@ Promise.all([
 
     console.log(`${stations.length} estaciones renderizadas con estilo metro.`);
     initRoutePlanner();
-}).catch(err => console.error("Error al cargar datos:", err));
+
+    // Hide initial loading overlay
+    const overlay = document.getElementById('loading-overlay');
+    if (overlay) {
+        overlay.classList.add('fade-out');
+        setTimeout(() => overlay.remove(), 520);
+    }
+}).catch(err => {
+    console.error("Error al cargar datos:", err);
+    const overlay = document.getElementById('loading-overlay');
+    if (overlay) {
+        overlay.classList.add('fade-out');
+        setTimeout(() => overlay.remove(), 520);
+    }
+});
 
 
 // ============================================================
@@ -384,18 +399,20 @@ const trainLayer = L.layerGroup().addTo(map);
 
 function createTrainIcon(routeId) {
     const color = ROUTE_COLORS[routeId] || '#888888';
-    const s = 14;
-    const half = s / 2;
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${s}" height="${s}" viewBox="0 0 ${s} ${s}">
-        <polygon points="${half},0 ${s},${half} ${half},${s} 0,${half}"
-            fill="${color}" stroke="white" stroke-width="1.5"
-            style="filter:drop-shadow(0 0 3px ${color}cc)"/>
+    const w = 14, h = 8;
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 14 8">
+        <rect x="0.5" y="0.5" width="11" height="5.5" rx="1.5" fill="${color}" fill-opacity="0.78" stroke="white" stroke-width="0.8"/>
+        <rect x="1.5" y="1.5" width="3" height="2.5" rx="0.8" fill="white" fill-opacity="0.25"/>
+        <rect x="5.5" y="1.5" width="2" height="2.5" rx="0.8" fill="white" fill-opacity="0.25"/>
+        <rect x="8.5" y="1.5" width="2" height="2.5" rx="0.8" fill="white" fill-opacity="0.25"/>
+        <circle cx="3"  cy="7" r="1" fill="#111" stroke="white" stroke-width="0.6"/>
+        <circle cx="9" cy="7" r="1" fill="#111" stroke="white" stroke-width="0.6"/>
     </svg>`;
     return L.divIcon({
         className: 'train-icon',
         html: svg,
-        iconSize: [s, s],
-        iconAnchor: [half, half],
+        iconSize: [w, h + 2],
+        iconAnchor: [w / 2, (h + 2) / 2],
     });
 }
 
@@ -634,6 +651,15 @@ function openStationDetails(station) {
     nameEl.textContent   = station.name;
     lineSelectors.innerHTML = '';
 
+    // Reset forecast cards immediately so old station data doesn't linger
+    ['forecast-now', 'forecast-10', 'forecast-20', 'forecast-30'].forEach(id => {
+        const el = document.getElementById(id);
+        el.textContent = '…';
+        el.className = 'delay-val';
+    });
+    document.getElementById('station-alert').classList.add('hidden');
+    document.getElementById('line-detail-info').innerHTML = '';
+
     const routes = station.routes.split(' ');
     routes.forEach((route, index) => {
         const bubble = document.createElement('div');
@@ -661,6 +687,9 @@ async function updateForecast(lineCode) {
         el.textContent = '…';
         el.className = 'delay-val';
     });
+
+    const loadingBar = document.getElementById('detail-loading-bar');
+    if (loadingBar) loadingBar.classList.add('running');
 
     const stopParam = encodeURIComponent(station.id);
 
@@ -710,6 +739,8 @@ async function updateForecast(lineCode) {
 
     document.getElementById('line-detail-info').innerHTML =
         `<p>Línea <strong>${lineCode}</strong> · predicción DCRNN a 10, 20 y 30 min</p>`;
+
+    if (loadingBar) loadingBar.classList.remove('running');
 }
 
 function renderAlertProbability(lineCode, predictions) {
