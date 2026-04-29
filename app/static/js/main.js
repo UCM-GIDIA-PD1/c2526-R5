@@ -46,6 +46,7 @@ function getStationColor(routes) {
 // ============================================================
 let markersMap = {};
 let allStations = [];
+let stationsById = {};     // stationId -> station object
 let currentAlerts = [];    // AlertPrediction[] del WebSocket (por route_id)
 let routePolylines = {};   // lineCode -> L.polyline
 let stationRouteIndex = {}; // stationId -> [lineCode, lineCode, ...]
@@ -335,7 +336,7 @@ Promise.all([
 ]).then(([stations, shapesData, routeData]) => {
     allStations = stations;
 
-    const stationsById = {};
+    stationsById = {};
     stations.forEach(st => {
         stationsById[st.id] = st;
         stationRouteIndex[st.id] = st.routes ? st.routes.split(' ') : [];
@@ -376,7 +377,186 @@ Promise.all([
 
 
 // ============================================================
-// 8. WebSocket para predicciones en tiempo real
+// 8. Posiciones de trenes en tiempo real
+// ============================================================
+
+const trainLayer = L.layerGroup().addTo(map);
+
+function createTrainIcon(routeId) {
+    const color = ROUTE_COLORS[routeId] || '#888888';
+    const s = 14;
+    const half = s / 2;
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${s}" height="${s}" viewBox="0 0 ${s} ${s}">
+        <polygon points="${half},0 ${s},${half} ${half},${s} 0,${half}"
+            fill="${color}" stroke="white" stroke-width="1.5"
+            style="filter:drop-shadow(0 0 3px ${color}cc)"/>
+    </svg>`;
+    return L.divIcon({
+        className: 'train-icon',
+        html: svg,
+        iconSize: [s, s],
+        iconAnchor: [half, half],
+    });
+}
+
+function _fmtDelay(sec) {
+    if (sec === null || sec === undefined) return '—';
+    const s = Math.round(sec);
+    if (s < 60) return `${s} s`;
+    const m = Math.floor(s / 60), r = s % 60;
+    return r > 0 ? `${m}m ${r}s` : `${m} min`;
+}
+
+function _delayCls(sec) {
+    if (sec === null || sec === undefined) return '';
+    return sec <= 30 ? 'on-time' : sec < 120 ? 'minor-delay' : 'delayed';
+}
+
+async function openTrainPopup(train, marker) {
+    const color = ROUTE_COLORS[train.route_id] || '#888888';
+    const baseStopId = train.next_stop_id ? train.next_stop_id.replace(/[NS]$/, '') : null;
+    const stopStation = baseStopId ? stationsById[baseStopId] : null;
+    const stopName = stopStation ? stopStation.name : (train.next_stop_id || '—');
+    const statusText = ({0: 'Llegando', 1: 'En estación', 2: 'En tránsito'})[train.status] ?? '—';
+    const dirText = train.direction === 'N' ? '↑ Uptown' : train.direction === 'S' ? '↓ Downtown' : '';
+
+    const popupOpts = { maxWidth: 260, className: 'train-popup-wrapper' };
+
+    const headerHtml = `
+        <div class="train-popup-header" style="background:${color}">
+            <span class="train-route-badge">${train.route_id}</span>
+            ${dirText ? `<span class="train-popup-dir">${dirText}</span>` : ''}
+        </div>`;
+
+    const metaBlock = `
+        <div class="train-popup-meta">
+            <div class="train-popup-status">${statusText}</div>
+            <div class="train-popup-stop">Próxima: <strong>${stopName}</strong></div>
+        </div>`;
+
+    if (train.is_unscheduled) {
+        marker.bindPopup(
+            `<div>${headerHtml}<div class="train-popup-body">${metaBlock}
+                <div class="train-unscheduled">⚠️ Tren no programado — sin predicción disponible</div>
+            </div></div>`,
+            popupOpts
+        ).openPopup();
+        return;
+    }
+
+    // Show loading state immediately
+    marker.bindPopup(
+        `<div>${headerHtml}<div class="train-popup-body">${metaBlock}
+            <div class="train-popup-loading">Cargando predicciones…</div>
+        </div></div>`,
+        popupOpts
+    ).openPopup();
+
+    // Call the unified per-train endpoint
+    let data = null;
+    try {
+        const params = new URLSearchParams({
+            trip_id:  train.trip_id,
+            route_id: train.route_id,
+            stop_id:  train.next_stop_id,
+        });
+        const resp = await fetch(`/api/predict/train?${params}`);
+        if (resp.ok) data = await resp.json();
+    } catch (e) {
+        console.error('Error fetching train predictions:', e);
+    }
+
+    // ── Build popup content from response ────────────────────────────────────
+    const delayRow = (label, val) => {
+        const cls  = _delayCls(val);
+        const text = _fmtDelay(val);
+        return `<div class="train-delay-row">
+            <span class="delay-label">${label}</span>
+            <span class="delay-val ${cls}">${text}</span>
+        </div>`;
+    };
+
+    const fmtDelta = (d) => {
+        if (!d) return `<span class="delta-chip neutral">—</span>`;
+        const pct = Math.round(d.mejora_prob * 100);
+        return d.mejora_predicted
+            ? `<span class="delta-chip on-time">↓ ${pct}%</span>`
+            : `<span class="delta-chip delayed">↑ ${100 - pct}%</span>`;
+    };
+
+    let bodyContent;
+    if (!data) {
+        bodyContent = `<div class="train-unscheduled">No se pudo obtener predicción</div>`;
+    } else {
+        const curDelay = data.current_delay_s;
+        const stopsLeft = data.stops_to_end;
+        const minsLeft  = data.scheduled_time_to_end_s != null
+            ? Math.round(data.scheduled_time_to_end_s / 60) : null;
+
+        const progressHtml = (stopsLeft != null || minsLeft != null)
+            ? `<div class="train-progress">${stopsLeft != null ? `${stopsLeft} paradas` : ''}${minsLeft != null ? ` · ~${minsLeft} min` : ''} hasta el final</div>`
+            : '';
+
+        const horizonLabel = data.model_horizon === 'end' ? 'Al llegar al final de línea' : 'En 30 min';
+        const horizonDelay = data.delay_prediction?.delay_seconds ?? null;
+
+        const feedWarning = data.feed_warning
+            ? `<div class="train-feed-warning">⚠ Datos RT no disponibles — estimación aproximada</div>`
+            : '';
+
+        bodyContent = `
+            ${feedWarning}
+            <div class="train-popup-meta">
+                <div class="train-popup-status">${statusText}</div>
+                <div class="train-popup-stop">Próxima: <strong>${stopName}</strong></div>
+            </div>
+            ${progressHtml}
+            <div class="train-delay-grid">
+                ${delayRow('Retraso actual', curDelay)}
+                ${delayRow(horizonLabel, horizonDelay)}
+            </div>
+            <div class="train-delta-section">
+                <div class="train-delta-header">Tendencia del retraso</div>
+                <div class="train-delta-row"><span class="delay-label">+10 min</span>${fmtDelta(data.delta_10m)}</div>
+                <div class="train-delta-row"><span class="delay-label">+20 min</span>${fmtDelta(data.delta_20m)}</div>
+                <div class="train-delta-row"><span class="delay-label">+30 min</span>${fmtDelta(data.delta_30m)}</div>
+            </div>`;
+    }
+
+    const fullHtml = `<div>${headerHtml}<div class="train-popup-body">${bodyContent}</div></div>`;
+
+    const popup = marker.getPopup();
+    if (popup?.isOpen()) popup.setContent(fullHtml);
+}
+
+async function refreshTrainPositions() {
+    try {
+        const resp = await fetch('/api/vehicles');
+        if (!resp.ok) return;
+        const trains = await resp.json();
+
+        trainLayer.clearLayers();
+        trains.forEach(t => {
+            if (t.lat == null || t.lon == null) return;
+            const marker = L.marker([t.lat, t.lon], {
+                icon: createTrainIcon(t.route_id),
+                zIndexOffset: 2000,
+            });
+            marker.bindTooltip(`Línea ${t.route_id}`, { direction: 'top', offset: [0, -8] });
+            marker.on('click', () => openTrainPopup(t, marker));
+            marker.addTo(trainLayer);
+        });
+    } catch (e) {
+        console.error('Error al obtener posiciones de trenes:', e);
+    }
+}
+
+refreshTrainPositions();
+setInterval(refreshTrainPositions, 30000);
+
+
+// ============================================================
+// 9. WebSocket para predicciones en tiempo real
 // ============================================================
 const wsUrl = `ws://${window.location.host}/ws/live-updates`;
 const socket = new WebSocket(wsUrl);

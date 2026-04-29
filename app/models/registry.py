@@ -174,7 +174,15 @@ class ModelRegistry:
                     "Re-run binary_classification_delta.py to regenerate."
                 )
 
-            model = joblib.load(model_file)
+            data = joblib.load(model_file)
+            if isinstance(data, dict):
+                model = (data.get("model") or data.get("lgbm")
+                         or data.get("classifier") or data.get("booster"))
+                if model is None:
+                    raise ValueError(f"Could not extract model from dict in {artifact_ref}: keys={list(data.keys())}")
+            else:
+                model = data
+
             with open(prep_file) as f:
                 preprocessing = json.load(f)
 

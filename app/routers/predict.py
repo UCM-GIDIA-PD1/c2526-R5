@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 
 from app.config import settings
 from app.data.drive import download_windows
+from app.data.train_infer import fetch_train_features, FeedUnavailable, TripNotFound
 from app.models.alertas_infer import run_alerts
 from app.models.delay_infer import run_delays
 from app.models.delta_infer import run_delta
@@ -21,6 +22,42 @@ from app.schemas import (
 
 router = APIRouter(prefix="/predict")
 logger = logging.getLogger(__name__)
+
+
+def _drive_window_fallback(windows: list, route_id: str, stop_id: str):
+    """
+    Build a minimal single-row DataFrame from the latest Drive window when the
+    GTFS-RT feed is unavailable.  Provides enough features to run the models
+    at the cost of having no per-train lag/trip-progress information.
+    """
+    import math
+    import numpy as np
+    from datetime import datetime, timezone
+    import pandas as pd
+
+    if not windows:
+        return None
+    df = windows[-1].copy()
+    base = df["stop_id"].astype(str).str.rstrip("NS") if "stop_id" in df.columns else df.index.astype(str)
+    mask = (df["stop_id"].astype(str) == stop_id) | (base == stop_id)
+    sub = df[mask]
+    if sub.empty:
+        # Fall back to route-level average
+        route_norm = route_id.strip().split("-")[0].split("_")[0]
+        if "route_id" in df.columns:
+            sub = df[df["route_id"].astype(str) == route_norm]
+    if sub.empty:
+        return None
+
+    row = sub.iloc[0:1].copy()
+    now = datetime.now(timezone.utc)
+    row["merge_time"] = now
+    # Clear trip-specific fields we can't derive from the window
+    for col in ("stops_to_end_mean", "scheduled_time_to_end_mean",
+                "lagged_delay_1_mean", "lagged_delay_2_mean"):
+        if col not in row.columns:
+            row[col] = 0.0
+    return row
 
 
 async def _get_windows(request: Request) -> list:
@@ -218,6 +255,136 @@ async def predict_alerts(
         route_id_filter=route_id,
         min_prob=min_prob,
     )
+
+
+# ── Per-train prediction ─────────────────────────────────────────────────────
+
+@router.get("/train")
+async def predict_train(
+    request: Request,
+    trip_id: str = Query(..., description="GTFS-RT trip_id"),
+    route_id: str = Query(..., description="Route ID (e.g. '1', 'A')"),
+    stop_id: str = Query(..., description="Current next stop_id (e.g. '101S')"),
+) -> dict:
+    """
+    Per-train predictions given a live trip.
+
+    Fetches the GTFS-RT trip_update for ``trip_id``, builds per-train features,
+    then runs:
+      - delta_10m / delta_20m / delta_30m  (will the delay improve?)
+      - lgbm_delay_end  if scheduled_time_to_end < 30 min
+      - lgbm_delay_30m  otherwise
+
+    Returns current delay, stops remaining, and all model outputs.
+    """
+    registry = request.app.state.registry
+    windows = await _get_windows(request)
+
+    # Fetch per-train features (makes one GTFS-RT request)
+    feed_error: str | None = None
+    try:
+        train_df = await asyncio.to_thread(
+            fetch_train_features,
+            trip_id=trip_id,
+            route_id=route_id,
+            stop_id=stop_id,
+            windows=windows,
+        )
+    except TripNotFound as exc:
+        raise HTTPException(404, detail=str(exc))
+    except FeedUnavailable as exc:
+        # Feed timed out or errored — fall back to Drive-window data for this stop
+        logger.warning("GTFS-RT unavailable for trip %s, using Drive-window fallback: %s", trip_id, exc)
+        feed_error = str(exc)
+        train_df = _drive_window_fallback(windows, route_id, stop_id)
+        if train_df is None or train_df.empty:
+            raise HTTPException(503, detail=f"Feed unavailable and no Drive-window data: {exc}")
+
+    current_delay_s       = float(train_df["delay_seconds_mean"].iloc[0])
+    stops_to_end          = int(train_df["stops_to_end_mean"].iloc[0])
+    scheduled_time_to_end = float(train_df["scheduled_time_to_end_mean"].iloc[0])
+
+    # Decide which delay model to use
+    use_end_model  = scheduled_time_to_end < 1800  # < 30 min remaining
+    delay_entry    = registry.lgbm_delay_end if use_end_model else registry.lgbm_delay_30m
+    model_horizon  = "end" if use_end_model else "30m"
+    delay_entry_ok = (
+        (use_end_model and registry.lgbm_delay_end is not None)
+        or (not use_end_model and registry.lgbm_delay_30m is not None)
+    )
+
+    # Wrap single-row df as a fake windows list for the existing inference fns
+    fake_windows = [train_df]
+
+    async def _safe(name: str, fn, **kw):
+        try:
+            return await asyncio.to_thread(fn, **kw)
+        except Exception as exc:
+            logger.warning("Train model %s failed for trip %s: %s", name, trip_id, exc)
+            return None
+
+    # Run all models concurrently
+    coros = {
+        "delay": (
+            _safe("delay", run_delays,
+                  entry=delay_entry, windows=fake_windows,
+                  route_id_filter=route_id, stop_id_filter=stop_id,
+                  min_delay_seconds=-999999.0)
+            if delay_entry_ok
+            else asyncio.sleep(0, result=None)
+        ),
+        "delta_10m": (
+            _safe("delta_10m", run_delta,
+                  entry=registry.delta_10m, windows=fake_windows,
+                  horizon="delta_delay_10m",
+                  route_id_filter=route_id, stop_id_filter=stop_id)
+            if registry.delta_10m else asyncio.sleep(0, result=None)
+        ),
+        "delta_20m": (
+            _safe("delta_20m", run_delta,
+                  entry=registry.delta_20m, windows=fake_windows,
+                  horizon="delta_delay_20m",
+                  route_id_filter=route_id, stop_id_filter=stop_id)
+            if registry.delta_20m else asyncio.sleep(0, result=None)
+        ),
+        "delta_30m": (
+            _safe("delta_30m", run_delta,
+                  entry=registry.delta_30m, windows=fake_windows,
+                  horizon="delta_delay_30m",
+                  route_id_filter=route_id, stop_id_filter=stop_id)
+            if registry.delta_30m else asyncio.sleep(0, result=None)
+        ),
+    }
+
+    results_list = await asyncio.gather(*coros.values())
+    res = dict(zip(coros.keys(), results_list))
+
+    def _first_pred(model_result):
+        """Extract the first (and only) prediction from a model result."""
+        if model_result is None:
+            return None
+        preds = getattr(model_result, "predictions", None)
+        if not preds:
+            return None
+        p = preds[0]
+        return {k: v for k, v in p.__dict__.items() if not k.startswith("_")}
+
+    delay_pred = _first_pred(res["delay"])
+
+    return {
+        "trip_id":                trip_id,
+        "route_id":               route_id,
+        "stop_id":                stop_id,
+        "current_delay_s":        round(current_delay_s, 1),
+        "stops_to_end":           stops_to_end,
+        "scheduled_time_to_end_s": round(scheduled_time_to_end, 1),
+        "model_horizon":          model_horizon,
+        "delay_prediction":       delay_pred,
+        "delta_10m":              _first_pred(res["delta_10m"]),
+        "delta_20m":              _first_pred(res["delta_20m"]),
+        "delta_30m":              _first_pred(res["delta_30m"]),
+        "feed_warning":           feed_error,
+    }
 
 
 # ── All ───────────────────────────────────────────────────────────────────────
