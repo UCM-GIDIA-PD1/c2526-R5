@@ -28,7 +28,9 @@ El sistema está diseñado siguiendo una arquitectura tipo data lake (raw → pr
 │   │   ├── clima/                     # Datos meteorológicos (Open-Meteo)
 │   │   ├── eventos/                   # Eventos NYC (deportes, conciertos, oficiales)
 │   │   ├── gtfs_historico/            # GTFS histórico (instancias de trenes pasando por estaciones)
-│   │   ├── pipelines/                 # Orquestadores run_extraccion y run_transform, generacion de dataset final y agregaciones
+│   │   ├── pipelines/
+│   │   │   ├── historical/            # Orquestadores y scripts del pipeline batch (extracción, transformación, dataset final)
+│   │   │   └── realtime/              # Worker y scripts del pipeline en tiempo real (inferencia, ventanas, subida a Drive)
 │   │   └── tiempo_real_metro/         # GTFS en tiempo real (MTA feeds)
 │   └── models/                        
 │       ├── common/                    # Agregaciones temporales adicionales
@@ -205,7 +207,7 @@ Estos permiten ejecutar la ingesta y transformación de datos de forma parametri
 Script principal:
 
 ```
-src/ETL/pipelines/run_extraccion.py
+src/ETL/pipelines/historical/run_extraccion.py
 ```
 
 Este orquestador ejecuta la descarga de datos desde las distintas fuentes externas (GTFS, clima, eventos, alertas oficiales, etc.) y los almacena en la capa `raw/` de MinIO.
@@ -219,7 +221,7 @@ Este orquestador ejecuta la descarga de datos desde las distintas fuentes extern
 #### Ejemplo de ejecución
 
 ```bash
-uv run python src/ETL/pipelines/run_extraccion.py --source all --start 2025-01-01 --end 2025-01-03
+uv run python src/ETL/pipelines/historical/run_extraccion.py --source all --start 2025-01-01 --end 2025-01-03
 ```
 
 ---
@@ -229,7 +231,7 @@ uv run python src/ETL/pipelines/run_extraccion.py --source all --start 2025-01-0
 Script principal:
 
 ```
-src/ETL/pipelines/run_transform.py
+src/ETL/pipelines/historical/run_transform.py
 ```
 
 Este orquestador procesa los datos almacenados en `raw/` y/o `processed/`, realiza limpieza, integración y generación de variables, y los mueve a capas superiores del data lake.
@@ -244,7 +246,7 @@ Este orquestador procesa los datos almacenados en `raw/` y/o `processed/`, reali
 #### Ejemplo de ejecución
 
 ```bash
-uv run python src/ETL/pipelines/run_transform.py --source all --start 2025-01-01 --end 2025-01-03
+uv run python src/ETL/pipelines/historical/run_transform.py --source all --start 2025-01-01 --end 2025-01-03
 ```
 
 Tras su ejecución, los datos seguirán el flujo:
@@ -261,13 +263,13 @@ Una vez completada la transformación, tres scripts adicionales preparan los dat
 
 ```bash
 # Une todas las fuentes limpias en un único parquet mensual con todos los features (cleaned/ → final/)
-uv run python src/ETL/pipelines/generate_final_dataset.py --start 2025-01-01 --end 2025-01-31
+uv run python src/ETL/pipelines/historical/generate_final_dataset.py --start 2025-01-01 --end 2025-01-31
 
 # Divide el dataset final por línea de metro (necesario para modelos por línea)
-uv run python src/ETL/pipelines/split_final_by_line.py
+uv run python src/ETL/pipelines/historical/split_final_by_line.py
 
 # Agrega los parquets mensuales de cada línea en un único parquet anual
-uv run python src/ETL/pipelines/aggregate_lines_yearly.py
+uv run python src/ETL/pipelines/historical/aggregate_lines_yearly.py
 ```
 
 ---
@@ -277,6 +279,31 @@ uv run python src/ETL/pipelines/aggregate_lines_yearly.py
 ```
 raw/ → processed/ → cleaned/ → final/ → aggregations/
 ```
+
+---
+
+## Arquitectura interna del pipeline
+
+### Pipeline histórico
+
+Los dos orquestadores principales (`run_extraccion`, `run_transform`) utilizan un registro de fuentes (`REGISTRY`) que mapea cada nombre de fuente a su función correspondiente. Esto permite ejecutar una sola fuente o todas con el mismo comando. Flujo completo:
+
+```
+run_extraccion          →  raw/               (descarga de 4 fuentes: GTFS histórico, clima, eventos, alertas)
+run_transform           →  processed/ → cleaned/   (limpieza + generación de features, por fuente)
+generate_final_dataset  →  final/             (une todas las fuentes limpias en un Parquet mensual)
+split_final_by_line     →  final/ por línea
+aggregate_lines_yearly  →  aggregations/      (Parquet anual agregado a resolución de 60 min)
+```
+
+### Pipeline en tiempo real
+
+Funciona en dos capas separadas por cadencia:
+
+- **Diaria** (`upload_daily_data.py`, cron 00:00 NY): sube a Google Drive los datos estáticos del día — GTFS `stop_times`, clima y eventos. Esto evita recalcularlos en cada inferencia.
+- **Continua** (`local_realtime_worker.py`, cada 90s): llama a `preprocess_realtime_lgbm.update_lag_state()`, que descarga el GTFS-RT en vivo, construye las features de inferencia para todos los viajes activos y guarda el estado de lags en MinIO. La API consume ese estado para responder sin relanzar el pipeline completo en cada petición.
+
+La pieza central es `generate_realtime_dataset.py`: fusiona GTFS-RT, Open-Meteo, SeatGeek/ESPN/NYC Open Data y alertas Gmail MTA en un único dataframe con el mismo esquema de columnas que el dataset histórico, garantizando compatibilidad directa con los modelos entrenados.
 
 ---
 
@@ -513,7 +540,7 @@ El fichero `.env` debe contener las variables de entorno descritas en la secció
 Al iniciarse, el contenedor lanza dos procesos en paralelo:
 
 - **API REST** (`app/app.py`) — servidor FastAPI accesible en `http://localhost:8000`. Expone los endpoints de predicción que consumen los modelos entrenados.
-- **Worker de tiempo real** (`src/ETL/pipelines/local_realtime_worker.py`) — proceso en segundo plano que se conecta a los feeds GTFS-RT de la MTA, descarga el estado actual de la red de metro y lo procesa de forma continua para tenerlo disponible para la inferencia. Sin este worker, la API no dispone de datos frescos con los que generar predicciones.
+- **Worker de tiempo real** (`src/ETL/pipelines/realtime/local_realtime_worker.py`) — proceso en segundo plano que se conecta a los feeds GTFS-RT de la MTA, descarga el estado actual de la red de metro y lo procesa de forma continua para tenerlo disponible para la inferencia. Sin este worker, la API no dispone de datos frescos con los que generar predicciones.
 
 ---
 

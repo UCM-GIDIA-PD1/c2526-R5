@@ -8,8 +8,8 @@ adaptado para trabajar con el momento actual en lugar de
 datos históricos mensuales almacenados en MinIO.
 
 Uso:
-    from src.ETL.pipelines.generate_realtime_dataset import build_realtime_dataset
-    from src.ETL.pipelines.aggregate_realtime_dataset import aggregate_realtime
+    from src.ETL.pipelines.realtime.generate_realtime_dataset import build_realtime_dataset
+    from src.ETL.pipelines.realtime.aggregate_realtime_dataset import aggregate_realtime
 
     df_rt = build_realtime_dataset()
     df_agregado = aggregate_realtime(df_rt, tiempo='30')
@@ -189,7 +189,7 @@ def aggregate_realtime(df_rt: pd.DataFrame, tiempo: str = '30') -> pd.DataFrame:
 
 
 if __name__ == "__main__":
-    from src.ETL.pipelines.generate_realtime_dataset import build_realtime_dataset
+    from src.ETL.pipelines.realtime.generate_realtime_dataset import build_realtime_dataset
 
     df_rt = build_realtime_dataset()
     df_agregado = aggregate_realtime(df_rt, tiempo='30')
