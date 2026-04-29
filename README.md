@@ -37,20 +37,41 @@ El sistema está diseñado siguiendo una arquitectura tipo data lake (raw → pr
 │       ├── propagacion_estacion/      # Modelos entrenados para modelar la propagación del retraso por la red 
 │       └── seleccion_variables.md     # Explicación de las variables que mantenemos en la fase de modelado a partir de los resultados de los notebooks de análisis
 │
+├── app/                               # API REST y cliente web (FastAPI)
+│   ├── app.py                         # Punto de entrada de la aplicación
+│   ├── config.py                      # Configuración y variables de entorno
+│   ├── cache.py                       # Caché en memoria para datos de inferencia
+│   ├── schemas.py                     # Esquemas Pydantic de request/response
+│   ├── routers/
+│   │   ├── predict.py                 # Endpoints de predicción
+│   │   └── health.py                  # Endpoint de health check
+│   ├── models/
+│   │   ├── registry.py                # Carga y registro de modelos
+│   │   ├── delay_infer.py             # Inferencia delay_30m y delay_end
+│   │   ├── delta_infer.py             # Inferencia delta_delay
+│   │   ├── alertas_infer.py           # Inferencia anticipación de alertas
+│   │   └── dcrnn_infer.py             # Inferencia propagación (DCRNN)
+│   ├── data/
+│   │   ├── drive.py                   # Lectura de datos desde MinIO/Drive
+│   │   └── transforms.py              # Transformaciones previas a la inferencia
+│   ├── static/                        # CSS y JS del cliente web
+│   └── templates/                     # Plantillas HTML del cliente web
+│
 ├── notebooks/                         # Análisis exploratorio y visualizaciones
-├── docs/                              # Documentación adicional
-├── pyproject.toml                     # Configuración del entorno
-├── .gitignore
-└── README.md
-```
+├── docs/                              # Documentación adicional del proyecto
+├── Dockerfile                         # Imagen del contenedor (API + worker RT)
+├── .dockerignore                      # Excluye notebooks, artefactos, .env y cachés del contexto de build
+├── pyproject.toml                     # Dependencias y configuración del proyecto (uv)
+├── uv.lock                            # Lockfile de dependencias para builds reproducibles
+├── .env.example                       # Plantilla de variables de entorno
+├── .gitignore                         
+└── README.md                         
 
 ## Almacenamiento en MinIO
 
 Los datos del proyecto se almacenan en un bucket S3-compatible (MinIO),
 siguiendo una arquitectura tipo data lake organizada en distintas capas
 según su nivel de procesamiento.
-
-No se almacenan datos en GitHub.
 
 Bucket utilizado: `pd1`
 Raíz del proyecto: `grupo5/`
@@ -73,17 +94,21 @@ pd1/
     │
     ├── final/
     │   ├── year=2025/
+    │   │   └── month=*/
     │   └── year=2026/
+    │       └── month=*/
     │
     ├── aggregations/
     │   └── lines/
     │
-    └── cleaned/
-        ├── clima_clean/
-        ├── eventos_nyc/
-        ├── gtfs_clean_scheduled/
-        ├── gtfs_clean_unscheduled/
-        └── official_alerts/
+    ├── cleaned/
+    │   ├── clima_clean/
+    │   ├── eventos_nyc/
+    │   ├── gtfs_clean_scheduled/
+    │   ├── gtfs_clean_unscheduled/
+    │   └── official_alerts/
+    │
+    └── realtime/
 ```
 ## Descripción de cada capa
 
@@ -102,7 +127,15 @@ Datos limpios y validados. Incluye:
 - Control de outliers
 - Reportes de calidad
 
-También contiene features derivados y agregaciones temporales (p.ej. lagged_delay_1).
+
+### final/
+Dataset final con todas las fuentes integradas y listas para el modelado. Los datos se organizan por año (`year=2025/`, `year=2026/`) y dentro de cada año por mes (`month=*/`), un Parquet por mes.
+
+### aggregations/
+Dataset completo de 2025 y 2026 con todos los meses agregados a resolución de 60 minutos. Sirve como entrada para los modelos de propagación y análisis a nivel de red, y de alertas.
+
+### realtime/
+Estado actual de la red almacenado por el worker de tiempo real. Se sobreescribe de forma continua con los datos más recientes procedentes de los feeds GTFS-RT de la MTA.
 
 ## Convención de nombres
 Los objetos se almacenan siguiendo la convención:
@@ -126,30 +159,28 @@ El proyecto utiliza Python y el gestor de dependencias `uv`.
 
 ### Configuración de variables de entorno
 
-Se recomienda utilizar variables de entorno del sistema (se podría utilizar .env con python-dotenv)
+Se recomienda crear un fichero `.env` en la raíz del proyecto (se puede usar `.env.example` como plantilla). Este fichero es utilizado tanto por los scripts locales como por el contenedor Docker (`--env-file .env`).
+
 ```
-export MINIO_ACCESS_KEY=...
-export MINIO_SECRET_KEY=...
-export MOBILITY_DATABASE_REFRESH_TOKEN=...
-export NYC_OPEN_DATA_TOKEN=...
-export CLIENT_ID_SEATGEEK=...
-export SETLIST_API_KEY=...
-export WANDB_API_KEY=...
+MINIO_ACCESS_KEY=...
+MINIO_SECRET_KEY=...
+MOBILITY_DATABASE_REFRESH_TOKEN=...
+NYC_OPEN_DATA_TOKEN=...
+CLIENT_ID_SEATGEEK=...
+SETLIST_API_KEY=...
+WANDB_API_KEY=...
 ```
 
-Credenciales y tokens
+Además se requieren las credenciales de Gmail para la ingestión de alertas oficiales:
 ```
 Gmail credentials
 Gmail token
 ```
 
-### Crear entorno e instalar dependencias
+### Weights & Biases (W&B)
 
-```bash
-uv sync
-```
+El proyecto utiliza [Weights & Biases](https://wandb.ai) para el seguimiento de experimentos de todos los modelos. Cada entrenamiento registra automáticamente métricas, hiperparámetros y artefactos. Para activarlo es necesario proporcionar `WANDB_API_KEY` en el `.env`. Los runs se pueden consultar en el proyecto del equipo en la plataforma de W&B.
 
----
 
 
 ## Ejecución de los pipelines
@@ -286,7 +317,7 @@ Los entrenamientos y evaluación se almacenan en
 common/
 ```
 
-El análisis de desempeño de los nuevos datos se alamcena en 
+El análisis de desempeño de los nuevos datos se almacena en 
 
 ```
 analytics/
@@ -454,6 +485,32 @@ El análisis de importancia (*Permutation Feature Importance*) confirma que las 
 
 ---
 
+## Despliegue con Docker
+
+El proyecto incluye un `Dockerfile` que empaqueta tanto la API REST como el worker de ingestión en tiempo real en un único contenedor.
+
+### Construcción de la imagen
+
+```bash
+docker build -t express-bound .
+```
+
+### Ejecución del contenedor
+
+```bash
+docker run -p 8000:8000 --env-file .env express-bound
+```
+
+El fichero `.env` debe contener las variables de entorno descritas en la sección [Configuración del entorno de desarrollo](#configuración-del-entorno-de-desarrollo).
+
+### Qué arranca el contenedor
+
+Al iniciarse, el contenedor lanza dos procesos en paralelo:
+
+- **API REST** (`app/app.py`) — servidor FastAPI accesible en `http://localhost:8000`. Expone los endpoints de predicción que consumen los modelos entrenados.
+- **Worker de tiempo real** (`src/ETL/pipelines/local_realtime_worker.py`) — proceso en segundo plano que se conecta a los feeds GTFS-RT de la MTA, descarga el estado actual de la red de metro y lo procesa de forma continua para tenerlo disponible para la inferencia. Sin este worker, la API no dispone de datos frescos con los que generar predicciones.
+
+---
 
 ## Autores
 
