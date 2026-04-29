@@ -64,8 +64,9 @@ El sistema está diseñado siguiendo una arquitectura tipo data lake (raw → pr
 ├── pyproject.toml                     # Dependencias y configuración del proyecto (uv)
 ├── uv.lock                            # Lockfile de dependencias para builds reproducibles
 ├── .env.example                       # Plantilla de variables de entorno
-├── .gitignore                         
-└── README.md                         
+├── .gitignore                         # Ficheros excluidos del control de versiones
+└── README.md                          # Este fichero
+```
 
 ## Almacenamiento en MinIO
 
@@ -181,7 +182,11 @@ Gmail token
 
 El proyecto utiliza [Weights & Biases](https://wandb.ai) para el seguimiento de experimentos de todos los modelos. Cada entrenamiento registra automáticamente métricas, hiperparámetros y artefactos. Para activarlo es necesario proporcionar `WANDB_API_KEY` en el `.env`. Los runs se pueden consultar en el proyecto del equipo en la plataforma de W&B.
 
+### Crear entorno e instalar dependencias
 
+```bash
+uv sync
+```
 
 ## Ejecución de los pipelines
 
