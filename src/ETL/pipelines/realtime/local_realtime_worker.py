@@ -2,7 +2,7 @@ import os
 import time
 import logging
 
-from src.ETL.pipelines.preprocess_realtime_lgbm import CACHE_FILE, update_lag_state
+from src.ETL.pipelines.realtime.preprocess_realtime_lgbm import CACHE_FILE, update_lag_state
 from src.common.minio_client import delete_object
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

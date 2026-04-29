@@ -12,7 +12,7 @@ Estrategia de memoria:
     En RAM nunca hay más de un mes cargado.
 
 Uso:
-    uv run python src/ETL/pipelines/split_final_by_line.py
+    uv run python src/ETL/pipelines/historical/split_final_by_line.py
 
 Variables de entorno necesarias:
     MINIO_ACCESS_KEY

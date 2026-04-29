@@ -28,7 +28,9 @@ El sistema está diseñado siguiendo una arquitectura tipo data lake (raw → pr
 │   │   ├── clima/                     # Datos meteorológicos (Open-Meteo)
 │   │   ├── eventos/                   # Eventos NYC (deportes, conciertos, oficiales)
 │   │   ├── gtfs_historico/            # GTFS histórico (instancias de trenes pasando por estaciones)
-│   │   ├── pipelines/                 # Orquestadores run_extraccion y run_transform, generacion de dataset final y agregaciones
+│   │   ├── pipelines/
+│   │   │   ├── historical/            # Orquestadores y scripts del pipeline batch (extracción, transformación, dataset final)
+│   │   │   └── realtime/              # Worker y scripts del pipeline en tiempo real (inferencia, ventanas, subida a Drive)
 │   │   └── tiempo_real_metro/         # GTFS en tiempo real (MTA feeds)
 │   └── models/                        
 │       ├── common/                    # Agregaciones temporales adicionales
@@ -37,11 +39,35 @@ El sistema está diseñado siguiendo una arquitectura tipo data lake (raw → pr
 │       ├── propagacion_estacion/      # Modelos entrenados para modelar la propagación del retraso por la red 
 │       └── seleccion_variables.md     # Explicación de las variables que mantenemos en la fase de modelado a partir de los resultados de los notebooks de análisis
 │
+├── app/                               # API REST y cliente web (FastAPI)
+│   ├── app.py                         # Punto de entrada de la aplicación
+│   ├── config.py                      # Configuración y variables de entorno
+│   ├── cache.py                       # Caché en memoria para datos de inferencia
+│   ├── schemas.py                     # Esquemas Pydantic de request/response
+│   ├── routers/
+│   │   ├── predict.py                 # Endpoints de predicción
+│   │   └── health.py                  # Endpoint de health check
+│   ├── models/
+│   │   ├── registry.py                # Carga y registro de modelos
+│   │   ├── delay_infer.py             # Inferencia delay_30m y delay_end
+│   │   ├── delta_infer.py             # Inferencia delta_delay
+│   │   ├── alertas_infer.py           # Inferencia anticipación de alertas
+│   │   └── dcrnn_infer.py             # Inferencia propagación (DCRNN)
+│   ├── data/
+│   │   ├── drive.py                   # Lectura de datos desde MinIO/Drive
+│   │   └── transforms.py              # Transformaciones previas a la inferencia
+│   ├── static/                        # CSS y JS del cliente web
+│   └── templates/                     # Plantillas HTML del cliente web
+│
 ├── notebooks/                         # Análisis exploratorio y visualizaciones
-├── docs/                              # Documentación adicional
-├── pyproject.toml                     # Configuración del entorno
-├── .gitignore
-└── README.md
+├── docs/                              # Documentación adicional del proyecto
+├── Dockerfile                         # Imagen del contenedor (API + worker RT)
+├── .dockerignore                      # Excluye notebooks, artefactos, .env y cachés del contexto de build
+├── pyproject.toml                     # Dependencias y configuración del proyecto (uv)
+├── uv.lock                            # Lockfile de dependencias para builds reproducibles
+├── .env.example                       # Plantilla de variables de entorno
+├── .gitignore                         # Ficheros excluidos del control de versiones
+└── README.md                          # Este fichero
 ```
 
 ## Almacenamiento en MinIO
@@ -49,8 +75,6 @@ El sistema está diseñado siguiendo una arquitectura tipo data lake (raw → pr
 Los datos del proyecto se almacenan en un bucket S3-compatible (MinIO),
 siguiendo una arquitectura tipo data lake organizada en distintas capas
 según su nivel de procesamiento.
-
-No se almacenan datos en GitHub.
 
 Bucket utilizado: `pd1`
 Raíz del proyecto: `grupo5/`
@@ -73,17 +97,21 @@ pd1/
     │
     ├── final/
     │   ├── year=2025/
+    │   │   └── month=*/
     │   └── year=2026/
+    │       └── month=*/
     │
     ├── aggregations/
     │   └── lines/
     │
-    └── cleaned/
-        ├── clima_clean/
-        ├── eventos_nyc/
-        ├── gtfs_clean_scheduled/
-        ├── gtfs_clean_unscheduled/
-        └── official_alerts/
+    ├── cleaned/
+    │   ├── clima_clean/
+    │   ├── eventos_nyc/
+    │   ├── gtfs_clean_scheduled/
+    │   ├── gtfs_clean_unscheduled/
+    │   └── official_alerts/
+    │
+    └── realtime/
 ```
 ## Descripción de cada capa
 
@@ -102,7 +130,15 @@ Datos limpios y validados. Incluye:
 - Control de outliers
 - Reportes de calidad
 
-También contiene features derivados y agregaciones temporales (p.ej. lagged_delay_1).
+
+### final/
+Dataset final con todas las fuentes integradas y listas para el modelado. Los datos se organizan por año (`year=2025/`, `year=2026/`) y dentro de cada año por mes (`month=*/`), un Parquet por mes.
+
+### aggregations/
+Dataset completo de 2025 y 2026 con todos los meses agregados a resolución de 60 minutos. Sirve como entrada para los modelos de propagación y análisis a nivel de red, y de alertas.
+
+### realtime/
+Estado actual de la red almacenado por el worker de tiempo real. Se sobreescribe de forma continua con los datos más recientes procedentes de los feeds GTFS-RT de la MTA.
 
 ## Convención de nombres
 Los objetos se almacenan siguiendo la convención:
@@ -126,31 +162,33 @@ El proyecto utiliza Python y el gestor de dependencias `uv`.
 
 ### Configuración de variables de entorno
 
-Se recomienda utilizar variables de entorno del sistema (se podría utilizar .env con python-dotenv)
+Se recomienda crear un fichero `.env` en la raíz del proyecto (se puede usar `.env.example` como plantilla). Este fichero es utilizado tanto por los scripts locales como por el contenedor Docker (`--env-file .env`).
+
 ```
-export MINIO_ACCESS_KEY=...
-export MINIO_SECRET_KEY=...
-export MOBILITY_DATABASE_REFRESH_TOKEN=...
-export NYC_OPEN_DATA_TOKEN=...
-export CLIENT_ID_SEATGEEK=...
-export SETLIST_API_KEY=...
-export WANDB_API_KEY=...
+MINIO_ACCESS_KEY=...
+MINIO_SECRET_KEY=...
+MOBILITY_DATABASE_REFRESH_TOKEN=...
+NYC_OPEN_DATA_TOKEN=...
+CLIENT_ID_SEATGEEK=...
+SETLIST_API_KEY=...
+WANDB_API_KEY=...
 ```
 
-Credenciales y tokens
+Además se requieren las credenciales de Gmail para la ingestión de alertas oficiales:
 ```
 Gmail credentials
 Gmail token
 ```
+
+### Weights & Biases (W&B)
+
+El proyecto utiliza [Weights & Biases](https://wandb.ai) para el seguimiento de experimentos de todos los modelos. Cada entrenamiento registra automáticamente métricas, hiperparámetros y artefactos. Para activarlo es necesario proporcionar `WANDB_API_KEY` en el `.env`. Los runs se pueden consultar en el proyecto del equipo en la plataforma de W&B.
 
 ### Crear entorno e instalar dependencias
 
 ```bash
 uv sync
 ```
-
----
-
 
 ## Ejecución de los pipelines
 
@@ -169,7 +207,7 @@ Estos permiten ejecutar la ingesta y transformación de datos de forma parametri
 Script principal:
 
 ```
-src/ETL/pipelines/run_extraccion.py
+src/ETL/pipelines/historical/run_extraccion.py
 ```
 
 Este orquestador ejecuta la descarga de datos desde las distintas fuentes externas (GTFS, clima, eventos, alertas oficiales, etc.) y los almacena en la capa `raw/` de MinIO.
@@ -183,7 +221,7 @@ Este orquestador ejecuta la descarga de datos desde las distintas fuentes extern
 #### Ejemplo de ejecución
 
 ```bash
-uv run python src/ETL/pipelines/run_extraccion.py --source all --start 2025-01-01 --end 2025-01-03
+uv run python src/ETL/pipelines/historical/run_extraccion.py --source all --start 2025-01-01 --end 2025-01-03
 ```
 
 ---
@@ -193,7 +231,7 @@ uv run python src/ETL/pipelines/run_extraccion.py --source all --start 2025-01-0
 Script principal:
 
 ```
-src/ETL/pipelines/run_transform.py
+src/ETL/pipelines/historical/run_transform.py
 ```
 
 Este orquestador procesa los datos almacenados en `raw/` y/o `processed/`, realiza limpieza, integración y generación de variables, y los mueve a capas superiores del data lake.
@@ -208,7 +246,7 @@ Este orquestador procesa los datos almacenados en `raw/` y/o `processed/`, reali
 #### Ejemplo de ejecución
 
 ```bash
-uv run python src/ETL/pipelines/run_transform.py --source all --start 2025-01-01 --end 2025-01-03
+uv run python src/ETL/pipelines/historical/run_transform.py --source all --start 2025-01-01 --end 2025-01-03
 ```
 
 Tras su ejecución, los datos seguirán el flujo:
@@ -225,13 +263,13 @@ Una vez completada la transformación, tres scripts adicionales preparan los dat
 
 ```bash
 # Une todas las fuentes limpias en un único parquet mensual con todos los features (cleaned/ → final/)
-uv run python src/ETL/pipelines/generate_final_dataset.py --start 2025-01-01 --end 2025-01-31
+uv run python src/ETL/pipelines/historical/generate_final_dataset.py --start 2025-01-01 --end 2025-01-31
 
 # Divide el dataset final por línea de metro (necesario para modelos por línea)
-uv run python src/ETL/pipelines/split_final_by_line.py
+uv run python src/ETL/pipelines/historical/split_final_by_line.py
 
 # Agrega los parquets mensuales de cada línea en un único parquet anual
-uv run python src/ETL/pipelines/aggregate_lines_yearly.py
+uv run python src/ETL/pipelines/historical/aggregate_lines_yearly.py
 ```
 
 ---
@@ -241,6 +279,36 @@ uv run python src/ETL/pipelines/aggregate_lines_yearly.py
 ```
 raw/ → processed/ → cleaned/ → final/ → aggregations/
 ```
+
+---
+
+## Arquitectura interna del pipeline
+
+### Pipeline histórico
+
+Los dos orquestadores principales (`run_extraccion`, `run_transform`) utilizan un registro de fuentes (`REGISTRY`) que mapea cada nombre de fuente a su función correspondiente. Esto permite ejecutar una sola fuente o todas con el mismo comando. Flujo completo:
+
+```
+run_extraccion          →  raw/               (descarga de 4 fuentes: GTFS histórico, clima, eventos, alertas)
+run_transform           →  processed/ → cleaned/   (limpieza + generación de features, por fuente)
+generate_final_dataset  →  final/             (une todas las fuentes limpias en un Parquet mensual)
+split_final_by_line     →  final/ por línea
+aggregate_lines_yearly  →  aggregations/      (Parquet anual agregado a resolución de 60 min)
+```
+
+### Pipeline en tiempo real
+
+- **`generate_realtime_dataset.py`** pieza central del pipeline. Fusiona en tiempo real las cuatro fuentes de datos (GTFS-RT, Open-Meteo, SeatGeek/ESPN/NYC Open Data y alertas Gmail MTA) y produce un dataframe con el mismo esquema de columnas que el dataset histórico, garantizando compatibilidad directa con los modelos entrenados.
+
+- **`aggregate_realtime_dataset.py`** equivalente en tiempo real de las agregaciones históricas. Recibe el dataframe de `generate_realtime_dataset` y lo agrega en ventanas temporales de X minutos (por defecto 30), agrupando por parada, línea y dirección.
+
+- **`upload_realtime_window.py`** orquesta la ejecución del pipeline RT completo y sube la ventana agregada más reciente a Google Drive, manteniendo solo las N ventanas más recientes. La carpeta la gestiona una cuenta de servicio y se comparte automáticamente con los emails configurados en `GDRIVE_SHARE_EMAILS`.
+
+- **`upload_daily_data.py`** se ejecuta una vez al día a las 00:00 hora NY (cron en VM de Google Cloud). Sube a Google Drive los datos estáticos del día: GTFS `stop_times`, clima y eventos. Esto evita tener que hacer llamadas a las apis repetidamente obteniendo el mismo resultado.
+
+- **`preprocess_realtime_lgbm.py`** construye el vector de features de inferencia para un `match_key` concreto, necesario para los modelos `LightGBM`. Lee los datos estáticos desde Google Drive (actualizados por `upload_daily_data.py` para agilizar el proceso) y hace las únicas dos llamadas en tiempo real necesarias: GTFS-RT de la línea del viaje y alertas Gmail MTA. También gestiona el estado de lags (delays pasados) en MinIO para poder conseguir el delay de un tren en sus dos paradas anteriores, necesarios para predecir.
+
+- **`local_realtime_worker.py`** proceso continuo que se ejecuta dentro del contenedor (cada 90s). Llama a `preprocess_realtime_lgbm.update_lag_state()` para mantener el estado de lags de todos los viajes activos en MinIO. De este modo la API siempre tiene el retraso de las paradas anteriores de un tren actualizadas.
 
 ---
 
@@ -286,7 +354,7 @@ Los entrenamientos y evaluación se almacenan en
 common/
 ```
 
-El análisis de desempeño de los nuevos datos se alamcena en 
+El análisis de desempeño de los nuevos datos se almacena en 
 
 ```
 analytics/
@@ -454,6 +522,32 @@ El análisis de importancia (*Permutation Feature Importance*) confirma que las 
 
 ---
 
+## Despliegue con Docker
+
+El proyecto incluye un `Dockerfile` que empaqueta tanto la API REST como el worker de ingestión en tiempo real en un único contenedor.
+
+### Construcción de la imagen
+
+```bash
+docker build -t express-bound .
+```
+
+### Ejecución del contenedor
+
+```bash
+docker run -p 8000:8000 --env-file .env express-bound
+```
+
+El fichero `.env` debe contener las variables de entorno descritas en la sección [Configuración del entorno de desarrollo](#configuración-del-entorno-de-desarrollo).
+
+### Qué arranca el contenedor
+
+Al iniciarse, el contenedor lanza dos procesos en paralelo:
+
+- **API REST** (`app/app.py`) — servidor FastAPI accesible en `http://localhost:8000`. Expone los endpoints de predicción que consumen los modelos entrenados.
+- **Worker de tiempo real** (`src/ETL/pipelines/realtime/local_realtime_worker.py`) — proceso en segundo plano que se conecta a los feeds GTFS-RT de la MTA, descarga el estado actual de la red de metro y lo procesa de forma continua para tenerlo disponible para la inferencia. Sin este worker, la API no dispone de datos frescos con los que generar predicciones.
+
+---
 
 ## Autores
 

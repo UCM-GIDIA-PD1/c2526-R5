@@ -8,7 +8,7 @@ Se ejecuta a las 00:00 NY mediante cron en la VM de Google Cloud.
 Cada archivo se sobreescribe con los datos más recientes.
 
 Uso:
-    uv run python src/ETL/pipelines/upload_daily_data.py
+    uv run python src/ETL/pipelines/realtime/upload_daily_data.py
 
 Variables de entorno requeridas:
     GDRIVE_TOKEN_JSON, GDRIVE_SHARE_EMAILS
@@ -30,7 +30,7 @@ from googleapiclient.http import MediaIoBaseUpload
 
 from src.ETL.tiempo_real_metro.realtime_data import ( creacion_df_previsto)
 
-from src.ETL.pipelines.generate_realtime_dataset import (
+from src.ETL.pipelines.realtime.generate_realtime_dataset import (
     load_realtime_weather,
     load_realtime_events,
 )

@@ -7,7 +7,7 @@ Flujo:
     Se comparte automáticamente con los emails configurados en GDRIVE_SHARE_EMAILS.
 
 Uso:
-    uv run python src/ETL/pipelines/upload_realtime_window.py
+    uv run python src/ETL/pipelines/realtime/upload_realtime_window.py
 
 Variables de entorno requeridas:
     GOOGLE_CREDENTIALS_JSON  ← contenido del JSON de la cuenta de servicio
@@ -28,8 +28,8 @@ from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 
-from src.ETL.pipelines.generate_realtime_dataset import build_realtime_dataset
-from src.ETL.pipelines.aggregate_realtime_dataset import aggregate_realtime
+from src.ETL.pipelines.realtime.generate_realtime_dataset import build_realtime_dataset
+from src.ETL.pipelines.realtime.aggregate_realtime_dataset import aggregate_realtime
 
 
 load_dotenv()
