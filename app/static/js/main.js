@@ -10,7 +10,7 @@ const map = L.map('map', {
     zoomControl: false
 });
 
-L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
     attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
     subdomains: 'abcd',
     maxZoom: 20
@@ -657,6 +657,8 @@ function openStationDetails(station) {
         el.textContent = '…';
         el.className = 'delay-val';
     });
+    const lbl30 = document.getElementById('forecast-30-label');
+    if (lbl30) lbl30.textContent = '+30m';
     document.getElementById('station-alert').classList.add('hidden');
     document.getElementById('line-detail-info').innerHTML = '';
 
@@ -710,22 +712,45 @@ async function updateForecast(lineCode) {
         }
     } catch { renderDelayCard('forecast-now', null); }
 
-    // +10/+20/+30 min: predicción DCRNN (valores en segundos)
+    // +10/+20/+30 min: predicción DCRNN; fallback a LightGBM 30m si el stop no está en el grafo
+    const label30 = document.getElementById('forecast-30-label');
     try {
         if (propResp.status === 'fulfilled' && propResp.value.ok) {
             const d = await propResp.value.json();
             const pred = d.predictions?.find(p => p.stop_id === station.id);
             if (pred) {
+                if (label30) label30.textContent = '+30m';
                 renderDelayCard('forecast-10', pred.delay_10m);
                 renderDelayCard('forecast-20', pred.delay_20m);
                 renderDelayCard('forecast-30', pred.delay_30m);
             } else {
-                ['forecast-10', 'forecast-20', 'forecast-30'].forEach(id => renderDelayCard(id, null));
+                // DCRNN doesn't cover this stop — fall back to LightGBM delay 30m
+                renderDelayCard('forecast-10', null);
+                renderDelayCard('forecast-20', null);
+                try {
+                    const lgbmResp = await fetch(`/api/predict/delay/30m?stop_id=${stopParam}`);
+                    if (lgbmResp.ok) {
+                        const lgbm = await lgbmResp.json();
+                        const p = lgbm.predictions?.[0];
+                        if (label30) label30.textContent = '+30m †';
+                        renderDelayCard('forecast-30', p ? p.delay_seconds : null);
+                    } else {
+                        if (label30) label30.textContent = '+30m';
+                        renderDelayCard('forecast-30', null);
+                    }
+                } catch {
+                    if (label30) label30.textContent = '+30m';
+                    renderDelayCard('forecast-30', null);
+                }
             }
         } else {
+            if (label30) label30.textContent = '+30m';
             ['forecast-10', 'forecast-20', 'forecast-30'].forEach(id => renderDelayCard(id, null));
         }
-    } catch { ['forecast-10', 'forecast-20', 'forecast-30'].forEach(id => renderDelayCard(id, null)); }
+    } catch {
+        if (label30) label30.textContent = '+30m';
+        ['forecast-10', 'forecast-20', 'forecast-30'].forEach(id => renderDelayCard(id, null));
+    }
 
     // Probabilidad de alerta para la línea seleccionada
     try {
@@ -737,8 +762,10 @@ async function updateForecast(lineCode) {
         }
     } catch { renderAlertProbability(lineCode, []); }
 
-    document.getElementById('line-detail-info').innerHTML =
-        `<p>Línea <strong>${lineCode}</strong> · predicción DCRNN a 10, 20 y 30 min</p>`;
+    const hasDagger = label30 && label30.textContent.includes('†');
+    document.getElementById('line-detail-info').innerHTML = hasDagger
+        ? `<p>Línea <strong>${lineCode}</strong> · predicción DCRNN a 10, 20 min no disponible · † LightGBM 30 min</p>`
+        : `<p>Línea <strong>${lineCode}</strong> · predicción DCRNN a 10, 20 y 30 min</p>`;
 
     if (loadingBar) loadingBar.classList.remove('running');
 }

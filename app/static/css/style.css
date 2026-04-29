@@ -1,5 +1,5 @@
 /* ============================================================
-   style.css — NYC Wayfinder completo
+   style.css — NYC Wayfinder
    ============================================================ */
 
 /* ── Reset & Base ── */
@@ -7,8 +7,8 @@
 
 body {
     font-family: 'Inter', sans-serif;
-    background: #0d0d0d;
-    color: #e5e7eb;
+    background: #f1f5f9;
+    color: #1f2937;
     height: 100vh;
     overflow: hidden;
 }
@@ -29,13 +29,13 @@ body {
 }
 
 .glass-panel {
-    background: rgba(13, 17, 28, 0.88);
+    background: rgba(255, 255, 255, 0.92);
     backdrop-filter: blur(16px);
     -webkit-backdrop-filter: blur(16px);
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(0, 0, 0, 0.08);
     border-radius: 16px;
     padding: 24px;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.10), 0 1px 4px rgba(0,0,0,0.06);
 }
 
 /* ── Panel de ruta (izquierda) ── */
@@ -59,7 +59,7 @@ body {
 .header-title h1 {
     font-size: 22px;
     font-weight: 800;
-    color: #ffffff;
+    color: #111827;
     letter-spacing: -0.5px;
 }
 
@@ -69,7 +69,7 @@ body {
     gap: 6px;
     font-size: 12px;
     font-weight: 600;
-    color: #34d399;
+    color: #059669;
     text-transform: uppercase;
     letter-spacing: 0.5px;
 }
@@ -78,7 +78,7 @@ body {
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: #34d399;
+    background: #059669;
     animation: pulse-anim 1.5s ease-in-out infinite;
 }
 
@@ -111,34 +111,34 @@ body {
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.8px;
-    color: #6b7280;
+    color: #9ca3af;
 }
 
 .input-group input {
     width: 100%;
-    background: rgba(255, 255, 255, 0.06);
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(0, 0, 0, 0.04);
+    border: 1px solid rgba(0, 0, 0, 0.10);
     border-radius: 10px;
     padding: 10px 14px;
     font-size: 14px;
-    color: #e5e7eb;
+    color: #111827;
     font-family: 'Inter', sans-serif;
     outline: none;
     transition: border-color 0.2s, background 0.2s;
 }
 
-.input-group input::placeholder { color: #4b5563; }
+.input-group input::placeholder { color: #9ca3af; }
 
 .input-group input:focus {
-    border-color: rgba(99, 102, 241, 0.6);
-    background: rgba(255, 255, 255, 0.09);
+    border-color: rgba(59, 130, 246, 0.5);
+    background: rgba(0, 0, 0, 0.06);
 }
 
 .input-divider {
     display: flex;
     align-items: center;
     padding: 4px 14px;
-    color: #4b5563;
+    color: #d1d5db;
     font-size: 16px;
 }
 
@@ -148,23 +148,23 @@ body {
     top: calc(100% + 4px);
     left: 0;
     right: 0;
-    background: rgba(17, 24, 39, 0.98);
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.99);
+    border: 1px solid rgba(0, 0, 0, 0.10);
     border-radius: 10px;
     overflow: hidden;
     z-index: 2000;
-    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
 }
 
 .suggestion-item {
     padding: 10px 14px;
     font-size: 13px;
-    color: #d1d5db;
+    color: #374151;
     cursor: pointer;
     transition: background 0.15s;
 }
 
-.suggestion-item:hover { background: rgba(99, 102, 241, 0.2); }
+.suggestion-item:hover { background: rgba(59, 130, 246, 0.08); }
 
 .hidden { display: none !important; }
 
@@ -172,7 +172,7 @@ body {
 .route-result-container {
     margin-top: 16px;
     padding-top: 16px;
-    border-top: 1px solid rgba(255,255,255,0.07);
+    border-top: 1px solid rgba(0, 0, 0, 0.07);
 }
 
 .route-result-container h3 {
@@ -180,13 +180,13 @@ body {
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.8px;
-    color: #6b7280;
+    color: #9ca3af;
     margin-bottom: 10px;
 }
 
 .route-card {
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.07);
+    background: rgba(0, 0, 0, 0.03);
+    border: 1px solid rgba(0, 0, 0, 0.07);
     border-radius: 10px;
     padding: 12px 14px;
     display: flex;
@@ -216,7 +216,7 @@ body {
 
 .route-info span:last-child {
     font-size: 13px;
-    color: #d1d5db;
+    color: #374151;
 }
 
 .route-delay {
@@ -228,7 +228,7 @@ body {
 
 .route-delay .label {
     font-size: 10px;
-    color: #6b7280;
+    color: #9ca3af;
     text-transform: uppercase;
     letter-spacing: 0.5px;
 }
@@ -239,9 +239,9 @@ body {
     font-weight: 700;
 }
 
-.delay-val.on-time    { color: #34d399; }
-.delay-val.minor-delay { color: #fbbf24; }
-.delay-val.delayed    { color: #f87171; }
+.delay-val.on-time    { color: #059669; }
+.delay-val.minor-delay { color: #d97706; }
+.delay-val.delayed    { color: #dc2626; }
 
 /* ── Panel de detalle de estación (derecha) ── */
 .detail-panel {
@@ -255,18 +255,18 @@ body {
 
 .detail-panel::-webkit-scrollbar { width: 4px; }
 .detail-panel::-webkit-scrollbar-track { background: transparent; }
-.detail-panel::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
+.detail-panel::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.12); border-radius: 2px; }
 
 .close-btn {
     position: absolute;
     top: 16px;
     right: 16px;
-    background: rgba(255,255,255,0.08);
+    background: rgba(0, 0, 0, 0.06);
     border: none;
     border-radius: 50%;
     width: 28px;
     height: 28px;
-    color: #9ca3af;
+    color: #6b7280;
     font-size: 16px;
     cursor: pointer;
     display: flex;
@@ -275,7 +275,7 @@ body {
     transition: background 0.2s, color 0.2s;
 }
 
-.close-btn:hover { background: rgba(255,255,255,0.15); color: white; }
+.close-btn:hover { background: rgba(0, 0, 0, 0.12); color: #111827; }
 
 .detail-header {
     margin-bottom: 20px;
@@ -285,7 +285,7 @@ body {
 .detail-header h2 {
     font-size: 20px;
     font-weight: 800;
-    color: #ffffff;
+    color: #111827;
     margin-bottom: 12px;
 }
 
@@ -312,7 +312,7 @@ body {
 }
 
 .line-bubble:hover { transform: scale(1.1); }
-.line-bubble.active { border-color: white; transform: scale(1.1); }
+.line-bubble.active { border-color: white; transform: scale(1.1); box-shadow: 0 0 0 2px rgba(0,0,0,0.15); }
 
 /* ── Alerta de estación ── */
 .alert-section { margin-bottom: 16px; }
@@ -321,14 +321,14 @@ body {
     display: flex;
     align-items: center;
     gap: 8px;
-    background: rgba(251, 191, 36, 0.12);
-    border: 1px solid rgba(251, 191, 36, 0.3);
+    background: rgba(217, 119, 6, 0.08);
+    border: 1px solid rgba(217, 119, 6, 0.25);
     border-radius: 10px;
     padding: 10px 14px;
 }
 
 .alert-icon { font-size: 16px; }
-.alert-text { font-size: 13px; color: #fbbf24; font-weight: 500; }
+.alert-text { font-size: 13px; color: #b45309; font-weight: 500; }
 
 /* ── Forecast grid ── */
 .detail-body h3 {
@@ -336,7 +336,7 @@ body {
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.8px;
-    color: #6b7280;
+    color: #9ca3af;
     margin-bottom: 12px;
 }
 
@@ -348,8 +348,8 @@ body {
 }
 
 .forecast-card {
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.07);
+    background: rgba(0, 0, 0, 0.03);
+    border: 1px solid rgba(0, 0, 0, 0.07);
     border-radius: 10px;
     padding: 12px;
     display: flex;
@@ -360,7 +360,7 @@ body {
 
 .time-label {
     font-size: 11px;
-    color: #6b7280;
+    color: #9ca3af;
     font-weight: 500;
 }
 
@@ -369,11 +369,11 @@ body {
 /* ── Info de línea ── */
 .line-info {
     font-size: 13px;
-    color: #9ca3af;
+    color: #6b7280;
     line-height: 1.6;
 }
 
-.line-info strong { color: #e5e7eb; }
+.line-info strong { color: #1f2937; }
 
 /* ============================================================
    Marcadores y líneas metro
@@ -392,24 +392,23 @@ body {
 .metro-delayed { animation: metro-pulse 1.4s ease-in-out infinite; }
 
 @keyframes metro-pulse {
-    0%, 100% { filter: drop-shadow(0 0 4px #FF3B30cc); }
-    50%       { filter: drop-shadow(0 0 12px #FF3B30ff); }
+    0%, 100% { filter: drop-shadow(0 0 3px rgba(220,38,38,0.7)); }
+    50%       { filter: drop-shadow(0 0 8px rgba(220,38,38,0.9)); }
 }
 
 .metro-line { transition: opacity 0.2s ease; }
-.metro-line:hover { opacity: 1 !important; filter: brightness(1.3); }
-/* líneas L y S — continuas, sin dasharray */
+.metro-line:hover { opacity: 1 !important; filter: brightness(1.2); }
 
 /* ── Train popup ── */
 .train-popup-wrapper .leaflet-popup-content-wrapper {
-    background: rgba(10, 13, 22, 0.97);
+    background: rgba(255, 255, 255, 0.98);
     backdrop-filter: blur(14px);
-    border: 1px solid rgba(255, 255, 255, 0.09);
+    border: 1px solid rgba(0, 0, 0, 0.09);
     border-radius: 14px;
-    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.75);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15), 0 2px 8px rgba(0,0,0,0.08);
     padding: 0;
     overflow: hidden;
-    color: #e5e7eb;
+    color: #1f2937;
     font-family: 'Inter', sans-serif;
     min-width: 220px;
     max-width: 260px;
@@ -418,7 +417,7 @@ body {
 .train-popup-wrapper .leaflet-popup-content { margin: 0; }
 
 .train-popup-wrapper .leaflet-popup-tip {
-    background: rgba(10, 13, 22, 0.97);
+    background: rgba(255, 255, 255, 0.98);
 }
 
 /* ── Header ── */
@@ -427,6 +426,7 @@ body {
     align-items: center;
     gap: 10px;
     padding: 11px 14px 10px;
+    border-bottom: 1px solid rgba(0,0,0,0.06);
 }
 
 .train-route-badge {
@@ -439,8 +439,7 @@ body {
     font-size: 12px;
     font-weight: 800;
     color: white;
-    background: rgba(255, 255, 255, 0.18);
-    border: 1.5px solid rgba(255, 255, 255, 0.4);
+    background: rgba(0, 0, 0, 0.15);
     flex-shrink: 0;
     letter-spacing: -0.5px;
 }
@@ -448,7 +447,7 @@ body {
 .train-popup-dir {
     font-size: 12px;
     font-weight: 700;
-    color: rgba(255, 255, 255, 0.9);
+    color: #111827;
     letter-spacing: 0.2px;
     flex: 1;
 }
@@ -460,7 +459,7 @@ body {
 
 .train-popup-meta {
     padding: 8px 0 9px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+    border-bottom: 1px solid rgba(0, 0, 0, 0.06);
     margin-bottom: 9px;
 }
 
@@ -468,23 +467,23 @@ body {
     font-size: 9.5px;
     text-transform: uppercase;
     letter-spacing: 1px;
-    color: #6b7280;
+    color: #9ca3af;
     font-weight: 600;
     margin-bottom: 3px;
 }
 
 .train-popup-stop {
     font-size: 12.5px;
-    color: #d1d5db;
+    color: #374151;
     line-height: 1.4;
 }
 
-.train-popup-stop strong { color: #ffffff; font-weight: 600; }
+.train-popup-stop strong { color: #111827; font-weight: 600; }
 
 /* ── Progress line ── */
 .train-progress {
     font-size: 10.5px;
-    color: #6b7280;
+    color: #9ca3af;
     margin-bottom: 9px;
     display: flex;
     align-items: center;
@@ -497,11 +496,11 @@ body {
     width: 5px;
     height: 5px;
     border-radius: 50%;
-    background: #4b5563;
+    background: #d1d5db;
     flex-shrink: 0;
 }
 
-/* ── Delay grid (main predictions) ── */
+/* ── Delay grid ── */
 .train-delay-grid {
     display: flex;
     flex-direction: column;
@@ -522,7 +521,7 @@ body {
 
 /* ── Delta section ── */
 .train-delta-section {
-    border-top: 1px solid rgba(255, 255, 255, 0.07);
+    border-top: 1px solid rgba(0, 0, 0, 0.06);
     padding-top: 9px;
     display: flex;
     flex-direction: column;
@@ -533,7 +532,7 @@ body {
     font-size: 9.5px;
     text-transform: uppercase;
     letter-spacing: 0.9px;
-    color: #4b5563;
+    color: #9ca3af;
     font-weight: 600;
     margin-bottom: 2px;
 }
@@ -546,7 +545,6 @@ body {
 
 .train-delta-row .delay-label { font-size: 11px; }
 
-/* Small pill badge for delta values */
 .delta-chip {
     font-size: 10.5px;
     font-weight: 600;
@@ -556,36 +554,36 @@ body {
 }
 
 .delta-chip.on-time {
-    background: rgba(52, 211, 153, 0.13);
-    color: #34d399;
-    border: 1px solid rgba(52, 211, 153, 0.2);
+    background: rgba(5, 150, 105, 0.10);
+    color: #059669;
+    border: 1px solid rgba(5, 150, 105, 0.2);
 }
 
 .delta-chip.delayed {
-    background: rgba(248, 113, 113, 0.13);
-    color: #f87171;
-    border: 1px solid rgba(248, 113, 113, 0.2);
+    background: rgba(220, 38, 38, 0.10);
+    color: #dc2626;
+    border: 1px solid rgba(220, 38, 38, 0.2);
 }
 
 .delta-chip.neutral {
-    background: rgba(156, 163, 175, 0.1);
-    color: #9ca3af;
-    border: 1px solid rgba(156, 163, 175, 0.15);
+    background: rgba(0, 0, 0, 0.05);
+    color: #6b7280;
+    border: 1px solid rgba(0, 0, 0, 0.10);
 }
 
 /* ── Misc ── */
 .train-popup-loading {
     font-size: 11.5px;
-    color: #4b5563;
+    color: #9ca3af;
     text-align: center;
     padding: 10px 0 4px;
 }
 
 .train-unscheduled {
     font-size: 11.5px;
-    color: #fbbf24;
-    background: rgba(251, 191, 36, 0.08);
-    border: 1px solid rgba(251, 191, 36, 0.18);
+    color: #b45309;
+    background: rgba(217, 119, 6, 0.08);
+    border: 1px solid rgba(217, 119, 6, 0.18);
     border-radius: 8px;
     padding: 8px 10px;
     margin-top: 4px;
@@ -594,17 +592,17 @@ body {
 
 .train-feed-warning {
     font-size: 10.5px;
-    color: #6b7280;
-    background: rgba(255, 255, 255, 0.03);
+    color: #9ca3af;
+    background: rgba(0, 0, 0, 0.03);
     border-radius: 6px;
     padding: 5px 8px;
     margin-bottom: 8px;
-    border: 1px solid rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(0, 0, 0, 0.06);
 }
 
 .delay-sublabel {
     font-size: 10px;
-    color: #4b5563;
+    color: #9ca3af;
     font-weight: 400;
 }
 
@@ -613,7 +611,7 @@ body {
     position: fixed;
     inset: 0;
     z-index: 9999;
-    background: #0d0d0d;
+    background: #f8fafc;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -635,7 +633,7 @@ body {
 .loading-ring {
     width: 52px;
     height: 52px;
-    border: 3px solid rgba(255, 255, 255, 0.08);
+    border: 3px solid rgba(0, 0, 0, 0.08);
     border-top-color: #3b82f6;
     border-radius: 50%;
     animation: spin 0.9s linear infinite;
@@ -648,13 +646,13 @@ body {
 .loading-title {
     font-size: 22px;
     font-weight: 800;
-    color: #ffffff;
+    color: #111827;
     letter-spacing: -0.5px;
 }
 
 .loading-sub {
     font-size: 13px;
-    color: #6b7280;
+    color: #9ca3af;
 }
 
 /* ── Station panel loading bar ── */

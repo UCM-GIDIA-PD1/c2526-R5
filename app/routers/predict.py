@@ -93,10 +93,20 @@ async def get_current_delay(
         df = df[(df["stop_id"].astype(str) == stop_id) | (base == stop_id)]
 
     if df.empty or "delay_seconds_mean" not in df.columns:
+        window_routes = windows[-1]["route_id"].astype(str).unique().tolist() if "route_id" in windows[-1].columns else []
+        logger.warning(
+            "predict/current: no data for stop_id=%r. "
+            "Window has %d rows, routes=%s, stop_id sample=%s",
+            stop_id,
+            len(windows[-1]),
+            sorted(window_routes)[:10],
+            windows[-1]["stop_id"].astype(str).unique()[:5].tolist() if "stop_id" in windows[-1].columns else [],
+        )
         return {"stop_id": stop_id, "delay_seconds": None}
 
     import numpy as np
     delay = float(np.clip(df["delay_seconds_mean"].mean(), 0, None))
+    logger.debug("predict/current: stop_id=%r → delay=%.1fs (%d rows matched)", stop_id, delay, len(df))
     return {"stop_id": stop_id, "delay_seconds": delay}
 
 
