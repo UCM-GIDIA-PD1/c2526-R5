@@ -4,7 +4,7 @@ Optuna — Búsqueda bayesiana de hiperparámetros para LightGBM global (todas l
 Predice una clasificación multiclase del retraso usando el dataset mensual completo.
 
 Uso:
-    uv run python -m src.models.prediccion_retrasos.delay_30m.optuna.optuna_lgbm
+    uv run python src/models/prediccion_retrasos/delay_30m/optuna/optuna_lgbm.py
 
 Variables de entorno necesarias:
     MINIO_ACCESS_KEY
