@@ -17,7 +17,6 @@ Uso standalone (un único trip):
 """
 
 import gc
-import sys
 import os
 import logging
 
@@ -55,7 +54,7 @@ log = logging.getLogger(__name__)
 # Columnas que no son features (igual que en eval_lgbm.py).
 # stop_id se conserva: necesario para el target encoding del modelo.
 DROP_COLS = {
-    "date", "merge_time", "timestamp_start", "is_unscheduled",
+    "date", "merge_time", "timestamp_start", "is_unscheduled", "service_date",
     "target_delay_10m", "target_delay_20m", "target_delay_30m",
     "target_delay_45m", "target_delay_60m", "target_delay_end",
     "delta_delay_10m",  "delta_delay_20m",  "delta_delay_30m",
@@ -441,147 +440,7 @@ def get_single_trip_features(trip_id: str) -> dict | None:
     return df.iloc[0].to_dict() if not df.empty else None
 
 
-def get_trip_features(index: dict[str, dict], trip_id: str) -> dict | None:
-    """Devuelve el dict de features para el trip_id dado, o None si no existe."""
-    return index.get(trip_id)
+def get_trip_features(match_key: str) -> dict | None:
+    """Genera las features de un trip listas para predecir (encoding de categóricas en el caller)."""
+    return get_single_trip_features(match_key)
 
-
-if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Uso:")
-        print("  python ... preprocess_realtime_lgbm.py <trip_id>   # features de un trip")
-        print("  python ... preprocess_realtime_lgbm.py --test-worker [ciclos] [pausa_s]")
-        sys.exit(1)
-
-    if sys.argv[1] == "--test-worker":
-        import time as _time
-        ciclos  = int(sys.argv[2]) if len(sys.argv) > 2 else 2
-        pausa   = int(sys.argv[3]) if len(sys.argv) > 3 else 90
-        estados = []
-
-        for i in range(ciclos):
-            print(f"\n{'='*50}")
-            print(f"  CICLO {i+1}/{ciclos}")
-            print(f"{'='*50}")
-            update_lag_state()
-            estado = _get_lagged_state()
-            estados.append(estado)
-            print(f"\nTrips en MinIO: {len(estado)}")
-
-            if i > 0:
-                prev, curr = estados[-2], estados[-1]
-                trips_comunes = set(prev) & set(curr)
-                cambios = [
-                    mk for mk in trips_comunes
-                    if prev[mk].get("stop_id") != curr[mk].get("stop_id")
-                ]
-                print(f"Trips que cambiaron de parada: {len(cambios)}/{len(trips_comunes)}")
-                if cambios:
-                    mk = cambios[0]
-                    print(f"\nEjemplo — {mk}:")
-                    print(f"  stop anterior : {prev[mk]['stop_id']}  delay={prev[mk]['delay']:.0f}s")
-                    print(f"  stop actual   : {curr[mk]['stop_id']}  delay={curr[mk]['delay']:.0f}s")
-                    print(f"  lag1={curr[mk]['lag1']:.0f}s  lag2={curr[mk]['lag2']:.0f}s")
-
-            if i < ciclos - 1:
-                print(f"\nEsperando {pausa}s hasta el siguiente ciclo...")
-                _time.sleep(pausa)
-
-        print("\nTest completado.")
-        sys.exit(0)
-
-    if sys.argv[1] == "--test":
-        import time as _time
-        import math as _math
-        ciclos = int(sys.argv[2]) if len(sys.argv) > 2 else 3
-        pausa  = int(sys.argv[3]) if len(sys.argv) > 3 else 90
-        estados = []
-        trip_fijo = None  # mismo trip seguido en todos los ciclos
-
-        for i in range(ciclos):
-            print(f"\n{'='*60}")
-            print(f"  CICLO {i+1}/{ciclos}")
-            print(f"{'='*60}")
-
-            # 1. Actualizar estado MinIO
-            update_lag_state()
-            estado = _get_lagged_state()
-            estados.append(estado)
-            print(f"\nTrips en MinIO: {len(estado)}")
-
-            # 2. Verificar que el JSON no tiene campos eliminados
-            ELIMINADOS = {"route_rolling_delay", "actual_headway_seconds"}
-            muestra = next(iter(estado), None)
-            if muestra:
-                sobrantes = ELIMINADOS & estado[muestra].keys()
-                if sobrantes:
-                    print(f"  [ERROR] JSON aún contiene: {sobrantes}")
-                else:
-                    print(f"  [OK] JSON limpio — campos: {list(estado[muestra].keys())}")
-
-            # 3. Cambios de parada entre ciclos
-            if i > 0:
-                prev, curr = estados[-2], estados[-1]
-                trips_comunes = set(prev) & set(curr)
-                cambios = [
-                    mk for mk in trips_comunes
-                    if prev[mk].get("stop_id") != curr[mk].get("stop_id")
-                ]
-                print(f"  Trips que cambiaron de parada: {len(cambios)}/{len(trips_comunes)}")
-                if cambios:
-                    mk = cambios[0]
-                    print(f"  Ejemplo lag shift — {mk}:")
-                    print(f"    stop anterior : {prev[mk]['stop_id']}  delay={prev[mk]['delay']:.0f}s")
-                    print(f"    stop actual   : {curr[mk]['stop_id']}  delay={curr[mk]['delay']:.0f}s")
-                    print(f"    lag1={curr[mk]['lag1']:.0f}s  lag2={curr[mk]['lag2']:.0f}s")
-
-            # 4. Fijar el trip en el ciclo 1 y seguirlo en los siguientes
-            if i == 0 and estado:
-                for _tid in list(estado.keys())[:20]:
-                    _f = get_single_trip_features(_tid)
-                    if _f is None:
-                        continue
-                    ahs = _f.get("actual_headway_seconds")
-                    if ahs is not None and not (isinstance(ahs, float) and _math.isnan(ahs)):
-                        trip_fijo = _tid
-                        break
-
-            if trip_fijo is None:
-                print("  [WARN] No se encontró trip válido.")
-            elif trip_fijo not in estado:
-                print(f"  [WARN] '{trip_fijo}' ya no está en el feed (terminó su viaje).")
-            else:
-                features = get_single_trip_features(trip_fijo)
-                if features is None:
-                    print(f"  [WARN] '{trip_fijo}' no encontrado en RT.")
-                else:
-                    rrd = features.get("route_rolling_delay")
-                    ahs = features.get("actual_headway_seconds")
-                    rrd_ok = rrd is not None and not (isinstance(rrd, float) and _math.isnan(rrd))
-                    ahs_ok = ahs is not None and not (isinstance(ahs, float) and _math.isnan(ahs))
-                    lag1  = features.get("lagged_delay_1")
-                    lag2  = features.get("lagged_delay_2")
-                    delay = features.get("delay_seconds")
-                    print(f"\n  Trip fijo: '{trip_fijo}'")
-                    print(f"  [{'OK' if rrd_ok else 'WARN'}] route_rolling_delay    = {rrd}")
-                    print(f"  [{'OK' if ahs_ok else 'WARN'}] actual_headway_seconds = {ahs}")
-                    print(f"  delay={delay}  lag1={lag1}  lag2={lag2}  stop_id={features.get('stop_id')}")
-                    if i > 0 and lag1 != delay:
-                        print(f"  [OK] Lags divergen del delay actual — historial funcionando")
-
-            if i < ciclos - 1:
-                print(f"\nEsperando {pausa}s hasta el siguiente ciclo...")
-                _time.sleep(pausa)
-
-        print("\nTest completado.")
-        sys.exit(0)
-
-    trip_id  = sys.argv[1]
-    features = get_single_trip_features(trip_id)
-
-    if features is None:
-        print(f"trip_id '{trip_id}' no encontrado.")
-        sys.exit(1)
-
-    for k, v in features.items():
-        print(f"{k:35s} {v}")
