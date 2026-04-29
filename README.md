@@ -298,12 +298,17 @@ aggregate_lines_yearly  →  aggregations/      (Parquet anual agregado a resolu
 
 ### Pipeline en tiempo real
 
-Funciona en dos capas separadas por cadencia:
+- **`generate_realtime_dataset.py`** — pieza central del pipeline. Fusiona en tiempo real las cuatro fuentes de datos (GTFS-RT, Open-Meteo, SeatGeek/ESPN/NYC Open Data y alertas Gmail MTA) y produce un dataframe con el mismo esquema de columnas que el dataset histórico, garantizando compatibilidad directa con los modelos entrenados.
 
-- **Diaria** (`upload_daily_data.py`, cron 00:00 NY): sube a Google Drive los datos estáticos del día — GTFS `stop_times`, clima y eventos. Esto evita recalcularlos en cada inferencia.
-- **Continua** (`local_realtime_worker.py`, cada 90s): llama a `preprocess_realtime_lgbm.update_lag_state()`, que descarga el GTFS-RT en vivo, construye las features de inferencia para todos los viajes activos y guarda el estado de lags en MinIO. La API consume ese estado para responder sin relanzar el pipeline completo en cada petición.
+- **`aggregate_realtime_dataset.py`** — equivalente en tiempo real de las agregaciones históricas. Recibe el dataframe de `generate_realtime_dataset` y lo agrega en ventanas temporales de X minutos (por defecto 30), agrupando por parada, línea y dirección.
 
-La pieza central es `generate_realtime_dataset.py`: fusiona GTFS-RT, Open-Meteo, SeatGeek/ESPN/NYC Open Data y alertas Gmail MTA en un único dataframe con el mismo esquema de columnas que el dataset histórico, garantizando compatibilidad directa con los modelos entrenados.
+- **`upload_realtime_window.py`** — orquesta la ejecución del pipeline RT completo y sube la ventana agregada más reciente a Google Drive, manteniendo solo las N ventanas más recientes. La carpeta la gestiona una cuenta de servicio y se comparte automáticamente con los emails configurados en `GDRIVE_SHARE_EMAILS`.
+
+- **`upload_daily_data.py`** — se ejecuta una vez al día a las 00:00 hora NY (cron en VM de Google Cloud). Sube a Google Drive los datos estáticos del día: GTFS `stop_times`, clima y eventos. Esto evita tener que hacer llamadas a las apis repetidamente obteniendo el mismo resultado.
+
+- **`preprocess_realtime_lgbm.py`** — construye el vector de features de inferencia para un `match_key` concreto, necesario para los modelos `LightGBM`. Lee los datos estáticos desde Google Drive (actualizados por `upload_daily_data.py` para agilizar el proceso) y hace las únicas dos llamadas en tiempo real necesarias: GTFS-RT de la línea del viaje y alertas Gmail MTA. También gestiona el estado de lags (delays pasados) en MinIO para poder conseguir el delay de un tren en sus dos paradas anteriores, necesarios para predecir.
+
+- **`local_realtime_worker.py`** — proceso continuo que se ejecuta dentro del contenedor (cada 90s). Llama a `preprocess_realtime_lgbm.update_lag_state()` para mantener el estado de lags de todos los viajes activos en MinIO. De este modo la API siempre tiene el retraso de las paradas anteriores de un tren actualizadas.
 
 ---
 
