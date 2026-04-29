@@ -377,7 +377,7 @@ def update_lag_state() -> None:
 
     df = (
         df_gtfs[df_gtfs["stops_to_end"] > 0]
-        .sort_values("stops_to_end", ascending=False)
+        .sort_values("stops_to_end", ascending=True)
         .drop_duplicates(subset=["match_key"], keep="first")
         .copy()
     )
@@ -414,7 +414,7 @@ def get_single_trip_features(trip_id: str) -> dict | None:
     if "stops_to_end" in df_gtfs.columns:
         df_collapsed = (
             df_gtfs[df_gtfs["stops_to_end"] > 0]
-            .sort_values("stops_to_end", ascending=False)
+            .sort_values("stops_to_end", ascending=True)
             .drop_duplicates(subset=["match_key"], keep="first")
             .copy()
         )
