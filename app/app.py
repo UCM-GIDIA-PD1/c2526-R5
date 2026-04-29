@@ -335,6 +335,51 @@ async def warmup(request: Request):
     return {"status": "ready"}
 
 
+@app.get("/api/debug/stop")
+async def debug_stop(request: Request, stop_id: str):
+    """Diagnostic: check DCRNN and Drive-window coverage for a given stop_id."""
+    registry = request.app.state.registry
+    cache = request.app.state.cache
+    windows = cache.get("windows")
+
+    result: dict = {"stop_id": stop_id, "dcrnn": {}, "drive_windows": {}}
+
+    # DCRNN coverage
+    if registry.dcrnn is not None:
+        nodes = registry.dcrnn.nodes
+        exact = [n for n in nodes if n == stop_id]
+        base_match = [n for n in nodes if n[:-1] == stop_id and n[-1] in ("N", "S")]
+        result["dcrnn"] = {
+            "n_total_nodes": len(nodes),
+            "exact_match": exact,
+            "directional_match": base_match,
+            "covered": bool(exact or base_match),
+        }
+    else:
+        result["dcrnn"] = {"error": "DCRNN not loaded"}
+
+    # Drive window coverage
+    if windows:
+        df = windows[-1]
+        stop_ids_in_window = df["stop_id"].astype(str).unique().tolist() if "stop_id" in df.columns else []
+        base_ids = [s.rstrip("NS") for s in stop_ids_in_window]
+        exact_rows = df[df["stop_id"].astype(str) == stop_id] if "stop_id" in df.columns else df.iloc[0:0]
+        base_rows = df[df["stop_id"].astype(str).str.rstrip("NS") == stop_id] if "stop_id" in df.columns else df.iloc[0:0]
+        found = exact_rows if not exact_rows.empty else base_rows
+        result["drive_windows"] = {
+            "n_windows": len(windows),
+            "n_rows_latest_window": len(df),
+            "stop_found": not found.empty,
+            "matching_stop_ids": found["stop_id"].astype(str).unique().tolist() if not found.empty else [],
+            "routes_in_window": df["route_id"].astype(str).unique().tolist() if "route_id" in df.columns else [],
+            "delay_seconds_mean_sample": found["delay_seconds_mean"].tolist() if (not found.empty and "delay_seconds_mean" in found.columns) else [],
+        }
+    else:
+        result["drive_windows"] = {"error": "No windows cached — call /api/warmup first"}
+
+    return result
+
+
 _ROUTE_ORDER: dict[str, list[str]] = {
     "1": ["Van Cortlandt Park-242 St","238 St","231 St","Marble Hill-225 St","215 St","207 St","Dyckman St","191 St","181 St","168 St-Washington Hts","157 St","145 St","137 St-City College","125 St","116 St-Columbia University","Cathedral Pkwy (110 St)","103 St","96 St","86 St","79 St","72 St","66 St-Lincoln Center","59 St-Columbus Circle","50 St","Times Sq-42 St","34 St-Penn Station","28 St","23 St","18 St","14 St","Christopher St-Stonewall","Houston St","Canal St","Franklin St","Chambers St","WTC Cortlandt","Rector St","South Ferry"],
     "2": ["Wakefield-241 St","Nereid Av","233 St","225 St","219 St","Gun Hill Rd","Burke Av","Allerton Av","Pelham Pkwy","Bronx Park East","E 180 St","West Farms Sq-E Tremont Av","174 St","Freeman St","Simpson St","Intervale Av","Prospect Av","Jackson Av","3 Av-149 St","149 St-Grand Concourse","135 St","125 St","116 St","110 St-Malcolm X Plaza","103 St","96 St","86 St","72 St","Times Sq-42 St","34 St-Penn Station","28 St","23 St","14 St","Chambers St","Fulton St","Wall St","Clark St","Borough Hall","Nevins St","Atlantic Av-Barclays Ctr","Bergen St","Carroll St","Smith-9 Sts","4 Av-9 St","Prospect Av","25 St","36 St","53 St","59 St"],
