@@ -126,17 +126,24 @@ def _time_str_to_seconds(t: object) -> float:
 #  1. GTFS en tiempo real
 # ──────────────────────────────────────────────────────────────
 
-def load_realtime_gtfs() -> pd.DataFrame:
+def load_realtime_gtfs(df_previsto: pd.DataFrame | None = None) -> pd.DataFrame:
     """
     Extrae los retrasos actuales del metro y los adapta al esquema que
     espera generate_final_dataset (columnas: stop_id, route_id, direction,
     delay_seconds, merge_time, hour, dow, is_weekend, hour_sin, hour_cos).
+
+    Args:
+        df_previsto: stop_times pre-cargado (e.g. desde Drive). Si es None,
+                     se descarga el ZIP del GTFS estático.
     """
     print("  [GTFS RT] Extrayendo datos en tiempo real...")
     df_real = creacion_df_tiempo_real()
 
-    print("  [GTFS RT] Descargando horarios previstos...")
-    df_previsto = creacion_df_previsto()
+    if df_previsto is None:
+        print("  [GTFS RT] Descargando horarios previstos...")
+        df_previsto = creacion_df_previsto()
+    else:
+        print("  [GTFS RT] Usando horarios previstos pre-cargados.")
 
     print("  [GTFS RT] Calculando retrasos...")
     df = union_dataframes(df_real, df_previsto)
@@ -227,8 +234,8 @@ def load_realtime_weather() -> pd.DataFrame:
 
     url = "https://api.open-meteo.com/v1/forecast"
     params = {
-        "latitude": 40.47,
-        "longitude": -73.58,
+        "latitude": 40.78,
+        "longitude": -73.97,
         "hourly": [
             "temperature_2m", "rain", "precipitation",
             "wind_speed_10m", "snowfall", "cloud_cover",
@@ -913,7 +920,7 @@ def build_realtime_dataset() -> pd.DataFrame:
 
 def main() -> int:
     df = build_realtime_dataset()
-    print(df.head(20))
+    print(df[["match_key","stop_id", "delay_seconds","stops_to_end", "lagged_delay_1", "lagged_delay_2",]].head(20))
     return 0
 
 

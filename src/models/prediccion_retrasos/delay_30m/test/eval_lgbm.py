@@ -272,14 +272,26 @@ def main():
     feats = get_features(df_train)
     print(f"Features usadas ({len(feats)}): {feats}\n")
 
-    X_train = df_train[feats]
-    y_train = df_train[TARGET]
-    X_test  = df_test[feats]
-    y_test  = df_test[TARGET]
+    print("Preparando matrices de features...")
     n_train = len(df_train)
     n_test  = len(df_test)
-    del df_train, df_test
+
+    y_train = df_train[TARGET].to_numpy(dtype=np.float32)
+    y_test  = df_test[TARGET].to_numpy(dtype=np.float32)
+
+    df_train.drop(columns=[c for c in df_train.columns if c not in feats], inplace=True)
+    for col in df_train.select_dtypes("float64").columns:
+        df_train[col] = df_train[col].astype("float32")
+    X_train = df_train
+    del df_train
+
+    df_test.drop(columns=[c for c in df_test.columns if c not in feats], inplace=True)
+    for col in df_test.select_dtypes("float64").columns:
+        df_test[col] = df_test[col].astype("float32")
+    X_test = df_test
+    del df_test
     gc.collect()
+    print(f"  Train: {n_train:,} filas × {len(feats)} features | Test: {n_test:,} filas\n")
 
     wandb.init(
         project=WANDB_PROJECT,
@@ -358,9 +370,7 @@ def main():
     )
     artifact.add_file(model_filename)
     artifact.add_file(preprocessing_filename)
-    wandb.log_artifact(artifact)
-    os.remove(model_filename)
-    os.remove(preprocessing_filename)
+    wandb.log_artifact(artifact).wait()
     print(f"\nModelo y preprocessing subidos como artifact wandb: {model_filename}, {preprocessing_filename}")
 
     wandb.finish()

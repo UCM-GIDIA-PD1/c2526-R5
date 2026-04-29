@@ -54,13 +54,15 @@ def _get_service(token_path: Path) -> object:
     return build("drive", "v3", credentials=creds, cache_discovery=False)
 
 
-def _get_folder_id(service, folder_name: str) -> str:
-    """Resolve folder name → folder ID (same logic as upload_realtime_window.py)."""
+def _get_folder_id(service, folder_name: str, parent_id: str | None = None) -> str:
+    """Resolve folder name → folder ID, optionally restricted to a parent folder."""
+    parent_clause = f"and '{parent_id}' in parents " if parent_id else ""
     result = service.files().list(
         q=(
             f"name = '{folder_name}' "
             f"and mimeType = 'application/vnd.google-apps.folder' "
-            f"and trashed = false"
+            f"and trashed = false "
+            f"{parent_clause}"
         ),
         fields="files(id, name)",
     ).execute()
@@ -71,6 +73,60 @@ def _get_folder_id(service, folder_name: str) -> str:
             "It is created automatically on the first ETL run."
         )
     return files[0]["id"]
+
+
+def download_daily_file(
+    filename: str,
+    subfolder: str | None = None,
+    root_folder: str = "MTA_Daily_Data",
+    token_path: Path | None = None,
+) -> pd.DataFrame:
+    """Download a parquet from MTA_Daily_Data (or a subfolder within it).
+
+    Matches the structure created by upload_daily_data.py:
+      MTA_Daily_Data/gtfs_supplemented/stop_times.parquet
+      MTA_Daily_Data/clima/clima_hoy.parquet
+      MTA_Daily_Data/eventos/eventos_hoy.parquet
+
+    Args:
+        filename:    file to download, e.g. "stop_times.parquet"
+        subfolder:   subfolder inside root_folder, e.g. "gtfs_supplemented"
+        root_folder: Drive root folder name (default "MTA_Daily_Data")
+        token_path:  path to token_drive.json; defaults to the shared token path.
+    """
+    token_path = token_path or _DEFAULT_TOKEN_PATH
+    service = _get_service(token_path)
+
+    root_id = _get_folder_id(service, root_folder)
+    folder_id = _get_folder_id(service, subfolder, parent_id=root_id) if subfolder else root_id
+
+    result = service.files().list(
+        q=(
+            f"'{folder_id}' in parents "
+            f"and name = '{filename}' "
+            f"and trashed = false"
+        ),
+        fields="files(id, name)",
+        pageSize=1,
+    ).execute()
+
+    files = result.get("files", [])
+    if not files:
+        path = f"{root_folder}/{subfolder}/{filename}" if subfolder else f"{root_folder}/{filename}"
+        raise FileNotFoundError(
+            f"'{path}' not found in Drive. Run upload_daily_data.py first."
+        )
+
+    req = service.files().get_media(fileId=files[0]["id"])
+    buf = io.BytesIO()
+    dl = MediaIoBaseDownload(buf, req)
+    done = False
+    while not done:
+        _, done = dl.next_chunk()
+    buf.seek(0)
+    df = pd.read_parquet(buf)
+    logger.info("Drive daily file loaded: %s (%d rows)", filename, len(df))
+    return df
 
 
 def download_windows(

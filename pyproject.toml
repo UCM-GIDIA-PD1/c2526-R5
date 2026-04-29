@@ -26,6 +26,14 @@ dependencies = [
   "fastapi[standard]",
   "jinja2",
   "setuptools>=82.0.1",
+  # ETL real-time
+  "openmeteo-requests",
+  "requests-cache",
+  "retry-requests",
+  "gtfs-realtime-bindings",
+  "protobuf",
+  "bs4>=0.0.2",
+  "geopy>=2.4.1",
 ]
 
 [dependency-groups]
@@ -44,14 +52,6 @@ dev = [
   "shap>=0.51.0",
   "missingno>=0.5.2",
   "category-encoders>=2.9.0",
-  # ETL
-  "openmeteo-requests",
-  "requests-cache",
-  "retry-requests",
-  "gtfs-realtime-bindings",
-  "protobuf",
-  "bs4>=0.0.2",
-  "geopy>=2.4.1",
 ]
 
 [build-system]
