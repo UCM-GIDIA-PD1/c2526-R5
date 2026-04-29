@@ -134,6 +134,7 @@ export MOBILITY_DATABASE_REFRESH_TOKEN=...
 export NYC_OPEN_DATA_TOKEN=...
 export CLIENT_ID_SEATGEEK=...
 export SETLIST_API_KEY=...
+export WANDB_API_KEY=...
 ```
 
 Credenciales y tokens
@@ -144,7 +145,9 @@ Gmail token
 
 ### Crear entorno e instalar dependencias
 
+```bash
 uv sync
+```
 
 ---
 
@@ -180,13 +183,7 @@ Este orquestador ejecuta la descarga de datos desde las distintas fuentes extern
 #### Ejemplo de ejecución
 
 ```bash
-uv run python src/ETL/pipelines/run_extraccion --source all --start 2025-01-01 --end 2025-01-03
-```
-
-Este comando descargará los datos del rango indicado y los almacenará en:
-
-```
-raw/
+uv run python src/ETL/pipelines/run_extraccion.py --source all --start 2025-01-01 --end 2025-01-03
 ```
 
 ---
@@ -199,7 +196,7 @@ Script principal:
 src/ETL/pipelines/run_transform.py
 ```
 
-Este orquestador procesa los datos almacenados en `raw/ y/o processed`, realiza limpieza, integración y generación de variables, y los mueve a capas superiores del data lake.
+Este orquestador procesa los datos almacenados en `raw/` y/o `processed/`, realiza limpieza, integración y generación de variables, y los mueve a capas superiores del data lake.
 
 #### Parámetros disponibles
 
@@ -211,7 +208,7 @@ Este orquestador procesa los datos almacenados en `raw/ y/o processed`, realiza 
 #### Ejemplo de ejecución
 
 ```bash
-uv run python src/ETL/pipelines/run_transform --source all --start 2025-01-01 --end 2025-01-03
+uv run python src/ETL/pipelines/run_transform.py --source all --start 2025-01-01 --end 2025-01-03
 ```
 
 Tras su ejecución, los datos seguirán el flujo:
@@ -219,14 +216,31 @@ Tras su ejecución, los datos seguirán el flujo:
 ```
 raw/ → processed/ → cleaned/
 ```
+
 ---
 
-### Flujo típico de trabajo
+### Construcción del dataset final
 
-1. Ejecutar pipelines (extracción + transformación).
-2. Abrir notebook de análisis o modelado.
-3. Cargar datos desde `cleaned/`.
-4. Validar features generadas.
+Una vez completada la transformación, tres scripts adicionales preparan los datos para el modelado:
+
+```bash
+# Une todas las fuentes limpias en un único parquet mensual con todos los features (cleaned/ → final/)
+uv run python src/ETL/pipelines/generate_final_dataset.py --start 2025-01-01 --end 2025-01-31
+
+# Divide el dataset final por línea de metro (necesario para modelos por línea)
+uv run python src/ETL/pipelines/split_final_by_line.py
+
+# Agrega los parquets mensuales de cada línea en un único parquet anual
+uv run python src/ETL/pipelines/aggregate_lines_yearly.py
+```
+
+---
+
+### Flujo completo
+
+```
+raw/ → processed/ → cleaned/ → final/ → aggregations/
+```
 
 ---
 
@@ -243,23 +257,6 @@ Se utilizan para:
 - Análisis exploratorio de datos (EDA)
 - Validación de variables derivadas
 - Visualización de resultados
-
----
-
-### Cómo ejecutarlos en VS Code
-
-1. Abrir la carpeta raíz del proyecto en VS Code.
-2. Navegar hasta la carpeta `notebooks/`.
-3. Abrir el notebook deseado.
-4. Seleccionar el kernel correspondiente al entorno creado con `uv`.
-5. Ejecutar las celdas en orden.
-
-Es importante ejecutar primero las celdas de:
-
-- Carga de variables de entorno
-- Configuración de credenciales
-- Conexión a MinIO
-- Importación de librerías comunes
 
 
 ---
@@ -338,7 +335,7 @@ test/
 Los análisis de desempeño con los nuevos datos se almacenan en
 
 ```
-analtyics/
+analytics/
 ```
 
 ### 3. Modelos de propagación de retrasos
@@ -380,58 +377,6 @@ Se implementan y comparan tres arquitecturas GNN:
 models/        — implementaciones de DCRNN, STGCN y ASTGCN
 utils/         — dataset.py (carga y ventanas deslizantes), metrics.py (MAE, RMSE, R²)
 artefactos/    — artefactos generados por los scripts anteriores
-```
-
-## Estructura resumida de la carpeta models/
-
-```
-models/
-├── common/                          # Utilidades compartidas entre modelos
-│
-├── modelos_alertas/                 # 1. Modelos de anticipación de alertas
-│   ├── common/                      # Entrenamiento, evaluación y reevaluación compartidos
-│   ├── analytics/                   # Notebooks de análisis de desempeño (fase 4)
-│   ├── Optuna/                      # Búsquedas de hiperparámetros con Optuna
-│   └── Random/                      # Búsquedas con Random Search
-│
-├── prediccion_retrasos/             # 2. Modelos de predicción de retrasos
-│   ├── delay_30m/                   # Trenes en funcionamiento > 30 mins
-│   │   ├── optuna/
-│   │   ├── random/
-│   │   └── test/
-│   ├── delay_end/                   # Trenes que acaban viaje < 30 mins
-│   │   ├── optuna/
-│   │   ├── random/
-│   │   └── test/
-│   ├── delta/                       # Comportamiento del retraso (mejora/empeora)
-│   │   ├── optuna/
-│   │   ├── random/
-│   │   └── test/
-│   ├── prediccion_por_intervalos/   # Predicción por intervalos
-│   │   ├── optuna/
-│   │   ├── random/
-│   │   └── test/
-│   └── analytics/                   # Notebooks de análisis de desempeño (fase 4)
-│       ├── analisis_mae_por_segmentos.ipynb
-│       ├── analisis_roc_auc_por_segmentos_delta.ipynb
-│       └── diagnostico_delay30m_feb_mar_2026.ipynb
-│
-└── propagacion_estacion/            # 3. Modelos de propagación de retrasos (GNN)
-    ├── 01_generar_grafo.py          # Construye el grafo de la red desde GTFS
-    ├── 02_generar_tensores.py       # Genera tensores X/Y, split y escalado
-    ├── 03_baseline_naive.py         # Baseline: último valor observado
-    ├── 04_baseline_ha.py            # Baseline: media histórica por estación/hora
-    ├── 05_ablacion_features.py      # Ablación de subconjuntos de features
-    ├── 06_tuning_hpo_dcrnn.py       # HPO de DCRNN con Optuna/Random Search
-    ├── 07_tuning_stgcn.py           # HPO de STGCN con Optuna
-    ├── 08_tuning_astgcn.py          # HPO de ASTGCN con Optuna
-    ├── 09_entrenamiento_final_dcrnn.py  # Entrenamiento final DCRNN
-    ├── 10_entrenamiento_final_stgcn.py  # Entrenamiento final STGCN
-    ├── 11_entrenamiento_final_astgcn.py # Entrenamiento final ASTGCN
-    ├── 12_evaluacion_modelos.py     # Evaluación comparativa en test
-    ├── models/                      # Implementaciones: dcrnn.py, stgcn.py, astgcn.py
-    ├── utils/                       # dataset.py, metrics.py
-    └── artefactos/                  # Pesos y tensores generados por los scripts
 ```
 
 ---
