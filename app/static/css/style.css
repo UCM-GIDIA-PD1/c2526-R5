@@ -398,3 +398,213 @@ body {
 .metro-line { transition: opacity 0.2s ease; }
 .metro-line:hover { opacity: 1 !important; filter: brightness(1.3); }
 /* líneas L y S — continuas, sin dasharray */
+
+/* ── Train popup ── */
+.train-popup-wrapper .leaflet-popup-content-wrapper {
+    background: rgba(10, 13, 22, 0.97);
+    backdrop-filter: blur(14px);
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: 14px;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.75);
+    padding: 0;
+    overflow: hidden;
+    color: #e5e7eb;
+    font-family: 'Inter', sans-serif;
+    min-width: 220px;
+    max-width: 260px;
+}
+
+.train-popup-wrapper .leaflet-popup-content { margin: 0; }
+
+.train-popup-wrapper .leaflet-popup-tip {
+    background: rgba(10, 13, 22, 0.97);
+}
+
+/* ── Header ── */
+.train-popup-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 11px 14px 10px;
+}
+
+.train-route-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    font-size: 12px;
+    font-weight: 800;
+    color: white;
+    background: rgba(255, 255, 255, 0.18);
+    border: 1.5px solid rgba(255, 255, 255, 0.4);
+    flex-shrink: 0;
+    letter-spacing: -0.5px;
+}
+
+.train-popup-dir {
+    font-size: 12px;
+    font-weight: 700;
+    color: rgba(255, 255, 255, 0.9);
+    letter-spacing: 0.2px;
+    flex: 1;
+}
+
+/* ── Body ── */
+.train-popup-body {
+    padding: 0 14px 13px;
+}
+
+.train-popup-meta {
+    padding: 8px 0 9px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+    margin-bottom: 9px;
+}
+
+.train-popup-status {
+    font-size: 9.5px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #6b7280;
+    font-weight: 600;
+    margin-bottom: 3px;
+}
+
+.train-popup-stop {
+    font-size: 12.5px;
+    color: #d1d5db;
+    line-height: 1.4;
+}
+
+.train-popup-stop strong { color: #ffffff; font-weight: 600; }
+
+/* ── Progress line ── */
+.train-progress {
+    font-size: 10.5px;
+    color: #6b7280;
+    margin-bottom: 9px;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.train-progress::before {
+    content: '';
+    display: inline-block;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: #4b5563;
+    flex-shrink: 0;
+}
+
+/* ── Delay grid (main predictions) ── */
+.train-delay-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 10px;
+}
+
+.train-delay-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.delay-label {
+    font-size: 11.5px;
+    color: #6b7280;
+}
+
+/* ── Delta section ── */
+.train-delta-section {
+    border-top: 1px solid rgba(255, 255, 255, 0.07);
+    padding-top: 9px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.train-delta-header {
+    font-size: 9.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.9px;
+    color: #4b5563;
+    font-weight: 600;
+    margin-bottom: 2px;
+}
+
+.train-delta-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.train-delta-row .delay-label { font-size: 11px; }
+
+/* Small pill badge for delta values */
+.delta-chip {
+    font-size: 10.5px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 20px;
+    letter-spacing: 0.1px;
+}
+
+.delta-chip.on-time {
+    background: rgba(52, 211, 153, 0.13);
+    color: #34d399;
+    border: 1px solid rgba(52, 211, 153, 0.2);
+}
+
+.delta-chip.delayed {
+    background: rgba(248, 113, 113, 0.13);
+    color: #f87171;
+    border: 1px solid rgba(248, 113, 113, 0.2);
+}
+
+.delta-chip.neutral {
+    background: rgba(156, 163, 175, 0.1);
+    color: #9ca3af;
+    border: 1px solid rgba(156, 163, 175, 0.15);
+}
+
+/* ── Misc ── */
+.train-popup-loading {
+    font-size: 11.5px;
+    color: #4b5563;
+    text-align: center;
+    padding: 10px 0 4px;
+}
+
+.train-unscheduled {
+    font-size: 11.5px;
+    color: #fbbf24;
+    background: rgba(251, 191, 36, 0.08);
+    border: 1px solid rgba(251, 191, 36, 0.18);
+    border-radius: 8px;
+    padding: 8px 10px;
+    margin-top: 4px;
+    line-height: 1.5;
+}
+
+.train-feed-warning {
+    font-size: 10.5px;
+    color: #6b7280;
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 6px;
+    padding: 5px 8px;
+    margin-bottom: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.delay-sublabel {
+    font-size: 10px;
+    color: #4b5563;
+    font-weight: 400;
+}
+
+.train-icon { cursor: pointer; }
