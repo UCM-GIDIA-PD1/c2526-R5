@@ -12,6 +12,21 @@ from app.schemas import AlertPrediction, AlertResponse
 
 logger = logging.getLogger(__name__)
 
+# Alphabetical ordering — must match the OrdinalEncoder fitted on training data
+# (sklearn OrdinalEncoder sorts categories alphabetically by default).
+# All route_ids present in grupo5/aggregations/DataFrameGroupedByMin=30.parquet.
+_ROUTE_ORDER = sorted([
+    "1", "2", "3", "4", "5", "6", "7",
+    "A", "B", "C", "D", "E", "F", "G",
+    "J", "L", "M", "N", "Q", "R",
+    "S", "SIR", "Sf", "Sr",
+    "W", "Z",
+])
+_ROUTE_CODES: dict[str, int] = {r: i for i, r in enumerate(_ROUTE_ORDER)}
+
+_DIR_ORDER = ["N", "S"]
+_DIR_CODES: dict[str, int] = {d: i for i, d in enumerate(_DIR_ORDER)}
+
 
 def run_alerts(
     entry: AlertEntry,
@@ -46,10 +61,16 @@ def run_alerts(
             known_features = []
 
     df_feat = df_linea.copy()
-    # OrdinalEncoder used during training → encode categoricals as integer codes
-    for col in ("route_id", "direction"):
-        if col in df_feat.columns:
-            df_feat[col] = df_feat[col].astype("category").cat.codes
+    # Replicate the OrdinalEncoder fitted during training: fixed alphabetical
+    # codes over the full known route/direction sets. Unknown values → -1.
+    if "route_id" in df_feat.columns:
+        df_feat["route_id"] = (
+            df_feat["route_id"].astype(str).map(_ROUTE_CODES).fillna(-1).astype(int)
+        )
+    if "direction" in df_feat.columns:
+        df_feat["direction"] = (
+            df_feat["direction"].astype(str).map(_DIR_CODES).fillna(-1).astype(int)
+        )
 
     if known_features:
         for col in known_features:
