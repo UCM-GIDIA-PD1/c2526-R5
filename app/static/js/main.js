@@ -16,6 +16,15 @@ L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r
     maxZoom: 20
 }).addTo(map);
 
+// Pane de estaciones por debajo de los trenes
+map.createPane('stationPane');
+map.getPane('stationPane').style.zIndex = 420;
+map.getPane('stationPane').style.pointerEvents = 'none';
+
+// Pane de trenes siempre encima
+map.createPane('trainPane');
+map.getPane('trainPane').style.zIndex = 620;
+
 // ============================================================
 // 2. Paleta oficial MTA
 // ============================================================
@@ -167,7 +176,7 @@ function createMetroMarker(routes, zoom) {
 
     return L.divIcon({
         className: 'metro-marker',
-        html: svg,
+        html: `<div style="pointer-events:auto">${svg}</div>`,
         iconSize: [totalW, totalH],
         iconAnchor: [totalW / 2, totalH / 2]
     });
@@ -356,7 +365,7 @@ Promise.all([
         const icon = createMetroMarker(station.routes);
         const marker = L.marker([station.lat, station.lon], {
             icon,
-            zIndexOffset: 1000
+            pane: 'stationPane',
         });
         marker.on('click', () => openStationDetails(station));
         markersMap[station.id] = marker.addTo(map);
@@ -557,7 +566,7 @@ async function refreshTrainPositions() {
             if (t.lat == null || t.lon == null) return;
             const marker = L.marker([t.lat, t.lon], {
                 icon: createTrainIcon(t.route_id),
-                zIndexOffset: 2000,
+                pane: 'trainPane',
             });
             marker.bindTooltip(`Línea ${t.route_id}`, { direction: 'top', offset: [0, -8] });
             marker.on('click', () => openTrainPopup(t, marker));
