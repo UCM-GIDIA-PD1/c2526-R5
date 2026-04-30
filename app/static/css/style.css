@@ -205,6 +205,13 @@ body {
     text-transform: uppercase;
     letter-spacing: 0.5px;
 }
+.train-countdown {
+    font-size: 10px;
+    font-weight: 400;
+    opacity: 0.65;
+    letter-spacing: 0;
+    text-transform: none;
+}
 
 .pulse {
     width: 8px;
