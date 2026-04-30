@@ -26,9 +26,12 @@ def _apply_preprocessing(df: pd.DataFrame, prep: dict) -> pd.DataFrame:
     stop_enc = prep.get("target_encoder_stop_id", {})
     global_mean = prep.get("target_encoder_global_mean", 0.0)
     if stop_enc and "stop_id" in df.columns:
-        df["stop_id_encoded"] = (
+        df["stop_id_target_enc"] = (
             df["stop_id"].astype(str).map(stop_enc).fillna(global_mean)
         )
+
+    # Drop raw identifier columns not used as features
+    df = df.drop(columns=[c for c in ("stop_id", "match_key") if c in df.columns])
 
     # Derived features
     for feat in prep.get("derived_features", []):
@@ -44,6 +47,28 @@ def _apply_preprocessing(df: pd.DataFrame, prep: dict) -> pd.DataFrame:
             df["delay_ratio"] = df["delay_seconds_mean"] / (df["scheduled_time_to_end_mean"] + 1)
 
     return df
+
+
+def run_delay_single(entry: LGBMDelayEntry, features: dict) -> float:
+    """Run LGBM delay inference on a single-trip features dict from get_trip_features."""
+    df = pd.DataFrame([features])
+
+    for col, mapping in entry.preprocessing.get("label_encoders", {}).items():
+        if col in df.columns:
+            df[col] = df[col].astype(str).map(mapping).fillna(-1).astype(int)
+
+    stop_enc = entry.preprocessing.get("target_encoder_stop_id", {})
+    global_mean = entry.preprocessing.get("target_encoder_global_mean", 0.0)
+    if stop_enc and "stop_id" in df.columns:
+        df["stop_id_target_enc"] = df["stop_id"].astype(str).map(stop_enc).fillna(global_mean)
+
+    df = df.drop(columns=[c for c in ("stop_id", "match_key") if c in df.columns])
+
+    feature_names = entry.model.feature_name()
+    for col in feature_names:
+        if col not in df.columns:
+            df[col] = 0
+    return float(entry.model.predict(df[feature_names])[0])
 
 
 def run_delays(

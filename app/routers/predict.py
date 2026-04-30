@@ -7,10 +7,10 @@ from fastapi import APIRouter, HTTPException, Query, Request
 
 from app.config import settings
 from app.data.drive import download_windows
-from app.data.train_infer import fetch_train_features, FeedUnavailable, TripNotFound
 from app.models.alertas_infer import run_alerts
-from app.models.delay_infer import run_delays
-from app.models.delta_infer import run_delta
+from app.models.delay_infer import run_delays, run_delay_single
+from app.models.delta_infer import run_delta, run_delta_single
+from src.ETL.pipelines.realtime.preprocess_realtime_lgbm import get_trip_features
 from app.models.dcrnn_infer import run_propagation
 from app.schemas import (
     AlertResponse,
@@ -272,128 +272,83 @@ async def predict_alerts(
 @router.get("/train")
 async def predict_train(
     request: Request,
-    trip_id: str = Query(..., description="GTFS-RT trip_id"),
-    route_id: str = Query(..., description="Route ID (e.g. '1', 'A')"),
-    stop_id: str = Query(..., description="Current next stop_id (e.g. '101S')"),
+    match_key: str = Query(..., description="match_key del tren (trip_id GTFS-RT)"),
 ) -> dict:
     """
-    Per-train predictions given a live trip.
+    Per-train predictions.
 
-    Fetches the GTFS-RT trip_update for ``trip_id``, builds per-train features,
-    then runs:
-      - delta_10m / delta_20m / delta_30m  (will the delay improve?)
-      - lgbm_delay_end  if scheduled_time_to_end < 30 min
-      - lgbm_delay_30m  otherwise
-
-    Returns current delay, stops remaining, and all model outputs.
+    Construye las features del trip con get_trip_features(match_key), aplica
+    encoding y ejecuta:
+      - lgbm_delay_end   si scheduled_time_to_end < 30 min
+      - lgbm_delay_30m   en caso contrario
+      - delta_10m / delta_20m / delta_30m
     """
     registry = request.app.state.registry
-    windows = await _get_windows(request)
 
-    # Fetch per-train features (makes one GTFS-RT request)
-    feed_error: str | None = None
-    try:
-        train_df = await asyncio.to_thread(
-            fetch_train_features,
-            trip_id=trip_id,
-            route_id=route_id,
-            stop_id=stop_id,
-            windows=windows,
-        )
-    except TripNotFound as exc:
-        raise HTTPException(404, detail=str(exc))
-    except FeedUnavailable as exc:
-        # Feed timed out or errored — fall back to Drive-window data for this stop
-        logger.warning("GTFS-RT unavailable for trip %s, using Drive-window fallback: %s", trip_id, exc)
-        feed_error = str(exc)
-        train_df = _drive_window_fallback(windows, route_id, stop_id)
-        if train_df is None or train_df.empty:
-            raise HTTPException(503, detail=f"Feed unavailable and no Drive-window data: {exc}")
+    features = await asyncio.to_thread(get_trip_features, match_key)
+    if features is None:
+        raise HTTPException(404, detail=f"match_key '{match_key}' no encontrado en el feed RT")
 
-    current_delay_s       = float(train_df["delay_seconds_mean"].iloc[0])
-    stops_to_end          = int(train_df["stops_to_end_mean"].iloc[0])
-    scheduled_time_to_end = float(train_df["scheduled_time_to_end_mean"].iloc[0])
+    current_delay_s       = float(features.get("delay_seconds", 0.0))
+    stops_to_end          = int(features.get("stops_to_end", 0))
+    scheduled_time_to_end = float(features.get("scheduled_time_to_end", 0.0))
+    route_id              = str(features.get("route_id", ""))
+    stop_id               = str(features.get("stop_id", ""))
 
-    # Decide which delay model to use
-    use_end_model  = scheduled_time_to_end < 1800  # < 30 min remaining
-    delay_entry    = registry.lgbm_delay_end if use_end_model else registry.lgbm_delay_30m
-    model_horizon  = "end" if use_end_model else "30m"
-    delay_entry_ok = (
-        (use_end_model and registry.lgbm_delay_end is not None)
-        or (not use_end_model and registry.lgbm_delay_30m is not None)
-    )
-
-    # Wrap single-row df as a fake windows list for the existing inference fns
-    fake_windows = [train_df]
+    # < 30 min: solo delay_end; >= 30 min: delay_30m + delay_end
+    near_end = scheduled_time_to_end < 1800
 
     async def _safe(name: str, fn, **kw):
         try:
             return await asyncio.to_thread(fn, **kw)
         except Exception as exc:
-            logger.warning("Train model %s failed for trip %s: %s", name, trip_id, exc)
+            logger.warning("Train model %s failed for match_key %s: %s", name, match_key, exc)
             return None
 
-    # Run all models concurrently
     coros = {
-        "delay": (
-            _safe("delay", run_delays,
-                  entry=delay_entry, windows=fake_windows,
-                  route_id_filter=route_id, stop_id_filter=stop_id,
-                  min_delay_seconds=-999999.0)
-            if delay_entry_ok
-            else asyncio.sleep(0, result=None)
+        "delay_end": (
+            _safe("delay_end", run_delay_single, entry=registry.lgbm_delay_end, features=features)
+            if registry.lgbm_delay_end is not None else asyncio.sleep(0, result=None)
+        ),
+        "delay_30m": (
+            _safe("delay_30m", run_delay_single, entry=registry.lgbm_delay_30m, features=features)
+            if (not near_end and registry.lgbm_delay_30m is not None) else asyncio.sleep(0, result=None)
         ),
         "delta_10m": (
-            _safe("delta_10m", run_delta,
-                  entry=registry.delta_10m, windows=fake_windows,
-                  horizon="delta_delay_10m",
-                  route_id_filter=route_id, stop_id_filter=stop_id)
-            if registry.delta_10m else asyncio.sleep(0, result=None)
+            _safe("delta_10m", run_delta_single, entry=registry.delta_10m, features=features)
+            if registry.delta_10m is not None else asyncio.sleep(0, result=None)
         ),
         "delta_20m": (
-            _safe("delta_20m", run_delta,
-                  entry=registry.delta_20m, windows=fake_windows,
-                  horizon="delta_delay_20m",
-                  route_id_filter=route_id, stop_id_filter=stop_id)
-            if registry.delta_20m else asyncio.sleep(0, result=None)
+            _safe("delta_20m", run_delta_single, entry=registry.delta_20m, features=features)
+            if registry.delta_20m is not None else asyncio.sleep(0, result=None)
         ),
         "delta_30m": (
-            _safe("delta_30m", run_delta,
-                  entry=registry.delta_30m, windows=fake_windows,
-                  horizon="delta_delay_30m",
-                  route_id_filter=route_id, stop_id_filter=stop_id)
-            if registry.delta_30m else asyncio.sleep(0, result=None)
+            _safe("delta_30m", run_delta_single, entry=registry.delta_30m, features=features)
+            if registry.delta_30m is not None else asyncio.sleep(0, result=None)
         ),
     }
 
     results_list = await asyncio.gather(*coros.values())
     res = dict(zip(coros.keys(), results_list))
 
-    def _first_pred(model_result):
-        """Extract the first (and only) prediction from a model result."""
-        if model_result is None:
+    def _fmt_delta(result):
+        if result is None:
             return None
-        preds = getattr(model_result, "predictions", None)
-        if not preds:
-            return None
-        p = preds[0]
-        return {k: v for k, v in p.__dict__.items() if not k.startswith("_")}
-
-    delay_pred = _first_pred(res["delay"])
+        prob, mejora = result
+        return {"mejora_prob": round(prob, 4), "mejora_predicted": mejora}
 
     return {
-        "trip_id":                trip_id,
-        "route_id":               route_id,
-        "stop_id":                stop_id,
-        "current_delay_s":        round(current_delay_s, 1),
-        "stops_to_end":           stops_to_end,
+        "match_key":               match_key,
+        "route_id":                route_id,
+        "stop_id":                 stop_id,
+        "current_delay_s":         round(current_delay_s, 1),
+        "stops_to_end":            stops_to_end,
         "scheduled_time_to_end_s": round(scheduled_time_to_end, 1),
-        "model_horizon":          model_horizon,
-        "delay_prediction":       delay_pred,
-        "delta_10m":              _first_pred(res["delta_10m"]),
-        "delta_20m":              _first_pred(res["delta_20m"]),
-        "delta_30m":              _first_pred(res["delta_30m"]),
-        "feed_warning":           feed_error,
+        "delay_end_s":             round(res["delay_end"], 1) if res["delay_end"] is not None else None,
+        "delay_30m_s":             round(res["delay_30m"], 1) if res["delay_30m"] is not None else None,
+        "delta_10m":               _fmt_delta(res["delta_10m"]),
+        "delta_20m":               _fmt_delta(res["delta_20m"]),
+        "delta_30m":               _fmt_delta(res["delta_30m"]),
     }
 
 
