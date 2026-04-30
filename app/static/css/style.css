@@ -567,6 +567,14 @@ body {
     border-radius: 8px; padding: 8px 10px; margin-top: 4px; line-height: 1.5;
 }
 
+.train-sched-tag {
+    font-size: 10px; font-weight: 600; letter-spacing: 0.3px;
+    padding: 2px 6px; border-radius: 4px; margin-left: auto;
+    white-space: nowrap;
+}
+.train-sched-tag.added       { background: rgba(255,255,255,0.25); color: #fff; }
+.train-sched-tag.unscheduled { background: rgba(0,0,0,0.20);       color: #fff; }
+
 .train-feed-warning {
     font-size: 10.5px; color: var(--text-muted);
     background: var(--popup-feed-bg);

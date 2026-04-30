@@ -445,6 +445,11 @@ async function openTrainPopup(train, marker) {
     const stopName = stopStation ? stopStation.name : (train.next_stop_id || '—');
     const statusText = ({0: 'Llegando', 1: 'En estación', 2: 'En tránsito'})[train.status] ?? '—';
     const dirText = train.direction === 'N' ? '↑ Uptown' : train.direction === 'S' ? '↓ Downtown' : '';
+    const schedTag = train.schedule_relationship === 1
+        ? `<span class="train-sched-tag added">Servicio adicional</span>`
+        : train.schedule_relationship === 2
+            ? `<span class="train-sched-tag unscheduled">Sin horario</span>`
+            : '';
 
     const popupOpts = { maxWidth: 260, className: 'train-popup-wrapper' };
 
@@ -452,6 +457,7 @@ async function openTrainPopup(train, marker) {
         <div class="train-popup-header" style="background:${color}">
             <span class="train-route-badge">${train.route_id}</span>
             ${dirText ? `<span class="train-popup-dir">${dirText}</span>` : ''}
+            ${schedTag}
         </div>`;
 
     const metaBlock = `
@@ -459,16 +465,6 @@ async function openTrainPopup(train, marker) {
             <div class="train-popup-status">${statusText}</div>
             <div class="train-popup-stop">Próxima: <strong>${stopName}</strong></div>
         </div>`;
-
-    if (train.is_unscheduled) {
-        marker.bindPopup(
-            `<div>${headerHtml}<div class="train-popup-body">${metaBlock}
-                <div class="train-unscheduled">⚠️ Tren no programado — sin predicción disponible</div>
-            </div></div>`,
-            popupOpts
-        ).openPopup();
-        return;
-    }
 
     // Show loading state immediately
     marker.bindPopup(
