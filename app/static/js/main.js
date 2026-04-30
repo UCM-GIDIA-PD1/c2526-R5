@@ -551,6 +551,20 @@ async function openTrainPopup(train, marker) {
     if (popup?.isOpen()) popup.setContent(fullHtml);
 }
 
+const TRAIN_REFRESH_S = 30;
+let _cdTimer = null;
+
+function _tickCountdown(s) {
+    const el = document.getElementById('train-countdown');
+    if (el) el.textContent = `· ${s}s`;
+    if (s > 0) _cdTimer = setTimeout(() => _tickCountdown(s - 1), 1000);
+}
+
+function _startCountdown() {
+    clearTimeout(_cdTimer);
+    _tickCountdown(TRAIN_REFRESH_S);
+}
+
 async function refreshTrainPositions() {
     try {
         const resp = await fetch('/api/vehicles');
@@ -570,11 +584,13 @@ async function refreshTrainPositions() {
         });
     } catch (e) {
         console.error('Error al obtener posiciones de trenes:', e);
+    } finally {
+        _startCountdown();
+        setTimeout(refreshTrainPositions, TRAIN_REFRESH_S * 1000);
     }
 }
 
 refreshTrainPositions();
-setInterval(refreshTrainPositions, 30000);
 
 
 // ============================================================
