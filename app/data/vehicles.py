@@ -94,7 +94,7 @@ def fetch_positions(
                 "lat": lat,
                 "lon": lon,
                 "next_stop_id": stop_id,
-                "is_unscheduled": v.trip.schedule_relationship != 0,
+                "schedule_relationship": v.trip.schedule_relationship,
                 "direction": direction,
                 "status": v.current_status,
             })

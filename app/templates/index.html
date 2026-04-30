@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NYC Subway Dashboard - Predicciones en Tiempo Real</title>
+    <title>Express-Bound — NYC Subway</title>
     <!-- Google Fonts: Inter -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -18,7 +18,7 @@
     <div id="loading-overlay">
         <div class="loading-box">
             <div class="loading-ring"></div>
-            <div class="loading-title">NYC Wayfinder</div>
+            <div class="loading-title">Express-Bound</div>
             <div class="loading-sub">Cargando estaciones y datos en tiempo real…</div>
         </div>
     </div>
@@ -29,8 +29,16 @@
     <div id="route-planner" class="glass-panel route-panel over-map">
         <header>
             <div class="header-title">
-                <h1>NYC Wayfinder</h1>
-                <span class="live-indicator"><span class="pulse"></span> LIVE</span>
+                <h1>Express-Bound</h1>
+                <div class="header-actions">
+                    <button id="theme-toggle" class="theme-btn" title="Modo oscuro" aria-label="Cambiar tema">
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+                    </button>
+                    <span class="live-indicator">
+                        <span class="pulse"></span> LIVE
+                        <span id="train-countdown" class="train-countdown">· 30s</span>
+                    </span>
+                </div>
             </div>
             <p>Calcula tu ruta y evita retrasos</p>
         </header>

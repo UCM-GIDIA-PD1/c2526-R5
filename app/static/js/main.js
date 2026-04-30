@@ -10,11 +10,11 @@ const map = L.map('map', {
     zoomControl: false
 });
 
-L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-    attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
-    subdomains: 'abcd',
-    maxZoom: 20
-}).addTo(map);
+const TILE_LIGHT = 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png';
+const TILE_DARK  = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
+const TILE_OPTS  = { attribution: '&copy; OpenStreetMap contributors &copy; CARTO', subdomains: 'abcd', maxZoom: 20 };
+
+let tileLayer = L.tileLayer(TILE_LIGHT, TILE_OPTS).addTo(map);
 
 // Pane de estaciones por debajo de los trenes
 map.createPane('stationPane');
@@ -445,6 +445,11 @@ async function openTrainPopup(train, marker) {
     const stopName = stopStation ? stopStation.name : (train.next_stop_id || '—');
     const statusText = ({0: 'Llegando', 1: 'En estación', 2: 'En tránsito'})[train.status] ?? '—';
     const dirText = train.direction === 'N' ? '↑ Uptown' : train.direction === 'S' ? '↓ Downtown' : '';
+    const schedTag = train.schedule_relationship === 1
+        ? `<span class="train-sched-tag added">Servicio adicional</span>`
+        : train.schedule_relationship === 2
+            ? `<span class="train-sched-tag unscheduled">Sin horario</span>`
+            : '';
 
     const popupOpts = { maxWidth: 260, className: 'train-popup-wrapper' };
 
@@ -452,6 +457,7 @@ async function openTrainPopup(train, marker) {
         <div class="train-popup-header" style="background:${color}">
             <span class="train-route-badge">${train.route_id}</span>
             ${dirText ? `<span class="train-popup-dir">${dirText}</span>` : ''}
+            ${schedTag}
         </div>`;
 
     const metaBlock = `
@@ -459,16 +465,6 @@ async function openTrainPopup(train, marker) {
             <div class="train-popup-status">${statusText}</div>
             <div class="train-popup-stop">Próxima: <strong>${stopName}</strong></div>
         </div>`;
-
-    if (train.is_unscheduled) {
-        marker.bindPopup(
-            `<div>${headerHtml}<div class="train-popup-body">${metaBlock}
-                <div class="train-unscheduled">⚠️ Tren no programado — sin predicción disponible</div>
-            </div></div>`,
-            popupOpts
-        ).openPopup();
-        return;
-    }
 
     // Show loading state immediately
     marker.bindPopup(
@@ -555,6 +551,20 @@ async function openTrainPopup(train, marker) {
     if (popup?.isOpen()) popup.setContent(fullHtml);
 }
 
+const TRAIN_REFRESH_S = 30;
+let _cdTimer = null;
+
+function _tickCountdown(s) {
+    const el = document.getElementById('train-countdown');
+    if (el) el.textContent = `· ${s}s`;
+    if (s > 0) _cdTimer = setTimeout(() => _tickCountdown(s - 1), 1000);
+}
+
+function _startCountdown() {
+    clearTimeout(_cdTimer);
+    _tickCountdown(TRAIN_REFRESH_S);
+}
+
 async function refreshTrainPositions() {
     try {
         const resp = await fetch('/api/vehicles');
@@ -574,11 +584,13 @@ async function refreshTrainPositions() {
         });
     } catch (e) {
         console.error('Error al obtener posiciones de trenes:', e);
+    } finally {
+        _startCountdown();
+        setTimeout(refreshTrainPositions, TRAIN_REFRESH_S * 1000);
     }
 }
 
 refreshTrainPositions();
-setInterval(refreshTrainPositions, 30000);
 
 
 // ============================================================
@@ -899,3 +911,37 @@ function findCommonLines(s1, s2) {
     const r2 = s2.routes.split(' ');
     return r1.filter(line => r2.includes(line));
 }
+
+// ============================================================
+// 12. Modo claro / oscuro
+// ============================================================
+
+const ICON_MOON = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>`;
+const ICON_SUN  = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>`;
+
+function applyTheme(dark) {
+    const btn = document.getElementById('theme-toggle');
+    if (dark) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+        tileLayer.setUrl(TILE_DARK);
+        btn.innerHTML = ICON_SUN;
+        btn.title = 'Modo claro';
+    } else {
+        document.documentElement.removeAttribute('data-theme');
+        tileLayer.setUrl(TILE_LIGHT);
+        btn.innerHTML = ICON_MOON;
+        btn.title = 'Modo oscuro';
+    }
+}
+
+(function initTheme() {
+    const saved = localStorage.getItem('theme');
+    applyTheme(saved === 'dark');
+})();
+
+document.getElementById('theme-toggle').addEventListener('click', () => {
+    const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+    const next = !isDark;
+    localStorage.setItem('theme', next ? 'dark' : 'light');
+    applyTheme(next);
+});
