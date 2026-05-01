@@ -41,8 +41,8 @@ const ROUTE_COLORS = {
     'S': '#808183', 'SIR': '#0039A6'
 };
 
-// Separación entre líneas paralelas que comparten vía (en píxeles fijos de pantalla)
-const OFFSET_PX = 4;
+// Separación fija en metros entre líneas paralelas (independiente del zoom)
+const OFFSET_METERS = 15;
 
 function getStationColor(routes) {
     if (!routes) return '#3B82F6';
@@ -58,6 +58,7 @@ let allStations = [];
 let stationsById = {};     // stationId -> station object
 let currentAlerts = [];    // AlertPrediction[] del WebSocket (por route_id)
 let routePolylines = {};   // lineCode -> L.polyline
+let borderPolylines = [];  // líneas de borde oscuro (para limpiarlas al redibujar)
 let stationRouteIndex = {}; // stationId -> [lineCode, lineCode, ...]
 
 const SUBWAY_STATIONS_URL = '/api/stations';
@@ -98,30 +99,28 @@ const ROUTE_PARALLEL_INDEX = {
 };
 
 /**
- * Aplica un offset perpendicular en píxeles de pantalla a una
- * lista de puntos [[lat, lon], ...]. El cálculo es dependiente del zoom.
+ * Aplica un offset perpendicular fijo en metros a una lista de puntos [[lat, lon], ...].
+ * Independiente del zoom — las líneas no saltan al hacer zoom.
  */
-function offsetLatLngsPx(points, offsetPx) {
-    if (offsetPx === 0 || points.length < 2) return points;
+function offsetLatLngsMeters(points, offsetMeters) {
+    if (offsetMeters === 0 || points.length < 2) return points;
 
     return points.map((pt, i) => {
-        const prevLatLng = points[Math.max(0, i - 1)];
-        const nextLatLng = points[Math.min(points.length - 1, i + 1)];
+        const prev = points[Math.max(0, i - 1)];
+        const next = points[Math.min(points.length - 1, i + 1)];
 
-        const p1 = map.latLngToLayerPoint(prevLatLng);
-        const p2 = map.latLngToLayerPoint(nextLatLng);
-        const curr = map.latLngToLayerPoint(pt);
+        const cosLat = Math.cos(pt[0] * Math.PI / 180);
+        const dlatM  = (next[0] - prev[0]) * 111320;
+        const dlonM  = (next[1] - prev[1]) * 111320 * cosLat;
+        const len    = Math.sqrt(dlatM * dlatM + dlonM * dlonM) || 1;
 
-        const dx = p2.x - p1.x;
-        const dy = p2.y - p1.y;
-        const len = Math.sqrt(dx * dx + dy * dy) || 1;
+        const nx = -dlonM / len;
+        const ny =  dlatM / len;
 
-        // Perpendicular normalizado
-        const nx = -dy / len;
-        const ny =  dx / len;
-
-        const shifted = L.point(curr.x + nx * offsetPx, curr.y + ny * offsetPx);
-        return map.layerPointToLatLng(shifted);
+        return [
+            pt[0] + nx * offsetMeters / 111320,
+            pt[1] + ny * offsetMeters / (111320 * cosLat)
+        ];
     });
 }
 
@@ -290,7 +289,9 @@ function redrawShapes() {
     
     // Limpiar polilíneas viejas
     Object.values(routePolylines).forEach(p => map.removeLayer(p));
+    borderPolylines.forEach(p => map.removeLayer(p));
     routePolylines = {};
+    borderPolylines = [];
 
     Object.entries(rawShapesDataCache).forEach(([routeCode, points]) => {
         const color = ROUTE_COLORS[routeCode] || '#3B82F6';
@@ -298,19 +299,20 @@ function redrawShapes() {
         // Calcular offset de pantalla para separar líneas paralelas
         const parallel = ROUTE_PARALLEL_INDEX[routeCode] || { idx: 0, total: 1 };
         const centerOffset = (parallel.total - 1) / 2;
-        const offsetPixels = (parallel.idx - centerOffset) * OFFSET_PX;
+        const offsetIndex = (parallel.idx - centerOffset);
 
-        const latlngs = offsetPixels !== 0 ? offsetLatLngsPx(points, offsetPixels) : points;
+        const latlngs = offsetIndex !== 0 ? offsetLatLngsMeters(points, offsetIndex * OFFSET_METERS) : points;
 
         // Borde oscuro unificado (una sola línea más gruesa sirve de sombra si está centrado)
-        if (offsetPixels === 0) {
-            L.polyline(points, {
+        if (offsetIndex === 0) {
+            const border = L.polyline(points, {
                 color: darkenColor(color, 0.4),
                 weight: 7,
                 opacity: 0.5,
                 lineJoin: 'round',
                 lineCap: 'round'
             }).addTo(map);
+            borderPolylines.push(border);
         }
 
         // Línea principal
@@ -331,8 +333,18 @@ function drawShapeLines(shapesData) {
     rawShapesDataCache = shapesData;
     redrawShapes();
     
-    // Redibujar al hacer zoom para mantener la separación en píxeles fijos
-    map.on('zoomend', redrawShapes);
+    // Ocultar líneas al empezar el zoom y redibujar al terminar (evita descuadre visual)
+    map.on('zoomstart', () => {
+        Object.values(routePolylines).forEach(p => {
+            if (p && p.getElement) {
+                const el = p.getElement();
+                if (el) el.style.opacity = '0';
+            }
+        });
+    });
+    map.on('zoomend', () => {
+        redrawShapes();
+    });
     
     console.log(`Shapes GTFS dibujados para ${Object.keys(shapesData).length} rutas con offsets de píxeles.`);
 }
