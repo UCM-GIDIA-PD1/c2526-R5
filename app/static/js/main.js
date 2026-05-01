@@ -477,11 +477,7 @@ async function openTrainPopup(train, marker) {
     // Call the unified per-train endpoint
     let data = null;
     try {
-        const params = new URLSearchParams({
-            trip_id:  train.trip_id,
-            route_id: train.route_id,
-            stop_id:  train.next_stop_id,
-        });
+        const params = new URLSearchParams({ match_key: train.trip_id });
         const resp = await fetch(`/api/predict/train?${params}`);
         if (resp.ok) data = await resp.json();
     } catch (e) {
@@ -519,8 +515,9 @@ async function openTrainPopup(train, marker) {
             ? `<div class="train-progress">${stopsLeft != null ? `${stopsLeft} paradas` : ''}${minsLeft != null ? ` · ~${minsLeft} min` : ''} hasta el final</div>`
             : '';
 
-        const horizonLabel = data.model_horizon === 'end' ? 'Al llegar al final de línea' : 'En 30 min';
-        const horizonDelay = data.delay_prediction?.delay_seconds ?? null;
+        const nearEnd = data.delay_30m_s == null;
+        const horizonLabel = nearEnd ? 'Al llegar al final de línea' : 'En 30 min';
+        const horizonDelay = nearEnd ? data.delay_end_s : data.delay_30m_s;
 
         const feedWarning = data.feed_warning
             ? `<div class="train-feed-warning">⚠ Datos RT no disponibles — estimación aproximada</div>`
