@@ -36,8 +36,8 @@ solo difieren en el registro de funciones y el tipo de operación que ejecutan.
 ### 1.2 Uso y forma de ejecución
 
 ```bash
-uv run python -m src.pipelines.run_extraccion --source all --start YYYY-MM-DD --end YYYY-MM-DD
-uv run python -m src.pipelines.run_transform --source gtfs_historico --start 2025-12-01 --end 2025-12-31
+uv run python -m src.ETL.pipelines.historical.run_extraccion --source all --start YYYY-MM-DD --end YYYY-MM-DD
+uv run python -m src.ETL.pipelines.historical.run_transform --source gtfs_historico --start 2025-12-01 --end 2025-12-31
 ```
 
 > **Nota:** Siempre deben ejecutarse como módulos para evitar problemas de importación
@@ -49,7 +49,7 @@ uv run python -m src.pipelines.run_transform --source gtfs_historico --start 202
 
 ### 2.1 Estructura
 
-El archivo `src/pipelines/run_extraccion.py` define:
+El archivo `src/ETL/pipelines/historical/run_extraccion.py` define:
 
 - Un tipo `IngestFn` que es simplemente `Callable[[str, str], None]`.
 - Un `REGISTRY` donde cada clave es el nombre de la fuente y el valor la función que
@@ -109,7 +109,7 @@ Para añadir nuevas fuentes o etapas basta con:
 
 ## 5. Generación del Dataset Final (`generate_final_dataset.py`)
 
-Al final del proceso de transformación, se ejecuta el script **`src.ETL.pipelines.generate_final_dataset`**, responsable de construir el dataset maestro de entrenamiento a partir de las capas guardadas (`cleaned`) en MinIO:
+Al final del proceso de transformación, se ejecuta el script **`src.ETL.pipelines.historical.generate_final_dataset`**, responsable de construir el dataset maestro de entrenamiento a partir de las capas guardadas (`cleaned`) en MinIO:
 
 1. **Recopilación**: Descarga y concatena los datos limpios de GTFS, Clima, Eventos y Alertas para el rango de fechas especificado.
 2. **Optimización de memoria**: Aplica downcasting de tipos numéricos y convierte cadenas de texto repetitivas en categorías para procesar grandes volúmenes en RAM de forma eficiente.
@@ -123,5 +123,5 @@ Al final del proceso de transformación, se ejecuta el script **`src.ETL.pipelin
 Su ejecución manual es similar a los orquestadores:
 
 ```bash
-uv run python -m src.ETL.pipelines.generate_final_dataset --start 2025-01-01 --end 2025-01-31
+uv run python -m src.ETL.pipelines.historical.generate_final_dataset --start 2025-01-01 --end 2025-01-31
 ```

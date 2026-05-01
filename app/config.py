@@ -32,7 +32,7 @@ class Settings:
     n_windows: int = int(os.getenv("N_WINDOWS", "8"))
 
     # Inference
-    data_cache_ttl: int = int(os.getenv("DATA_CACHE_TTL", "60"))
+    data_cache_ttl: int = int(os.getenv("DATA_CACHE_TTL", "900"))
     alert_threshold: float = float(os.getenv("ALERT_THRESHOLD", "0.35"))
 
 

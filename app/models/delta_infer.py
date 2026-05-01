@@ -23,6 +23,32 @@ def _apply_preprocessing(df: pd.DataFrame, prep: dict) -> pd.DataFrame:
     return df
 
 
+def run_delta_single(
+    entry: DeltaEntry,
+    features: dict,
+    threshold: Optional[float] = None,
+) -> tuple[float, bool]:
+    """Run LGBM delta inference on a single-trip features dict from get_trip_features."""
+    prep = entry.preprocessing
+    thr = threshold if threshold is not None else float(prep.get("best_threshold", 0.5))
+
+    df = pd.DataFrame([features])
+
+    vocabs: dict = prep.get("vocabs", {})
+    for col, vocab in vocabs.items():
+        if col in df.columns:
+            df[col] = df[col].astype(str).map(vocab).fillna(-1).astype(int)
+
+    df = df.drop(columns=[c for c in ("stop_id", "match_key") if c in df.columns])
+
+    feature_list = entry.model.feature_name() or prep.get("features", [])
+    for col in feature_list:
+        if col not in df.columns:
+            df[col] = 0
+    prob = float(entry.model.predict(df[feature_list].fillna(0))[0])
+    return prob, bool(prob >= thr)
+
+
 def run_delta(
     entry: DeltaEntry,
     windows: list,

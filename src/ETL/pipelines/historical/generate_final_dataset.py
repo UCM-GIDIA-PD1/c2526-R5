@@ -8,7 +8,7 @@ Fuentes mezcladas en un único dataset:
 4) Alertas oficiales cleaned
 
 Uso:
-  uv run python src/ETL/pipelines/generate_final_dataset.py \
+  uv run python src/ETL/pipelines/historical/generate_final_dataset.py \
 	--start 2025-01-01 --end 2025-01-31
 """
 

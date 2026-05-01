@@ -10,11 +10,20 @@ const map = L.map('map', {
     zoomControl: false
 });
 
-L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-    attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
-    subdomains: 'abcd',
-    maxZoom: 20
-}).addTo(map);
+const TILE_LIGHT = 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png';
+const TILE_DARK  = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
+const TILE_OPTS  = { attribution: '&copy; OpenStreetMap contributors &copy; CARTO', subdomains: 'abcd', maxZoom: 20 };
+
+let tileLayer = L.tileLayer(TILE_LIGHT, TILE_OPTS).addTo(map);
+
+// Pane de estaciones por debajo de los trenes
+map.createPane('stationPane');
+map.getPane('stationPane').style.zIndex = 420;
+map.getPane('stationPane').style.pointerEvents = 'none';
+
+// Pane de trenes siempre encima
+map.createPane('trainPane');
+map.getPane('trainPane').style.zIndex = 620;
 
 // ============================================================
 // 2. Paleta oficial MTA
@@ -32,8 +41,8 @@ const ROUTE_COLORS = {
     'S': '#808183', 'SIR': '#0039A6'
 };
 
-// Separación entre líneas paralelas que comparten vía (en píxeles fijos de pantalla)
-const OFFSET_PX = 4;
+// Separación fija en metros entre líneas paralelas (independiente del zoom)
+const OFFSET_METERS = 15;
 
 function getStationColor(routes) {
     if (!routes) return '#3B82F6';
@@ -46,8 +55,10 @@ function getStationColor(routes) {
 // ============================================================
 let markersMap = {};
 let allStations = [];
+let stationsById = {};     // stationId -> station object
 let currentAlerts = [];    // AlertPrediction[] del WebSocket (por route_id)
 let routePolylines = {};   // lineCode -> L.polyline
+let borderPolylines = [];  // líneas de borde oscuro (para limpiarlas al redibujar)
 let stationRouteIndex = {}; // stationId -> [lineCode, lineCode, ...]
 
 const SUBWAY_STATIONS_URL = '/api/stations';
@@ -88,30 +99,28 @@ const ROUTE_PARALLEL_INDEX = {
 };
 
 /**
- * Aplica un offset perpendicular en píxeles de pantalla a una
- * lista de puntos [[lat, lon], ...]. El cálculo es dependiente del zoom.
+ * Aplica un offset perpendicular fijo en metros a una lista de puntos [[lat, lon], ...].
+ * Independiente del zoom — las líneas no saltan al hacer zoom.
  */
-function offsetLatLngsPx(points, offsetPx) {
-    if (offsetPx === 0 || points.length < 2) return points;
+function offsetLatLngsMeters(points, offsetMeters) {
+    if (offsetMeters === 0 || points.length < 2) return points;
 
     return points.map((pt, i) => {
-        const prevLatLng = points[Math.max(0, i - 1)];
-        const nextLatLng = points[Math.min(points.length - 1, i + 1)];
+        const prev = points[Math.max(0, i - 1)];
+        const next = points[Math.min(points.length - 1, i + 1)];
 
-        const p1 = map.latLngToLayerPoint(prevLatLng);
-        const p2 = map.latLngToLayerPoint(nextLatLng);
-        const curr = map.latLngToLayerPoint(pt);
+        const cosLat = Math.cos(pt[0] * Math.PI / 180);
+        const dlatM  = (next[0] - prev[0]) * 111320;
+        const dlonM  = (next[1] - prev[1]) * 111320 * cosLat;
+        const len    = Math.sqrt(dlatM * dlatM + dlonM * dlonM) || 1;
 
-        const dx = p2.x - p1.x;
-        const dy = p2.y - p1.y;
-        const len = Math.sqrt(dx * dx + dy * dy) || 1;
+        const nx = -dlonM / len;
+        const ny =  dlatM / len;
 
-        // Perpendicular normalizado
-        const nx = -dy / len;
-        const ny =  dx / len;
-
-        const shifted = L.point(curr.x + nx * offsetPx, curr.y + ny * offsetPx);
-        return map.layerPointToLatLng(shifted);
+        return [
+            pt[0] + nx * offsetMeters / 111320,
+            pt[1] + ny * offsetMeters / (111320 * cosLat)
+        ];
     });
 }
 
@@ -166,7 +175,7 @@ function createMetroMarker(routes, zoom) {
 
     return L.divIcon({
         className: 'metro-marker',
-        html: svg,
+        html: `<div style="pointer-events:auto">${svg}</div>`,
         iconSize: [totalW, totalH],
         iconAnchor: [totalW / 2, totalH / 2]
     });
@@ -280,7 +289,9 @@ function redrawShapes() {
     
     // Limpiar polilíneas viejas
     Object.values(routePolylines).forEach(p => map.removeLayer(p));
+    borderPolylines.forEach(p => map.removeLayer(p));
     routePolylines = {};
+    borderPolylines = [];
 
     Object.entries(rawShapesDataCache).forEach(([routeCode, points]) => {
         const color = ROUTE_COLORS[routeCode] || '#3B82F6';
@@ -288,19 +299,20 @@ function redrawShapes() {
         // Calcular offset de pantalla para separar líneas paralelas
         const parallel = ROUTE_PARALLEL_INDEX[routeCode] || { idx: 0, total: 1 };
         const centerOffset = (parallel.total - 1) / 2;
-        const offsetPixels = (parallel.idx - centerOffset) * OFFSET_PX;
+        const offsetIndex = (parallel.idx - centerOffset);
 
-        const latlngs = offsetPixels !== 0 ? offsetLatLngsPx(points, offsetPixels) : points;
+        const latlngs = offsetIndex !== 0 ? offsetLatLngsMeters(points, offsetIndex * OFFSET_METERS) : points;
 
         // Borde oscuro unificado (una sola línea más gruesa sirve de sombra si está centrado)
-        if (offsetPixels === 0) {
-            L.polyline(points, {
+        if (offsetIndex === 0) {
+            const border = L.polyline(points, {
                 color: darkenColor(color, 0.4),
                 weight: 7,
                 opacity: 0.5,
                 lineJoin: 'round',
                 lineCap: 'round'
             }).addTo(map);
+            borderPolylines.push(border);
         }
 
         // Línea principal
@@ -321,8 +333,18 @@ function drawShapeLines(shapesData) {
     rawShapesDataCache = shapesData;
     redrawShapes();
     
-    // Redibujar al hacer zoom para mantener la separación en píxeles fijos
-    map.on('zoomend', redrawShapes);
+    // Ocultar líneas al empezar el zoom y redibujar al terminar (evita descuadre visual)
+    map.on('zoomstart', () => {
+        Object.values(routePolylines).forEach(p => {
+            if (p && p.getElement) {
+                const el = p.getElement();
+                if (el) el.style.opacity = '0';
+            }
+        });
+    });
+    map.on('zoomend', () => {
+        redrawShapes();
+    });
     
     console.log(`Shapes GTFS dibujados para ${Object.keys(shapesData).length} rutas con offsets de píxeles.`);
 }
@@ -331,11 +353,12 @@ function drawShapeLines(shapesData) {
 Promise.all([
     fetch(SUBWAY_STATIONS_URL).then(r => r.json()),
     fetch('/api/shapes').then(r => r.json()).catch(() => ({})),
-    fetch('/api/routes').then(r => r.json()).catch(() => ({}))
+    fetch('/api/routes').then(r => r.json()).catch(() => ({})),
+    fetch('/api/warmup').catch(() => null),
 ]).then(([stations, shapesData, routeData]) => {
     allStations = stations;
 
-    const stationsById = {};
+    stationsById = {};
     stations.forEach(st => {
         stationsById[st.id] = st;
         stationRouteIndex[st.id] = st.routes ? st.routes.split(' ') : [];
@@ -354,7 +377,7 @@ Promise.all([
         const icon = createMetroMarker(station.routes);
         const marker = L.marker([station.lat, station.lon], {
             icon,
-            zIndexOffset: 1000
+            pane: 'stationPane',
         });
         marker.on('click', () => openStationDetails(station));
         markersMap[station.id] = marker.addTo(map);
@@ -372,11 +395,218 @@ Promise.all([
 
     console.log(`${stations.length} estaciones renderizadas con estilo metro.`);
     initRoutePlanner();
-}).catch(err => console.error("Error al cargar datos:", err));
+
+    // Hide initial loading overlay
+    const overlay = document.getElementById('loading-overlay');
+    if (overlay) {
+        overlay.classList.add('fade-out');
+        setTimeout(() => overlay.remove(), 520);
+    }
+}).catch(err => {
+    console.error("Error al cargar datos:", err);
+    const overlay = document.getElementById('loading-overlay');
+    if (overlay) {
+        overlay.classList.add('fade-out');
+        setTimeout(() => overlay.remove(), 520);
+    }
+});
 
 
 // ============================================================
-// 8. WebSocket para predicciones en tiempo real
+// 8. Posiciones de trenes en tiempo real
+// ============================================================
+
+const trainLayer = L.layerGroup().addTo(map);
+
+function createTrainIcon(routeId) {
+    const color = ROUTE_COLORS[routeId] || '#888888';
+    const w = 14, h = 8;
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 14 8">
+        <rect x="0.5" y="0.5" width="11" height="5.5" rx="1.5" fill="${color}" fill-opacity="0.78" stroke="white" stroke-width="0.8"/>
+        <rect x="1.5" y="1.5" width="3" height="2.5" rx="0.8" fill="white" fill-opacity="0.25"/>
+        <rect x="5.5" y="1.5" width="2" height="2.5" rx="0.8" fill="white" fill-opacity="0.25"/>
+        <rect x="8.5" y="1.5" width="2" height="2.5" rx="0.8" fill="white" fill-opacity="0.25"/>
+        <circle cx="3"  cy="7" r="1" fill="#111" stroke="white" stroke-width="0.6"/>
+        <circle cx="9" cy="7" r="1" fill="#111" stroke="white" stroke-width="0.6"/>
+    </svg>`;
+    return L.divIcon({
+        className: 'train-icon',
+        html: svg,
+        iconSize: [w, h + 2],
+        iconAnchor: [w / 2, (h + 2) / 2],
+    });
+}
+
+function _fmtDelay(sec) {
+    if (sec === null || sec === undefined) return '—';
+    const s = Math.round(sec);
+    if (s < 60) return `${s} s`;
+    const m = Math.floor(s / 60), r = s % 60;
+    return r > 0 ? `${m}m ${r}s` : `${m} min`;
+}
+
+function _delayCls(sec) {
+    if (sec === null || sec === undefined) return '';
+    return sec <= 30 ? 'on-time' : sec < 120 ? 'minor-delay' : 'delayed';
+}
+
+async function openTrainPopup(train, marker) {
+    const color = ROUTE_COLORS[train.route_id] || '#888888';
+    const baseStopId = train.next_stop_id ? train.next_stop_id.replace(/[NS]$/, '') : null;
+    const stopStation = baseStopId ? stationsById[baseStopId] : null;
+    const stopName = stopStation ? stopStation.name : (train.next_stop_id || '—');
+    const statusText = ({0: 'Llegando', 1: 'En estación', 2: 'En tránsito'})[train.status] ?? '—';
+    const dirText = train.direction === 'N' ? '↑ Uptown' : train.direction === 'S' ? '↓ Downtown' : '';
+    const schedTag = train.schedule_relationship === 1
+        ? `<span class="train-sched-tag added">Servicio adicional</span>`
+        : train.schedule_relationship === 2
+            ? `<span class="train-sched-tag unscheduled">Sin horario</span>`
+            : '';
+
+    const popupOpts = { maxWidth: 260, className: 'train-popup-wrapper' };
+
+    const headerHtml = `
+        <div class="train-popup-header" style="background:${color}">
+            <span class="train-route-badge">${train.route_id}</span>
+            ${dirText ? `<span class="train-popup-dir">${dirText}</span>` : ''}
+            ${schedTag}
+        </div>`;
+
+    const metaBlock = `
+        <div class="train-popup-meta">
+            <div class="train-popup-status">${statusText}</div>
+            <div class="train-popup-stop">Próxima: <strong>${stopName}</strong></div>
+        </div>`;
+
+    // Show loading state immediately
+    marker.bindPopup(
+        `<div>${headerHtml}<div class="train-popup-body">${metaBlock}
+            <div class="train-popup-loading">Cargando predicciones…</div>
+        </div></div>`,
+        popupOpts
+    ).openPopup();
+
+    // Call the unified per-train endpoint
+    let data = null;
+    try {
+        const params = new URLSearchParams({
+            trip_id:  train.trip_id,
+            route_id: train.route_id,
+            stop_id:  train.next_stop_id,
+        });
+        const resp = await fetch(`/api/predict/train?${params}`);
+        if (resp.ok) data = await resp.json();
+    } catch (e) {
+        console.error('Error fetching train predictions:', e);
+    }
+
+    // ── Build popup content from response ────────────────────────────────────
+    const delayRow = (label, val) => {
+        const cls  = _delayCls(val);
+        const text = _fmtDelay(val);
+        return `<div class="train-delay-row">
+            <span class="delay-label">${label}</span>
+            <span class="delay-val ${cls}">${text}</span>
+        </div>`;
+    };
+
+    const fmtDelta = (d) => {
+        if (!d) return `<span class="delta-chip neutral">—</span>`;
+        const pct = Math.round(d.mejora_prob * 100);
+        return d.mejora_predicted
+            ? `<span class="delta-chip on-time">↓ ${pct}%</span>`
+            : `<span class="delta-chip delayed">↑ ${100 - pct}%</span>`;
+    };
+
+    let bodyContent;
+    if (!data) {
+        bodyContent = `<div class="train-unscheduled">No se pudo obtener predicción</div>`;
+    } else {
+        const curDelay = data.current_delay_s;
+        const stopsLeft = data.stops_to_end;
+        const minsLeft  = data.scheduled_time_to_end_s != null
+            ? Math.round(data.scheduled_time_to_end_s / 60) : null;
+
+        const progressHtml = (stopsLeft != null || minsLeft != null)
+            ? `<div class="train-progress">${stopsLeft != null ? `${stopsLeft} paradas` : ''}${minsLeft != null ? ` · ~${minsLeft} min` : ''} hasta el final</div>`
+            : '';
+
+        const horizonLabel = data.model_horizon === 'end' ? 'Al llegar al final de línea' : 'En 30 min';
+        const horizonDelay = data.delay_prediction?.delay_seconds ?? null;
+
+        const feedWarning = data.feed_warning
+            ? `<div class="train-feed-warning">⚠ Datos RT no disponibles — estimación aproximada</div>`
+            : '';
+
+        bodyContent = `
+            ${feedWarning}
+            <div class="train-popup-meta">
+                <div class="train-popup-status">${statusText}</div>
+                <div class="train-popup-stop">Próxima: <strong>${stopName}</strong></div>
+            </div>
+            ${progressHtml}
+            <div class="train-delay-grid">
+                ${delayRow('Retraso actual', curDelay)}
+                ${delayRow(horizonLabel, horizonDelay)}
+            </div>
+            <div class="train-delta-section">
+                <div class="train-delta-header">Tendencia del retraso</div>
+                <div class="train-delta-row"><span class="delay-label">+10 min</span>${fmtDelta(data.delta_10m)}</div>
+                <div class="train-delta-row"><span class="delay-label">+20 min</span>${fmtDelta(data.delta_20m)}</div>
+                <div class="train-delta-row"><span class="delay-label">+30 min</span>${fmtDelta(data.delta_30m)}</div>
+            </div>`;
+    }
+
+    const fullHtml = `<div>${headerHtml}<div class="train-popup-body">${bodyContent}</div></div>`;
+
+    const popup = marker.getPopup();
+    if (popup?.isOpen()) popup.setContent(fullHtml);
+}
+
+const TRAIN_REFRESH_S = 30;
+let _cdTimer = null;
+
+function _tickCountdown(s) {
+    const el = document.getElementById('train-countdown');
+    if (el) el.textContent = `· ${s}s`;
+    if (s > 0) _cdTimer = setTimeout(() => _tickCountdown(s - 1), 1000);
+}
+
+function _startCountdown() {
+    clearTimeout(_cdTimer);
+    _tickCountdown(TRAIN_REFRESH_S);
+}
+
+async function refreshTrainPositions() {
+    try {
+        const resp = await fetch('/api/vehicles');
+        if (!resp.ok) return;
+        const trains = await resp.json();
+
+        trainLayer.clearLayers();
+        trains.forEach(t => {
+            if (t.lat == null || t.lon == null) return;
+            const marker = L.marker([t.lat, t.lon], {
+                icon: createTrainIcon(t.route_id),
+                pane: 'trainPane',
+            });
+            marker.bindTooltip(`Línea ${t.route_id}`, { direction: 'top', offset: [0, -8] });
+            marker.on('click', () => openTrainPopup(t, marker));
+            marker.addTo(trainLayer);
+        });
+    } catch (e) {
+        console.error('Error al obtener posiciones de trenes:', e);
+    } finally {
+        _startCountdown();
+        setTimeout(refreshTrainPositions, TRAIN_REFRESH_S * 1000);
+    }
+}
+
+refreshTrainPositions();
+
+
+// ============================================================
+// 9. WebSocket para predicciones en tiempo real
 // ============================================================
 const wsUrl = `ws://${window.location.host}/ws/live-updates`;
 const socket = new WebSocket(wsUrl);
@@ -454,6 +684,17 @@ function openStationDetails(station) {
     nameEl.textContent   = station.name;
     lineSelectors.innerHTML = '';
 
+    // Reset forecast cards immediately so old station data doesn't linger
+    ['forecast-now', 'forecast-10', 'forecast-20', 'forecast-30'].forEach(id => {
+        const el = document.getElementById(id);
+        el.textContent = '…';
+        el.className = 'delay-val';
+    });
+    const lbl30 = document.getElementById('forecast-30-label');
+    if (lbl30) lbl30.textContent = '+30m';
+    document.getElementById('station-alert').classList.add('hidden');
+    document.getElementById('line-detail-info').innerHTML = '';
+
     const routes = station.routes.split(' ');
     routes.forEach((route, index) => {
         const bubble = document.createElement('div');
@@ -482,6 +723,9 @@ async function updateForecast(lineCode) {
         el.className = 'delay-val';
     });
 
+    const loadingBar = document.getElementById('detail-loading-bar');
+    if (loadingBar) loadingBar.classList.add('running');
+
     const stopParam = encodeURIComponent(station.id);
 
     // Lanzar las tres peticiones en paralelo
@@ -501,22 +745,45 @@ async function updateForecast(lineCode) {
         }
     } catch { renderDelayCard('forecast-now', null); }
 
-    // +10/+20/+30 min: predicción DCRNN (valores en segundos)
+    // +10/+20/+30 min: predicción DCRNN; fallback a LightGBM 30m si el stop no está en el grafo
+    const label30 = document.getElementById('forecast-30-label');
     try {
         if (propResp.status === 'fulfilled' && propResp.value.ok) {
             const d = await propResp.value.json();
             const pred = d.predictions?.find(p => p.stop_id === station.id);
             if (pred) {
+                if (label30) label30.textContent = '+30m';
                 renderDelayCard('forecast-10', pred.delay_10m);
                 renderDelayCard('forecast-20', pred.delay_20m);
                 renderDelayCard('forecast-30', pred.delay_30m);
             } else {
-                ['forecast-10', 'forecast-20', 'forecast-30'].forEach(id => renderDelayCard(id, null));
+                // DCRNN doesn't cover this stop — fall back to LightGBM delay 30m
+                renderDelayCard('forecast-10', null);
+                renderDelayCard('forecast-20', null);
+                try {
+                    const lgbmResp = await fetch(`/api/predict/delay/30m?stop_id=${stopParam}`);
+                    if (lgbmResp.ok) {
+                        const lgbm = await lgbmResp.json();
+                        const p = lgbm.predictions?.[0];
+                        if (label30) label30.textContent = '+30m †';
+                        renderDelayCard('forecast-30', p ? p.delay_seconds : null);
+                    } else {
+                        if (label30) label30.textContent = '+30m';
+                        renderDelayCard('forecast-30', null);
+                    }
+                } catch {
+                    if (label30) label30.textContent = '+30m';
+                    renderDelayCard('forecast-30', null);
+                }
             }
         } else {
+            if (label30) label30.textContent = '+30m';
             ['forecast-10', 'forecast-20', 'forecast-30'].forEach(id => renderDelayCard(id, null));
         }
-    } catch { ['forecast-10', 'forecast-20', 'forecast-30'].forEach(id => renderDelayCard(id, null)); }
+    } catch {
+        if (label30) label30.textContent = '+30m';
+        ['forecast-10', 'forecast-20', 'forecast-30'].forEach(id => renderDelayCard(id, null));
+    }
 
     // Probabilidad de alerta para la línea seleccionada
     try {
@@ -528,8 +795,12 @@ async function updateForecast(lineCode) {
         }
     } catch { renderAlertProbability(lineCode, []); }
 
-    document.getElementById('line-detail-info').innerHTML =
-        `<p>Línea <strong>${lineCode}</strong> · predicción DCRNN a 10, 20 y 30 min</p>`;
+    const hasDagger = label30 && label30.textContent.includes('†');
+    document.getElementById('line-detail-info').innerHTML = hasDagger
+        ? `<p>Línea <strong>${lineCode}</strong> · predicción DCRNN a 10, 20 min no disponible · † LightGBM 30 min</p>`
+        : `<p>Línea <strong>${lineCode}</strong> · predicción DCRNN a 10, 20 y 30 min</p>`;
+
+    if (loadingBar) loadingBar.classList.remove('running');
 }
 
 function renderAlertProbability(lineCode, predictions) {
@@ -652,3 +923,37 @@ function findCommonLines(s1, s2) {
     const r2 = s2.routes.split(' ');
     return r1.filter(line => r2.includes(line));
 }
+
+// ============================================================
+// 12. Modo claro / oscuro
+// ============================================================
+
+const ICON_MOON = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>`;
+const ICON_SUN  = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>`;
+
+function applyTheme(dark) {
+    const btn = document.getElementById('theme-toggle');
+    if (dark) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+        tileLayer.setUrl(TILE_DARK);
+        btn.innerHTML = ICON_SUN;
+        btn.title = 'Modo claro';
+    } else {
+        document.documentElement.removeAttribute('data-theme');
+        tileLayer.setUrl(TILE_LIGHT);
+        btn.innerHTML = ICON_MOON;
+        btn.title = 'Modo oscuro';
+    }
+}
+
+(function initTheme() {
+    const saved = localStorage.getItem('theme');
+    applyTheme(saved === 'dark');
+})();
+
+document.getElementById('theme-toggle').addEventListener('click', () => {
+    const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+    const next = !isDark;
+    localStorage.setItem('theme', next ? 'dark' : 'light');
+    applyTheme(next);
+});

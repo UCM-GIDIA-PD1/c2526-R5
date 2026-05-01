@@ -8,12 +8,12 @@ Las únicas llamadas en tiempo real son:
   - Alertas  : Gmail MTA
 
 Uso desde otro módulo:
-    from src.ETL.pipelines.preprocess_realtime_lgbm import get_single_trip_features
+    from src.ETL.pipelines.realtime.preprocess_realtime_lgbm import get_single_trip_features
 
     features = get_single_trip_features("033150_2..N08R")
 
 Uso standalone (un único trip):
-    uv run python src/ETL/pipelines/preprocess_realtime_lgbm.py <trip_id>
+    uv run python src/ETL/pipelines/realtime/preprocess_realtime_lgbm.py <trip_id>
 """
 
 import gc
@@ -27,7 +27,7 @@ load_dotenv()
 
 from src.common.minio_client import download_json, upload_json
 
-from src.ETL.pipelines.generate_realtime_dataset import (
+from src.ETL.pipelines.realtime.generate_realtime_dataset import (
     load_realtime_gtfs,
     load_realtime_alerts,
     _prepare_alert_route,

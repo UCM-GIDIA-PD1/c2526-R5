@@ -12,7 +12,7 @@ Estrategia de memoria:
     (lee sus 12 meses, concatena, sube). En RAM nunca hay más de una línea completa.
 
 Uso:
-    uv run python src/ETL/pipelines/aggregate_lines_yearly.py
+    uv run python src/ETL/pipelines/historical/aggregate_lines_yearly.py
 
 Variables de entorno necesarias:
     MINIO_ACCESS_KEY

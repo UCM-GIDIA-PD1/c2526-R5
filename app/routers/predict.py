@@ -8,8 +8,9 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from app.config import settings
 from app.data.drive import download_windows
 from app.models.alertas_infer import run_alerts
-from app.models.delay_infer import run_delays
-from app.models.delta_infer import run_delta
+from app.models.delay_infer import run_delays, run_delay_single
+from app.models.delta_infer import run_delta, run_delta_single
+from src.ETL.pipelines.realtime.preprocess_realtime_lgbm import get_trip_features
 from app.models.dcrnn_infer import run_propagation
 from app.schemas import (
     AlertResponse,
@@ -21,6 +22,42 @@ from app.schemas import (
 
 router = APIRouter(prefix="/predict")
 logger = logging.getLogger(__name__)
+
+
+def _drive_window_fallback(windows: list, route_id: str, stop_id: str):
+    """
+    Build a minimal single-row DataFrame from the latest Drive window when the
+    GTFS-RT feed is unavailable.  Provides enough features to run the models
+    at the cost of having no per-train lag/trip-progress information.
+    """
+    import math
+    import numpy as np
+    from datetime import datetime, timezone
+    import pandas as pd
+
+    if not windows:
+        return None
+    df = windows[-1].copy()
+    base = df["stop_id"].astype(str).str.rstrip("NS") if "stop_id" in df.columns else df.index.astype(str)
+    mask = (df["stop_id"].astype(str) == stop_id) | (base == stop_id)
+    sub = df[mask]
+    if sub.empty:
+        # Fall back to route-level average
+        route_norm = route_id.strip().split("-")[0].split("_")[0]
+        if "route_id" in df.columns:
+            sub = df[df["route_id"].astype(str) == route_norm]
+    if sub.empty:
+        return None
+
+    row = sub.iloc[0:1].copy()
+    now = datetime.now(timezone.utc)
+    row["merge_time"] = now
+    # Clear trip-specific fields we can't derive from the window
+    for col in ("stops_to_end_mean", "scheduled_time_to_end_mean",
+                "lagged_delay_1_mean", "lagged_delay_2_mean"):
+        if col not in row.columns:
+            row[col] = 0.0
+    return row
 
 
 async def _get_windows(request: Request) -> list:
@@ -56,10 +93,20 @@ async def get_current_delay(
         df = df[(df["stop_id"].astype(str) == stop_id) | (base == stop_id)]
 
     if df.empty or "delay_seconds_mean" not in df.columns:
+        window_routes = windows[-1]["route_id"].astype(str).unique().tolist() if "route_id" in windows[-1].columns else []
+        logger.warning(
+            "predict/current: no data for stop_id=%r. "
+            "Window has %d rows, routes=%s, stop_id sample=%s",
+            stop_id,
+            len(windows[-1]),
+            sorted(window_routes)[:10],
+            windows[-1]["stop_id"].astype(str).unique()[:5].tolist() if "stop_id" in windows[-1].columns else [],
+        )
         return {"stop_id": stop_id, "delay_seconds": None}
 
     import numpy as np
     delay = float(np.clip(df["delay_seconds_mean"].mean(), 0, None))
+    logger.debug("predict/current: stop_id=%r → delay=%.1fs (%d rows matched)", stop_id, delay, len(df))
     return {"stop_id": stop_id, "delay_seconds": delay}
 
 
@@ -218,6 +265,91 @@ async def predict_alerts(
         route_id_filter=route_id,
         min_prob=min_prob,
     )
+
+
+# ── Per-train prediction ─────────────────────────────────────────────────────
+
+@router.get("/train")
+async def predict_train(
+    request: Request,
+    match_key: str = Query(..., description="match_key del tren (trip_id GTFS-RT)"),
+) -> dict:
+    """
+    Per-train predictions.
+
+    Construye las features del trip con get_trip_features(match_key), aplica
+    encoding y ejecuta:
+      - lgbm_delay_end   si scheduled_time_to_end < 30 min
+      - lgbm_delay_30m   en caso contrario
+      - delta_10m / delta_20m / delta_30m
+    """
+    registry = request.app.state.registry
+
+    features = await asyncio.to_thread(get_trip_features, match_key)
+    if features is None:
+        raise HTTPException(404, detail=f"match_key '{match_key}' no encontrado en el feed RT")
+
+    current_delay_s       = float(features.get("delay_seconds", 0.0))
+    stops_to_end          = int(features.get("stops_to_end", 0))
+    scheduled_time_to_end = float(features.get("scheduled_time_to_end", 0.0))
+    route_id              = str(features.get("route_id", ""))
+    stop_id               = str(features.get("stop_id", ""))
+
+    # < 30 min: solo delay_end; >= 30 min: delay_30m + delay_end
+    near_end = scheduled_time_to_end < 1800
+
+    async def _safe(name: str, fn, **kw):
+        try:
+            return await asyncio.to_thread(fn, **kw)
+        except Exception as exc:
+            logger.warning("Train model %s failed for match_key %s: %s", name, match_key, exc)
+            return None
+
+    coros = {
+        "delay_end": (
+            _safe("delay_end", run_delay_single, entry=registry.lgbm_delay_end, features=features)
+            if registry.lgbm_delay_end is not None else asyncio.sleep(0, result=None)
+        ),
+        "delay_30m": (
+            _safe("delay_30m", run_delay_single, entry=registry.lgbm_delay_30m, features=features)
+            if (not near_end and registry.lgbm_delay_30m is not None) else asyncio.sleep(0, result=None)
+        ),
+        "delta_10m": (
+            _safe("delta_10m", run_delta_single, entry=registry.delta_10m, features=features)
+            if registry.delta_10m is not None else asyncio.sleep(0, result=None)
+        ),
+        "delta_20m": (
+            _safe("delta_20m", run_delta_single, entry=registry.delta_20m, features=features)
+            if registry.delta_20m is not None else asyncio.sleep(0, result=None)
+        ),
+        "delta_30m": (
+            _safe("delta_30m", run_delta_single, entry=registry.delta_30m, features=features)
+            if registry.delta_30m is not None else asyncio.sleep(0, result=None)
+        ),
+    }
+
+    results_list = await asyncio.gather(*coros.values())
+    res = dict(zip(coros.keys(), results_list))
+
+    def _fmt_delta(result):
+        if result is None:
+            return None
+        prob, mejora = result
+        return {"mejora_prob": round(prob, 4), "mejora_predicted": mejora}
+
+    return {
+        "match_key":               match_key,
+        "route_id":                route_id,
+        "stop_id":                 stop_id,
+        "current_delay_s":         round(current_delay_s, 1),
+        "stops_to_end":            stops_to_end,
+        "scheduled_time_to_end_s": round(scheduled_time_to_end, 1),
+        "delay_end_s":             round(res["delay_end"], 1) if res["delay_end"] is not None else None,
+        "delay_30m_s":             round(res["delay_30m"], 1) if res["delay_30m"] is not None else None,
+        "delta_10m":               _fmt_delta(res["delta_10m"]),
+        "delta_20m":               _fmt_delta(res["delta_20m"]),
+        "delta_30m":               _fmt_delta(res["delta_30m"]),
+    }
 
 
 # ── All ───────────────────────────────────────────────────────────────────────

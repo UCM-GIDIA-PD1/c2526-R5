@@ -25,8 +25,43 @@ from utils.metrics import imprimir_metricas
 
 RUTA_TENSORES = Path(__file__).parent / "artefactos" / "tensores.pt"
 
-IDX_DELAY_SECONDS = 0   # índice de delay_seconds en X (dimensión F=14)
+# Índices en la dimensión F=14 de X_* (FEATURE_COLS de 02_generar_tensores.py)
+IDX_DELAY_SECONDS = 0
+IDX_TEMP_EXTREME  = 4
 HORIZONTES        = ['10m', '20m', '30m']
+
+
+def _imprimir_segmentos(
+    preds_real: np.ndarray,
+    trues_real: np.ndarray,
+    dow_te: np.ndarray,
+    temp_te: np.ndarray,
+    nombre: str,
+) -> None:
+    """Imprime MAE por segmento (fin de semana / entre semana / clima extremo / normal)."""
+    mask_finde   = dow_te >= 5
+    mask_diario  = dow_te <  5
+    mask_extremo = temp_te >= 0.5
+    mask_normal  = temp_te <  0.5
+
+    def _mae(mask: np.ndarray) -> float:
+        if not mask.any():
+            return float('nan')
+        return float(np.abs(preds_real[mask] - trues_real[mask]).mean())
+
+    fds = _mae(mask_finde)
+    dia = _mae(mask_diario)
+    ext = _mae(mask_extremo)
+    nor = _mae(mask_normal)
+
+    print(f"\n{'='*70}")
+    print(f"TABLA 2 — EVALUACIÓN POR SEGMENTOS — {nombre}")
+    print(f"{'='*70}")
+    print(f"{'Modelo':<25} {'FdS MAE':>10} {'Diario MAE':>12} {'Extremo MAE':>13} {'Normal MAE':>11}")
+    print(f"{'-'*70}")
+    print(f"{nombre:<25} {fds:>10.2f} {dia:>12.2f} {ext:>13.2f} {nor:>11.2f}")
+    print(f"{'='*70}")
+    print("Unidades: MAE en segundos reales. FdS = Fines de semana.")
 
 
 def main():
@@ -84,6 +119,10 @@ def main():
     Y_te_2d   = Y_test.reshape(-1, H)
     trues_real = scaler_Y.inverse_transform(Y_te_2d).reshape(T_te, N, H)
 
+    # Desescalar X_test para extraer temp_extreme (índice 4) en espacio real
+    X_te_2d   = X_test.reshape(-1, X_test.shape[-1])
+    X_te_real = scaler_X.inverse_transform(X_te_2d).reshape(T_te, N, -1)
+
     # Predicciones: lookup en la tabla de medias históricas
     preds_real = np.zeros((T_te, N, H), dtype=np.float32)
     for t, ts in enumerate(times_te):
@@ -115,6 +154,11 @@ def main():
     imprimir_metricas(mae, rmse)
     print(f"\nBaseline HA MAE medio: {mae['mae_mean']:.1f} s")
     print("(El modelo DCRNN debe superar este valor para justificar la complejidad del grafo.)")
+
+    # ── Evaluación por segmentos ──────────────────────────────────────────────
+    dow_te  = np.array(times_te.dayofweek)                               # (T_te,)
+    temp_te = (X_te_real[:, :, IDX_TEMP_EXTREME] > 0.5).mean(axis=1)    # (T_te,)
+    _imprimir_segmentos(preds_real, trues_real, dow_te, temp_te, "Historical Average")
 
 
 if __name__ == "__main__":

@@ -58,6 +58,13 @@ def run_propagation(
         # Collect N and S variants for this base GTFS stop ID and average them.
         matched = [i for i, sid in enumerate(nodes_sorted)
                    if sid == stop_id_filter or _base(sid) == stop_id_filter]
+        if not matched:
+            logger.warning(
+                "DCRNN: stop_id '%s' not found in %d nodes. "
+                "Sample nodes: %s",
+                stop_id_filter, len(nodes_sorted),
+                nodes_sorted[:5],
+            )
         if matched:
             avg = y_sec[matched].mean(axis=0)
             base_meta = (stations_meta or {}).get(stop_id_filter, {})

@@ -26,6 +26,7 @@ from fastapi.templating import Jinja2Templates
 
 from app.cache import TTLCache
 from app.config import settings
+from app.data.vehicles import fetch_positions
 from app.models.registry import ModelRegistry
 from app.routers.health import router as health_router
 from app.routers.predict import router as predict_router
@@ -70,8 +71,12 @@ async def lifespan(app: FastAPI):
 
     app.state.registry = registry
     app.state.cache = TTLCache(ttl_seconds=settings.data_cache_ttl)
+    app.state.vehicles_cache = TTLCache(ttl_seconds=30)
     app.state.stations_meta = _load_stations_meta()
-    app.state.gtfs_shapes = await asyncio.to_thread(_load_gtfs_shapes)
+    gtfs_static = await asyncio.to_thread(_load_gtfs_static)
+    app.state.gtfs_shapes = gtfs_static["shapes"]
+    app.state.gtfs_stops = gtfs_static["stops"]
+    app.state.prev_stop_for_route = gtfs_static["prev_stop"]
     app.state.ws_manager = _ConnectionManager()
     app.state.bg_task = asyncio.create_task(_live_broadcast(app))
 
@@ -113,11 +118,10 @@ def _load_stations_meta() -> dict:
     return meta
 
 
-def _load_gtfs_shapes() -> dict:
-    """Download MTA GTFS static feed and extract one representative shape per route."""
+def _load_gtfs_static() -> dict:
+    """Download MTA GTFS static feed and extract shapes, stops, and stop_times index."""
     url = "http://web.mta.info/developers/data/nyct/subway/google_transit.zip"
 
-    # Rutas válidas MTA — filtramos cualquier route_id que no sea conocido
     VALID_ROUTES = {
         '1','2','3','4','5','6','7',
         'A','C','E','B','D','F','M',
@@ -126,20 +130,17 @@ def _load_gtfs_shapes() -> dict:
     }
 
     def normalize_route_id(rid: str) -> str | None:
-        """Extrae la letra/número base de un route_id GTFS de la MTA.
-        Ejemplos: 'M-Weekday' -> 'M', '6X' -> '6', 'SI' -> 'SIR'
-        Devuelve None si no es una ruta conocida."""
         rid = rid.strip()
         if rid in VALID_ROUTES:
             return rid
-        # Variantes con sufijo tipo 'M-Weekday', 'A-Lefferts', 'J-Jamaica'
         base = rid.split('-')[0].split('_')[0]
         if base in VALID_ROUTES:
             return base
-        # 'SI' es el Staten Island Railway
         if base == 'SI':
             return 'SIR'
         return None
+
+    empty = {"shapes": {}, "stops": {}, "prev_stop": {}}
 
     try:
         logger.info("Downloading MTA GTFS static feed from %s …", url)
@@ -149,18 +150,15 @@ def _load_gtfs_shapes() -> dict:
 
         zf = zipfile.ZipFile(io.BytesIO(content))
 
+        # ── shapes ────────────────────────────────────────────────────────────
         trips = pd.read_csv(zf.open("trips.txt"))
         shapes_df = pd.read_csv(zf.open("shapes.txt"))
         shapes_df = shapes_df.sort_values(["shape_id", "shape_pt_sequence"])
 
-        # Normalizar route_id en trips y descartar los no reconocidos
         trips["route_id_norm"] = trips["route_id"].astype(str).map(normalize_route_id)
         trips = trips[trips["route_id_norm"].notna()]
 
-        # Number of points per shape (proxy for "completeness")
         shape_len = shapes_df.groupby("shape_id").size()
-
-        # Para cada ruta normalizada, elegir la shape con más puntos (recorrido completo)
         route_shapes: dict[str, str] = {}
         for route_id, grp in trips.groupby("route_id_norm"):
             best = max(grp["shape_id"].unique(), key=lambda s: shape_len.get(s, 0))
@@ -171,17 +169,68 @@ def _load_gtfs_shapes() -> dict:
             for sid, sub in shapes_df.groupby("shape_id")
         }
 
-        result = {}
+        gtfs_shapes = {}
         for route_id, shape_id in route_shapes.items():
             pts = shapes_by_id.get(shape_id, [])
             if len(pts) >= 2:
-                result[route_id] = pts
+                gtfs_shapes[route_id] = pts
 
-        logger.info("GTFS shapes loaded for %d routes: %s", len(result), sorted(result.keys()))
-        return result
+        logger.info("GTFS shapes loaded for %d routes: %s", len(gtfs_shapes), sorted(gtfs_shapes.keys()))
+
+        # ── stops ─────────────────────────────────────────────────────────────
+        stops_df = pd.read_csv(
+            zf.open("stops.txt"),
+            usecols=["stop_id", "stop_lat", "stop_lon"],
+            dtype={"stop_id": str},
+        )
+        gtfs_stops: dict[str, tuple[float, float]] = {
+            row.stop_id: (float(row.stop_lat), float(row.stop_lon))
+            for row in stops_df.itertuples()
+        }
+        logger.info("GTFS stops loaded: %d stops", len(gtfs_stops))
+
+        # ── prev_stop_for_route ───────────────────────────────────────────────
+        # Index: (route_id_norm, stop_id) -> prev_stop_id
+        # Built from the longest representative trip per (route, direction).
+        # Avoids trip_id matching issues between static GTFS and real-time feeds.
+        st_df = pd.read_csv(
+            zf.open("stop_times.txt"),
+            usecols=["trip_id", "stop_sequence", "stop_id"],
+            dtype={"trip_id": str, "stop_id": str, "stop_sequence": int},
+        )
+        trip_route_dir = trips[["trip_id", "route_id_norm", "direction_id"]].drop_duplicates()
+        st_merged = st_df.merge(trip_route_dir, on="trip_id")
+
+        prev_stop_for_route: dict[tuple[str, str], str] = {}
+        for (route_id_norm, direction_id), grp in st_merged.groupby(["route_id_norm", "direction_id"]):
+            best_trip = grp.groupby("trip_id")["stop_sequence"].count().idxmax()
+            ordered = (grp[grp["trip_id"] == best_trip]
+                       .sort_values("stop_sequence")["stop_id"]
+                       .tolist())
+            for i in range(1, len(ordered)):
+                key = (route_id_norm, ordered[i])
+                if key not in prev_stop_for_route:
+                    prev_stop_for_route[key] = ordered[i - 1]
+
+        logger.info("prev_stop_for_route built: %d entries", len(prev_stop_for_route))
+
+        return {"shapes": gtfs_shapes, "stops": gtfs_stops, "prev_stop": prev_stop_for_route}
+
     except Exception as exc:
-        logger.warning("Could not load GTFS shapes (non-fatal): %s", exc)
-        return {}
+        logger.warning("Could not load GTFS static data (non-fatal): %s", exc)
+        return empty
+
+
+def _sanitize_json(obj):
+    """Recursively replace NaN/Inf floats with None so json.dumps produces valid JSON."""
+    import math
+    if isinstance(obj, float) and not math.isfinite(obj):
+        return None
+    if isinstance(obj, dict):
+        return {k: _sanitize_json(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitize_json(v) for v in obj]
+    return obj
 
 
 async def _live_broadcast(app: FastAPI) -> None:
@@ -202,11 +251,11 @@ async def _live_broadcast(app: FastAPI) -> None:
                 windows=windows,
                 threshold=settings.alert_threshold,
             )
-            payload = json.dumps({
+            payload = json.dumps(_sanitize_json({
                 "type": "update",
                 "predicted_at": datetime.now(timezone.utc).isoformat(),
                 "alerts": alerts.model_dump(),
-            })
+            }))
             await app.state.ws_manager.broadcast(payload)
         except asyncio.CancelledError:
             break
@@ -268,6 +317,67 @@ def get_stations(request: Request):
         {"id": sid, **data}
         for sid, data in request.app.state.stations_meta.items()
     ]
+
+
+@app.get("/api/warmup")
+async def warmup(request: Request):
+    """Pre-warm the Drive window cache so the first prediction has no extra latency."""
+    from app.data.drive import download_windows
+    cache = request.app.state.cache
+    if cache.get("windows") is None:
+        windows = await asyncio.to_thread(
+            download_windows,
+            n_windows=settings.n_windows,
+            token_path=settings.drive_token_path,
+            folder_name=settings.google_drive_folder_name,
+        )
+        cache.set("windows", windows)
+    return {"status": "ready"}
+
+
+@app.get("/api/debug/stop")
+async def debug_stop(request: Request, stop_id: str):
+    """Diagnostic: check DCRNN and Drive-window coverage for a given stop_id."""
+    registry = request.app.state.registry
+    cache = request.app.state.cache
+    windows = cache.get("windows")
+
+    result: dict = {"stop_id": stop_id, "dcrnn": {}, "drive_windows": {}}
+
+    # DCRNN coverage
+    if registry.dcrnn is not None:
+        nodes = registry.dcrnn.nodes
+        exact = [n for n in nodes if n == stop_id]
+        base_match = [n for n in nodes if n[:-1] == stop_id and n[-1] in ("N", "S")]
+        result["dcrnn"] = {
+            "n_total_nodes": len(nodes),
+            "exact_match": exact,
+            "directional_match": base_match,
+            "covered": bool(exact or base_match),
+        }
+    else:
+        result["dcrnn"] = {"error": "DCRNN not loaded"}
+
+    # Drive window coverage
+    if windows:
+        df = windows[-1]
+        stop_ids_in_window = df["stop_id"].astype(str).unique().tolist() if "stop_id" in df.columns else []
+        base_ids = [s.rstrip("NS") for s in stop_ids_in_window]
+        exact_rows = df[df["stop_id"].astype(str) == stop_id] if "stop_id" in df.columns else df.iloc[0:0]
+        base_rows = df[df["stop_id"].astype(str).str.rstrip("NS") == stop_id] if "stop_id" in df.columns else df.iloc[0:0]
+        found = exact_rows if not exact_rows.empty else base_rows
+        result["drive_windows"] = {
+            "n_windows": len(windows),
+            "n_rows_latest_window": len(df),
+            "stop_found": not found.empty,
+            "matching_stop_ids": found["stop_id"].astype(str).unique().tolist() if not found.empty else [],
+            "routes_in_window": df["route_id"].astype(str).unique().tolist() if "route_id" in df.columns else [],
+            "delay_seconds_mean_sample": found["delay_seconds_mean"].tolist() if (not found.empty and "delay_seconds_mean" in found.columns) else [],
+        }
+    else:
+        result["drive_windows"] = {"error": "No windows cached — call /api/warmup first"}
+
+    return result
 
 
 _ROUTE_ORDER: dict[str, list[str]] = {
@@ -332,6 +442,23 @@ def get_routes(request: Request):
 def get_shapes(request: Request):
     """Return GTFS shape geometry per route: { routeId: [[lat, lon], ...] }"""
     return request.app.state.gtfs_shapes
+
+
+@app.get("/api/vehicles")
+async def get_vehicles(request: Request) -> list[dict]:
+    """Return current train positions. Cached for 30 s."""
+    cache = request.app.state.vehicles_cache
+    cached = cache.get("vehicles")
+    if cached is not None:
+        return cached
+
+    positions = await asyncio.to_thread(
+        fetch_positions,
+        request.app.state.gtfs_stops,
+        request.app.state.prev_stop_for_route,
+    )
+    cache.set("vehicles", positions)
+    return positions
 
 
 @app.websocket("/ws/live-updates")
