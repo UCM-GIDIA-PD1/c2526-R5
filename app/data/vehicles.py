@@ -76,10 +76,13 @@ def fetch_positions(
             if coords is None:
                 continue
 
-            lat, lon = coords
             route_norm = _normalize_route(v.trip.route_id)
+            if route_norm is None:
+                continue
 
-            if v.current_status in _MOVING and route_norm:
+            lat, lon = coords
+
+            if v.current_status in _MOVING:
                 prev_sid = prev_stop_for_route.get((route_norm, stop_id))
                 if prev_sid:
                     prev = gtfs_stops.get(prev_sid)
@@ -88,8 +91,9 @@ def fetch_positions(
                         lon = (lon + prev[1]) / 2
 
             direction = "N" if stop_id.endswith("N") else "S" if stop_id.endswith("S") else None
+            scheduled = v.trip.schedule_relationship == 0
             results.append({
-                "route_id": v.trip.route_id,
+                "route_id": route_norm,
                 "trip_id": v.trip.trip_id,
                 "lat": lat,
                 "lon": lon,
@@ -97,6 +101,7 @@ def fetch_positions(
                 "schedule_relationship": v.trip.schedule_relationship,
                 "direction": direction,
                 "status": v.current_status,
+                "is_predictable": scheduled,
             })
 
     logger.info("Vehicle positions: %d trains fetched", len(results))
