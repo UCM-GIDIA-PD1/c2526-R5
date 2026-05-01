@@ -102,7 +102,7 @@ LGBM_PARAMS = {
 }
 NUM_BOOST_ROUND = 6299   # best_iteration del run anterior (Entrega 3)
 SAMPLE_FRAC   = 1.0
-WEIGHT_SCHEME = "exponential"   # mismo drift que delay_30m, mejor gap train/test
+WEIGHT_SCHEME = "exponential"   # menor gap train/test (17.8s) y mejor MAE test (137.06s)
 
 
 def build_weights(month_sizes: list[int], scheme: str) -> np.ndarray:
@@ -366,7 +366,9 @@ def main():
     )
     artifact.add_file(model_filename)
     artifact.add_file(preprocessing_filename)
-    wandb.log_artifact(artifact).wait()
+    wandb.log_artifact(artifact)
+    os.remove(model_filename)
+    os.remove(preprocessing_filename)
     print(f"\nModelo y preprocessing subidos como artifact wandb: {model_filename}, {preprocessing_filename}")
 
     wandb.finish()
