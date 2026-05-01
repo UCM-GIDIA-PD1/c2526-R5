@@ -418,19 +418,30 @@ Promise.all([
 
 const trainLayer = L.layerGroup().addTo(map);
 
-function createTrainIcon(routeId) {
+function createTrainIcon(routeId, isPredictable = true) {
     const color = ROUTE_COLORS[routeId] || '#888888';
     const w = 14, h = 8;
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 14 8">
-        <rect x="0.5" y="0.5" width="11" height="5.5" rx="1.5" fill="${color}" fill-opacity="0.78" stroke="white" stroke-width="0.8"/>
-        <rect x="1.5" y="1.5" width="3" height="2.5" rx="0.8" fill="white" fill-opacity="0.25"/>
-        <rect x="5.5" y="1.5" width="2" height="2.5" rx="0.8" fill="white" fill-opacity="0.25"/>
-        <rect x="8.5" y="1.5" width="2" height="2.5" rx="0.8" fill="white" fill-opacity="0.25"/>
-        <circle cx="3"  cy="7" r="1" fill="#111" stroke="white" stroke-width="0.6"/>
-        <circle cx="9" cy="7" r="1" fill="#111" stroke="white" stroke-width="0.6"/>
-    </svg>`;
+
+    const svg = isPredictable
+        ? `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 14 8">
+            <rect x="0.5" y="0.5" width="11" height="5.5" rx="1.5" fill="${color}" fill-opacity="0.78" stroke="white" stroke-width="0.8"/>
+            <rect x="1.5" y="1.5" width="3" height="2.5" rx="0.8" fill="white" fill-opacity="0.25"/>
+            <rect x="5.5" y="1.5" width="2" height="2.5" rx="0.8" fill="white" fill-opacity="0.25"/>
+            <rect x="8.5" y="1.5" width="2" height="2.5" rx="0.8" fill="white" fill-opacity="0.25"/>
+            <circle cx="3"  cy="7" r="1" fill="#111" stroke="white" stroke-width="0.6"/>
+            <circle cx="9" cy="7" r="1" fill="#111" stroke="white" stroke-width="0.6"/>
+        </svg>`
+        : `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 14 8" opacity="0.55">
+            <rect x="0.5" y="0.5" width="11" height="5.5" rx="1.5" fill="#aaa" fill-opacity="0.35" stroke="${color}" stroke-width="1" stroke-dasharray="2.5,1.5"/>
+            <rect x="1.5" y="1.5" width="3" height="2.5" rx="0.8" fill="${color}" fill-opacity="0.18"/>
+            <rect x="5.5" y="1.5" width="2" height="2.5" rx="0.8" fill="${color}" fill-opacity="0.18"/>
+            <rect x="8.5" y="1.5" width="2" height="2.5" rx="0.8" fill="${color}" fill-opacity="0.18"/>
+            <circle cx="3"  cy="7" r="1" fill="#888" stroke="white" stroke-width="0.6"/>
+            <circle cx="9" cy="7" r="1" fill="#888" stroke="white" stroke-width="0.6"/>
+        </svg>`;
+
     return L.divIcon({
-        className: 'train-icon',
+        className: isPredictable ? 'train-icon' : 'train-icon train-icon-unscheduled',
         html: svg,
         iconSize: [w, h + 2],
         iconAnchor: [w / 2, (h + 2) / 2],
@@ -477,6 +488,18 @@ async function openTrainPopup(train, marker) {
             <div class="train-popup-status">${statusText}</div>
             <div class="train-popup-stop">Próxima: <strong>${stopName}</strong></div>
         </div>`;
+
+    // Unscheduled / added trains have no scheduled data → prediction is not possible
+    if (!train.is_predictable) {
+        const reason = train.schedule_relationship === 1 ? 'Servicio adicional' : 'Sin horario programado';
+        marker.bindPopup(
+            `<div>${headerHtml}<div class="train-popup-body">${metaBlock}
+                <div class="train-unscheduled">${reason} — predicción no disponible</div>
+            </div></div>`,
+            popupOpts
+        ).openPopup();
+        return;
+    }
 
     // Show loading state immediately
     marker.bindPopup(
@@ -584,10 +607,13 @@ async function refreshTrainPositions() {
         trains.forEach(t => {
             if (t.lat == null || t.lon == null) return;
             const marker = L.marker([t.lat, t.lon], {
-                icon: createTrainIcon(t.route_id),
+                icon: createTrainIcon(t.route_id, t.is_predictable),
                 pane: 'trainPane',
             });
-            marker.bindTooltip(`Línea ${t.route_id}`, { direction: 'top', offset: [0, -8] });
+            const tooltipText = t.is_predictable
+                ? `Línea ${t.route_id}`
+                : `Línea ${t.route_id} · No programado`;
+            marker.bindTooltip(tooltipText, { direction: 'top', offset: [0, -8] });
             marker.on('click', () => openTrainPopup(t, marker));
             marker.addTo(trainLayer);
         });
