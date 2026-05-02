@@ -1,6 +1,7 @@
 **/.*
 **/__pycache__
 **/*.pyc
+**/*.ipynb
 data/
 tmp/
 artifacts/
@@ -11,3 +12,9 @@ docs/
 *.env
 .claude/
 CLAUDE.md
+src/models/
+src/ETL/clima/
+src/ETL/eventos/
+src/ETL/gtfs_historico/
+src/ETL/pipelines/historical/
+src/web/
