@@ -180,6 +180,30 @@ Gmail credentials
 Gmail token
 ```
 
+### Token de Google Drive (producción)
+
+La API necesita un token OAuth2 en formato JSON para acceder a Google Drive en producción. Genera el token localmente con el script proporcionado:
+
+```bash
+uv run python generar_token_drive.py
+```
+
+El token resultante se guarda por defecto en `src/ETL/alertas_oficiales_tiempo_real/token_drive.json`.
+
+Puedes añadir directamente en tu fichero `.env` la línea de ejemplo:
+
+```bash
+GDRIVE_TOKEN_JSON="$(cat src/ETL/alertas_oficiales_tiempo_real/token_drive.json)"
+```
+
+La aplicación leerá la variable `GDRIVE_TOKEN_JSON` con el JSON completo del token y podrá parsearla en runtime (si es necesario, se puede escribir a `src/ETL/alertas_oficiales_tiempo_real/token_drive.json` para compatibilidad con las librerías de Google).
+
+Para instrucciones sobre cómo ejecutar el contenedor y pasar variables/volúmenes, consulta la sección **Despliegue con Docker** al final de este README.
+
+Notas:
+- Asegúrate de tener `credentials.json` en la raíz del proyecto antes de ejecutar `generar_token_drive.py`.
+- Evita subir `token_drive.json` a repositorios públicos; gestiona el secreto mediante variables de entorno o un gestor de secretos en CI/CD.
+
 ### Weights & Biases (W&B)
 
 El proyecto utiliza [Weights & Biases](https://wandb.ai) para el seguimiento de experimentos de todos los modelos. Cada entrenamiento registra automáticamente métricas, hiperparámetros y artefactos. Para activarlo es necesario proporcionar `WANDB_API_KEY` en el `.env`. Los runs se pueden consultar en el proyecto del equipo en la plataforma de W&B.
