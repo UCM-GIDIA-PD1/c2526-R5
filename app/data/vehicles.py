@@ -1,8 +1,7 @@
 """Real-time train positions from MTA GTFS-RT feeds."""
 import logging
 
-import requests
-from google.transit import gtfs_realtime_pb2
+from app.data.gtfs_rt_cache import get_feed_message
 
 logger = logging.getLogger(__name__)
 
@@ -55,13 +54,9 @@ def fetch_positions(
     results = []
 
     for feed_key, url in _FEEDS.items():
-        try:
-            resp = requests.get(url, timeout=10)
-            resp.raise_for_status()
-            msg = gtfs_realtime_pb2.FeedMessage()
-            msg.ParseFromString(resp.content)
-        except Exception as exc:
-            logger.warning("Feed %s unavailable: %s", feed_key, exc)
+        msg = get_feed_message(url)
+        if msg is None:
+            logger.warning("Feed %s unavailable (sin snapshot)", feed_key)
             continue
 
         for entity in msg.entity:
